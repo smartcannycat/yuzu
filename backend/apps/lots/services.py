@@ -1,5 +1,10 @@
 """Public facade for the lots domain services."""
 
+from apps.lots.economics import (
+    _missing_customs_inputs,
+    _resolve_start_bid_jpy,
+    recompute_lot_economics,
+)
 from apps.lots.integrations.drom import DromMarketService
 from apps.lots.pipeline import (
     _step_drom_market,
@@ -10,6 +15,7 @@ from apps.lots.pipeline import (
     run_batch_pipeline,
 )
 from apps.lots.queries import (
+    _build_customs_out,
     _build_lot_detail,
     _build_lot_summary,
     get_lot_detail,
@@ -22,8 +28,11 @@ from apps.lots.starter_lots import (
 
 __all__ = [
     "DromMarketService",
+    "_build_customs_out",
     "_build_lot_detail",
     "_build_lot_summary",
+    "_missing_customs_inputs",
+    "_resolve_start_bid_jpy",
     "_step_drom_market",
     "append_batch_items",
     "backfill_starter_lots",
@@ -31,6 +40,7 @@ __all__ = [
     "get_batch_progress",
     "get_lot_detail",
     "get_lots_list",
+    "recompute_lot_economics",
     "recover_batches_on_startup",
     "run_batch_pipeline",
     "seed_starter_lots",
