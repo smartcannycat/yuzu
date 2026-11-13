@@ -272,3 +272,25 @@ def test_failed_source_does_not_expand_into_another_network_request(lot):
     client = source(error=True)
     estimate_repair(lot, client=client)
     assert client.search.call_count == 1
+
+
+@pytest.mark.django_db
+def test_existing_detail_endpoint_exposes_saved_estimate(user_factory, api_client):
+    from ninja_jwt.tokens import RefreshToken
+
+    from apps.lots.starter_lots import seed_starter_lots
+
+    user = user_factory()
+    seed_starter_lots(user)
+    vehicle = Lot.objects.get(user=user, make="Toyota")
+    save_repair_estimate(vehicle, client=source(error=True))
+    token = str(RefreshToken.for_user(user).access_token)
+    response = api_client.get(f"/api/v1/lots/{vehicle.pk}", HTTP_AUTHORIZATION=f"Bearer {token}")
+    assert response.status_code == 200
+    repair = response.json()["economics"]["farpost_repair"]
+    assert repair["parts"][0]["is_statistical_fallback"]
+    assert (
+        repair["grand_total_repair_rub"]
+        == repair["total_parts_from_rub"] + repair["total_works_rub"]
+    )
+    assert "farpost_url" not in str(repair)
