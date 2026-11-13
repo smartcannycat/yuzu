@@ -17,7 +17,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { BatchUploadSheet, LotPreviewSheets } from '@/components/lots'
 import { CapyMascot } from '@/components/mascot'
 import { BaseBadge, BaseButton, BaseCard, type BadgeVariant } from '@/components/ui'
-import { useBatchesStore } from '@/stores/batches'
+import { clampPollIntervalMs, useBatchesStore } from '@/stores/batches'
 import type { BatchItemStatus, LotSummary, TrafficLightColor } from '@/types/api'
 import { BATCH_MAX_FILES_PER_UPLOAD, BATCH_MAX_TOTAL_FILES } from '@/utils/batchFiles'
 import { formatRub, formatTaskStepRu, formatVerdictLabelRu } from '@/utils/formatters'
@@ -31,8 +31,11 @@ const isUploadOpen = ref(false)
 const uploadMode = ref<'create' | 'append'>('append')
 const previewLot = ref<LotSummary | null>(null)
 
+const MAX_RETRY_BACKOFF_MS = 30_000
+
 let pollTimerId: number | null = null
 let pollingEpoch = 0
+let consecutivePollFailures = 0
 
 const batchId = computed(() => {
   const raw = route.params.batchId
@@ -71,8 +74,15 @@ const VERDICT_BADGE_VARIANT: Record<TrafficLightColor, BadgeVariant> = {
   red: 'danger',
 }
 
+function isNonRetryablePollError(status: number | null): boolean {
+  if (status === null) return false
+  // 401/403/404 and permanent 4xx errors should stop polling immediately; 408/429/5xx/network(0) retry.
+  return status >= 400 && status < 500 && status !== 408 && status !== 429
+}
+
 function stopPolling(): void {
   pollingEpoch += 1
+  consecutivePollFailures = 0
   if (pollTimerId !== null && typeof window !== 'undefined') {
     window.clearTimeout(pollTimerId)
     pollTimerId = null
@@ -85,15 +95,30 @@ async function runPollCycle(targetBatchId: string, epoch: number, initial: boole
   const result = await batchesStore.fetchBatch(targetBatchId, { silent: !initial })
   if (epoch !== pollingEpoch) return
 
-  if (
-    result &&
-    (result.status === 'queued' || result.status === 'processing') &&
-    typeof window !== 'undefined'
-  ) {
-    const interval = Math.max(800, batchesStore.pollIntervalMs || 1500)
+  if (result) {
+    consecutivePollFailures = 0
+    if (
+      (result.status === 'queued' || result.status === 'processing') &&
+      typeof window !== 'undefined'
+    ) {
+      const interval = clampPollIntervalMs(batchesStore.pollIntervalMs)
+      pollTimerId = window.setTimeout(() => {
+        void runPollCycle(targetBatchId, epoch, false)
+      }, interval)
+    }
+    return
+  }
+
+  if (!isNonRetryablePollError(batchesStore.batchErrorStatus) && typeof window !== 'undefined') {
+    consecutivePollFailures += 1
+    const baseInterval = clampPollIntervalMs(batchesStore.pollIntervalMs)
+    const backoffDelay = Math.min(
+      MAX_RETRY_BACKOFF_MS,
+      baseInterval * 2 ** Math.min(consecutivePollFailures - 1, 4),
+    )
     pollTimerId = window.setTimeout(() => {
       void runPollCycle(targetBatchId, epoch, false)
-    }, interval)
+    }, backoffDelay)
   }
 }
 

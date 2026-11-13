@@ -1,11 +1,11 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { createMockApiClient } from '@/api/mockApiClient'
+import { createMockApiClient, resetMockLotsWorkspace } from '@/api/mockApiClient'
 import type { ApiClient } from '@/api/types'
-import { useBatchesStore } from '@/stores/batches'
+import { clampPollIntervalMs, useBatchesStore } from '@/stores/batches'
 import { useLotsStore } from '@/stores/lots'
-import type { BatchProgressResponse } from '@/types/api'
+import { ApiError, type BatchProgressResponse } from '@/types/api'
 
 function makeSheetFile(name: string): File {
   return new File(['mock-sheet-bytes'], name, { type: 'image/jpeg' })
@@ -123,5 +123,44 @@ describe('useBatchesStore & mock batch pipeline', () => {
     await call1
 
     expect(batchesStore.activeBatch?.status).toBe('completed')
+  })
+
+  it('clamps server poll_interval_ms bounds, tracks error status, and persists mock workspace', async () => {
+    expect(clampPollIntervalMs(200)).toBe(800)
+    expect(clampPollIntervalMs(999_999_999)).toBe(10_000)
+    expect(clampPollIntervalMs(2500)).toBe(2500)
+    expect(clampPollIntervalMs(-1)).toBe(1500)
+
+    const batchesStore = useBatchesStore()
+    const baseClient = createMockApiClient({ delayMs: 0 })
+    const unauthClient = {
+      auth: baseClient.auth,
+      lots: {
+        ...baseClient.lots,
+        getBatch: vi.fn().mockRejectedValue(
+          new ApiError({
+            type: 'about:blank',
+            title: 'Unauthorized',
+            status: 401,
+            detail: 'Session expired',
+          }),
+        ),
+      },
+    } as unknown as ApiClient
+
+    const failedResult = await batchesStore.fetchBatch('batch-401', {}, unauthClient)
+    expect(failedResult).toBeNull()
+    expect(batchesStore.batchErrorStatus).toBe(401)
+
+    // Verify F5 workspace persistence when persistState is enabled.
+    resetMockLotsWorkspace()
+    const clientBeforeReload = createMockApiClient({ delayMs: 0, persistState: true })
+    const created = await clientBeforeReload.lots.createBatch([makeSheetFile('sheet_corolla.jpg')])
+
+    const clientAfterReload = createMockApiClient({ delayMs: 0, persistState: true })
+    const restored = await clientAfterReload.lots.getBatch(created.batch_id)
+    expect(restored.batch_id).toBe(created.batch_id)
+    expect(restored.items).toHaveLength(1)
+    resetMockLotsWorkspace()
   })
 })

@@ -2,6 +2,7 @@ import { ApiError, type InvalidParamDetail } from '@/types/api'
 
 export interface MockClientOptions {
   delayMs?: number
+  persistState?: boolean
 }
 
 export function delay(ms: number): Promise<void> {

@@ -371,6 +371,8 @@ function validateUploadFilesForMock(files: readonly File[], instancePath: string
   }
 }
 
+export const MOCK_WORKSPACE_STORAGE_KEY = 'yuzu.mock.workspace.v1'
+
 export interface MockLotsWorkspace {
   getFeedSnapshot(): { lots: LotSummary[]; inProgress: InProgressSummary }
   createBatch(files: readonly File[]): BatchCreateResponse
@@ -378,15 +380,88 @@ export interface MockLotsWorkspace {
   appendBatchItems(batchId: string, files: readonly File[]): BatchProgressResponse
 }
 
-export function createMockLotsWorkspace(): MockLotsWorkspace {
-  const feedLots: LotSummary[] = [...SEEDED_MOCK_LOTS]
-  const promotedLotIds = new Set(feedLots.map((lot) => lot.lot_id))
-  const batches = new Map<string, MockBatchRecord>()
-  let sequenceCounter = 10
+export interface MockLotsWorkspaceOptions {
+  persistState?: boolean
+}
 
-  // Pre-seed the default in-progress batch so clicking items from the dashboard opens a live queue.
+interface PersistedWorkspaceState {
+  feedLots: LotSummary[]
+  promotedLotIds: string[]
+  batches: Array<[string, MockBatchRecord]>
+  sequenceCounter: number
+}
+
+function getStorage(): Storage | null {
+  if (typeof window === 'undefined') return null
+  try {
+    return window.localStorage
+  } catch {
+    return null
+  }
+}
+
+export function resetMockLotsWorkspace(): void {
+  try {
+    getStorage()?.removeItem(MOCK_WORKSPACE_STORAGE_KEY)
+  } catch {
+    // Ignore storage removal errors in restricted browser contexts.
+  }
+}
+
+function loadPersistedWorkspace(): PersistedWorkspaceState | null {
+  try {
+    const raw = getStorage()?.getItem(MOCK_WORKSPACE_STORAGE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<PersistedWorkspaceState> | null
+    if (
+      !parsed ||
+      !Array.isArray(parsed.feedLots) ||
+      !Array.isArray(parsed.promotedLotIds) ||
+      !Array.isArray(parsed.batches) ||
+      typeof parsed.sequenceCounter !== 'number'
+    ) {
+      return null
+    }
+    return {
+      feedLots: parsed.feedLots,
+      promotedLotIds: parsed.promotedLotIds,
+      batches: parsed.batches,
+      sequenceCounter: parsed.sequenceCounter,
+    }
+  } catch {
+    return null
+  }
+}
+
+export function createMockLotsWorkspace(options: MockLotsWorkspaceOptions = {}): MockLotsWorkspace {
+  const persistState = options.persistState ?? false
+  const persisted = persistState ? loadPersistedWorkspace() : null
+
+  const feedLots: LotSummary[] = persisted ? [...persisted.feedLots] : [...SEEDED_MOCK_LOTS]
+  const promotedLotIds = new Set<string>(
+    persisted ? persisted.promotedLotIds : feedLots.map((lot) => lot.lot_id),
+  )
+  const batches = new Map<string, MockBatchRecord>(persisted ? persisted.batches : [])
+  let sequenceCounter = persisted ? persisted.sequenceCounter : 10
+
+  function saveWorkspace(): void {
+    if (!persistState) return
+    try {
+      const payload: PersistedWorkspaceState = {
+        feedLots,
+        promotedLotIds: Array.from(promotedLotIds),
+        batches: Array.from(batches.entries()),
+        sequenceCounter,
+      }
+      getStorage()?.setItem(MOCK_WORKSPACE_STORAGE_KEY, JSON.stringify(payload))
+    } catch {
+      // Ignore storage quota / private-mode write failures cleanly.
+    }
+  }
+
+  // Pre-seed the default in-progress batch on fresh workspace initialization.
   const seededBatchId = MOCK_IN_PROGRESS_SUMMARY.items[0]?.batch_id
-  if (seededBatchId) {
+  if (!persisted && seededBatchId) {
     const bootTimeMs = Date.now()
     const createdAtIso = new Date(bootTimeMs).toISOString()
     batches.set(seededBatchId, {
@@ -413,18 +488,15 @@ export function createMockLotsWorkspace(): MockLotsWorkspace {
         }
       }),
     })
+    saveWorkspace()
   }
 
-  function computeBatchProgress(record: MockBatchRecord, nowMs: number): BatchProgressResponse {
-    const snapshots = record.items.map((item) => {
-      const snap = resolveItemSnapshot(item, nowMs)
-      if (snap.status === 'ready' && snap.summary && !promotedLotIds.has(snap.summary.lot_id)) {
-        promotedLotIds.add(snap.summary.lot_id)
-        feedLots.unshift(snap.summary)
-      }
-      return snap
-    })
-
+  // Pure evaluation of batch state at `nowMs` (never mutates `feedLots`).
+  function buildBatchProgressSnapshot(
+    record: MockBatchRecord,
+    nowMs: number,
+  ): BatchProgressResponse {
+    const snapshots = record.items.map((item) => resolveItemSnapshot(item, nowMs))
     const readyCount = snapshots.filter((item) => item.status === 'ready').length
     const failedCount = snapshots.filter((item) => item.status === 'failed').length
     const processedCount = readyCount + failedCount
@@ -454,12 +526,28 @@ export function createMockLotsWorkspace(): MockLotsWorkspace {
     }
   }
 
-  function syncAllBatches(nowMs: number): InProgressSummary {
+  function promoteReadyItems(progress: BatchProgressResponse): boolean {
+    let didPromote = false
+    for (const item of progress.items) {
+      if (item.status === 'ready' && item.summary && !promotedLotIds.has(item.summary.lot_id)) {
+        promotedLotIds.add(item.summary.lot_id)
+        feedLots.unshift(item.summary)
+        didPromote = true
+      }
+    }
+    return didPromote
+  }
+
+  function advanceAllBatches(nowMs: number): InProgressSummary {
     let activeBatchesCount = 0
     const activeItems: InProgressItemPreview[] = []
+    let didMutateFeed = false
 
     for (const record of batches.values()) {
-      const progress = computeBatchProgress(record, nowMs)
+      const progress = buildBatchProgressSnapshot(record, nowMs)
+      if (promoteReadyItems(progress)) {
+        didMutateFeed = true
+      }
       const pending = progress.items.filter(
         (item) => item.status === 'queued' || item.status === 'processing',
       )
@@ -477,6 +565,10 @@ export function createMockLotsWorkspace(): MockLotsWorkspace {
       }
     }
 
+    if (didMutateFeed) {
+      saveWorkspace()
+    }
+
     return {
       active_batches_count: activeBatchesCount,
       total_processing_lots: activeItems.length,
@@ -486,7 +578,7 @@ export function createMockLotsWorkspace(): MockLotsWorkspace {
 
   return {
     getFeedSnapshot() {
-      const inProgress = syncAllBatches(Date.now())
+      const inProgress = advanceAllBatches(Date.now())
       return {
         lots: [...feedLots],
         inProgress,
@@ -519,6 +611,7 @@ export function createMockLotsWorkspace(): MockLotsWorkspace {
       })
 
       batches.set(batchId, { batchId, createdAtIso, items })
+      saveWorkspace()
 
       return {
         batch_id: batchId,
@@ -540,7 +633,11 @@ export function createMockLotsWorkspace(): MockLotsWorkspace {
           instance: `/api/v1/lots/batches/${batchId}`,
         })
       }
-      return computeBatchProgress(record, Date.now())
+      const progress = buildBatchProgressSnapshot(record, Date.now())
+      if (promoteReadyItems(progress)) {
+        saveWorkspace()
+      }
+      return progress
     },
 
     appendBatchItems(batchId: string, files: readonly File[]): BatchProgressResponse {
@@ -557,7 +654,7 @@ export function createMockLotsWorkspace(): MockLotsWorkspace {
       }
 
       const nowMs = Date.now()
-      const currentProgress = computeBatchProgress(record, nowMs)
+      const currentProgress = buildBatchProgressSnapshot(record, nowMs)
       if (
         currentProgress.status === 'completed' ||
         currentProgress.status === 'partial_failed' ||
@@ -606,7 +703,10 @@ export function createMockLotsWorkspace(): MockLotsWorkspace {
         })
       }
 
-      return computeBatchProgress(record, Date.now())
+      const updatedProgress = buildBatchProgressSnapshot(record, Date.now())
+      promoteReadyItems(updatedProgress)
+      saveWorkspace()
+      return updatedProgress
     },
   }
 }
