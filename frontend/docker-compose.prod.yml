@@ -1,0 +1,23 @@
+services:
+  frontend:
+    build:
+      context: .
+      target: prod
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api/v1}
+        VITE_USE_MOCKS: ${PROD_VITE_USE_MOCKS:-false}
+    container_name: yuzu_frontend_prod
+    restart: always
+    ports:
+      - "${BIND_HOST:-127.0.0.1}:${PORT:-3000}:80"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+      API_UPSTREAM: ${API_UPSTREAM:-http://host.docker.internal:8000}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "[ \"$$(wget -qO- --header='Host: ${HEALTHCHECK_HOST:-localhost}' http://127.0.0.1:80/healthz)\" = \"OK\" ] || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s

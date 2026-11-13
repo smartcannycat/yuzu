@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ChevronDown, ChevronRight, Clock, Loader2 } from '@lucide/vue'
-import { computed, useId } from 'vue'
+import { computed, ref, useId } from 'vue'
 
 import { BaseBadge } from '@/components/ui'
 import type { InProgressItemPreview, InProgressSummary, ItemProcessingStatus } from '@/types/api'
@@ -17,10 +17,8 @@ const props = withDefaults(defineProps<Props>(), {
   collapsible: true,
 })
 
-const isOpen = defineModel<boolean>('open', { default: false })
-if (props.defaultOpen && !isOpen.value) {
-  isOpen.value = true
-}
+const isOpen = defineModel<boolean>('open')
+const uncontrolledOpen = ref(props.defaultOpen)
 
 const emit = defineEmits<{
   selectItem: [item: InProgressItemPreview]
@@ -29,7 +27,10 @@ const emit = defineEmits<{
 const uid = useId()
 const contentId = `in-progress-panel-${uid}`
 
-const expanded = computed(() => (props.collapsible ? isOpen.value : true))
+const expanded = computed(() => {
+  if (!props.collapsible) return true
+  return isOpen.value !== undefined ? isOpen.value : uncontrolledOpen.value
+})
 
 const STATUS_META: Record<
   ItemProcessingStatus,
@@ -43,7 +44,9 @@ const STATUS_META: Record<
 
 function toggleExpanded() {
   if (!props.collapsible) return
-  isOpen.value = !isOpen.value
+  const next = !expanded.value
+  uncontrolledOpen.value = next
+  isOpen.value = next
 }
 </script>
 

@@ -48,8 +48,49 @@ export function isHeicFile(file: File): boolean {
   return ext === '.heic' || ext === '.heif'
 }
 
-export function getFileSignature(file: File): string {
-  return `${file.name}::${file.size}::${file.lastModified}`
+const SIGNATURE_HEAD_BYTES = 4096
+const SIGNATURE_TAIL_BYTES = 2048
+
+async function readBlobBytes(blob: Blob): Promise<Uint8Array> {
+  if (typeof blob.arrayBuffer === 'function') {
+    return new Uint8Array(await blob.arrayBuffer())
+  }
+  return new Uint8Array(await new Response(blob).arrayBuffer())
+}
+
+function hashBytesFnv1a64(head: Uint8Array, tail: Uint8Array, totalSize: number): string {
+  let h1 = 0x811c9dc5
+  let h2 = 0x9e3779b9
+
+  const feed = (bytes: Uint8Array) => {
+    for (const byte of bytes) {
+      h1 ^= byte
+      h1 = Math.imul(h1, 0x01000193)
+      h2 ^= byte + 0x51
+      h2 = Math.imul(h2, 0x85ebca6b)
+    }
+  }
+
+  feed(head)
+  feed(tail)
+
+  return `${totalSize}:${(h1 >>> 0).toString(16).padStart(8, '0')}${(h2 >>> 0).toString(16).padStart(8, '0')}`
+}
+
+/**
+ * Computes a content-based fingerprint using head/tail byte slices plus exact file size,
+ * catching renamed duplicates while allowing distinct images with identical metadata.
+ */
+export async function getFileSignature(file: File): Promise<string> {
+  const headSlice = file.slice(0, Math.min(file.size, SIGNATURE_HEAD_BYTES))
+  const tailStart = Math.max(SIGNATURE_HEAD_BYTES, file.size - SIGNATURE_TAIL_BYTES)
+  const tailSlice = file.size > SIGNATURE_HEAD_BYTES ? file.slice(tailStart, file.size) : new Blob()
+
+  const [headBytes, tailBytes] = await Promise.all([
+    readBlobBytes(headSlice),
+    readBlobBytes(tailSlice),
+  ])
+  return hashBytesFnv1a64(headBytes, tailBytes, file.size)
 }
 
 export function formatFileSizeRu(bytes: number): string {
@@ -64,11 +105,11 @@ export function formatFileSizeRu(bytes: number): string {
  * Strictly validates an incoming batch of files before adding them to staged selection.
  * Any format, size, duplicate, or count violation rejects the entire incoming addition.
  */
-export function validateBatchFileAddition(
+export async function validateBatchFileAddition(
   currentFiles: readonly File[],
   incomingFiles: readonly File[],
   maxFiles: number = BATCH_MAX_FILES_PER_UPLOAD,
-): BatchFileValidationResult {
+): Promise<BatchFileValidationResult> {
   if (incomingFiles.length === 0) {
     return { ok: false, error: 'Не выбрано ни одного файла.' }
   }
@@ -94,8 +135,7 @@ export function validateBatchFileAddition(
   const invalidTypeNames: string[] = []
   const emptyNames: string[] = []
   const oversizedNames: string[] = []
-  const duplicateNames: string[] = []
-  const seenSignatures = new Set(currentFiles.map(getFileSignature))
+  const validFiles: File[] = []
 
   for (const file of incomingFiles) {
     if (!isSupportedBatchFile(file)) {
@@ -110,12 +150,7 @@ export function validateBatchFileAddition(
       oversizedNames.push(file.name)
       continue
     }
-    const sig = getFileSignature(file)
-    if (seenSignatures.has(sig)) {
-      duplicateNames.push(file.name)
-      continue
-    }
-    seenSignatures.add(sig)
+    validFiles.push(file)
   }
 
   if (invalidTypeNames.length > 0) {
@@ -139,6 +174,22 @@ export function validateBatchFileAddition(
     }
   }
 
+  const [existingSigs, incomingSigs] = await Promise.all([
+    Promise.all(currentFiles.map(getFileSignature)),
+    Promise.all(validFiles.map(getFileSignature)),
+  ])
+  const seenSignatures = new Set(existingSigs)
+  const duplicateNames: string[] = []
+
+  for (const [idx, file] of validFiles.entries()) {
+    const sig = incomingSigs[idx]!
+    if (seenSignatures.has(sig)) {
+      duplicateNames.push(file.name)
+      continue
+    }
+    seenSignatures.add(sig)
+  }
+
   if (duplicateNames.length > 0) {
     return {
       ok: false,
@@ -147,109 +198,4 @@ export function validateBatchFileAddition(
   }
 
   return { ok: true, files: [...incomingFiles] }
-}
-
-interface DemoSheetPreset {
-  filename: string
-  auction: string
-  lotNumber: string
-  title: string
-  grade: string
-  accent: string
-}
-
-const DEMO_SHEET_PRESETS: readonly DemoSheetPreset[] = [
-  {
-    filename: 'sheet_corolla_3142.jpg',
-    auction: 'TAA CHUBU',
-    lotNumber: '3142',
-    title: 'TOYOTA COROLLA TOURING',
-    grade: '4',
-    accent: '#15803D',
-  },
-  {
-    filename: 'sheet_harrier_5541.jpg',
-    auction: 'USS TOKYO',
-    lotNumber: '5541',
-    title: 'TOYOTA HARRIER HYBRID',
-    grade: '3.5',
-    accent: '#B45309',
-  },
-  {
-    filename: 'sheet_vezel_8412.jpg',
-    auction: 'CAA CHUBU',
-    lotNumber: '8412',
-    title: 'HONDA VEZEL e:HEV',
-    grade: '4.5',
-    accent: '#FF6B00',
-  },
-]
-
-async function renderDemoSheetFile(preset: DemoSheetPreset): Promise<File> {
-  if (typeof document !== 'undefined') {
-    const canvas = document.createElement('canvas')
-    canvas.width = 420
-    canvas.height = 580
-    const ctx = canvas.getContext('2d')
-
-    if (ctx) {
-      ctx.fillStyle = '#FFFDF7'
-      ctx.fillRect(0, 0, canvas.width, canvas.height)
-
-      ctx.strokeStyle = '#1F2937'
-      ctx.lineWidth = 3
-      ctx.strokeRect(18, 18, canvas.width - 36, canvas.height - 36)
-
-      ctx.fillStyle = '#111827'
-      ctx.fillRect(18, 18, canvas.width - 36, 52)
-      ctx.fillStyle = '#FFFFFF'
-      ctx.font = 'bold 20px sans-serif'
-      ctx.fillText(`${preset.auction}  #${preset.lotNumber}`, 32, 51)
-
-      ctx.fillStyle = '#111827'
-      ctx.font = 'bold 17px sans-serif'
-      ctx.fillText(preset.title, 32, 102)
-
-      ctx.strokeStyle = '#D1D5DB'
-      ctx.lineWidth = 2
-      ctx.strokeRect(32, 124, canvas.width - 64, 96)
-      ctx.fillStyle = '#6B7280'
-      ctx.font = '14px sans-serif'
-      ctx.fillText('GRADE', 46, 152)
-      ctx.fillStyle = preset.accent
-      ctx.font = 'bold 42px sans-serif'
-      ctx.fillText(preset.grade, 46, 202)
-
-      // Stylized car diagram box
-      ctx.strokeStyle = '#374151'
-      ctx.lineWidth = 2
-      ctx.strokeRect(32, 244, canvas.width - 64, 210)
-      ctx.strokeRect(110, 274, 200, 150)
-      ctx.fillStyle = '#9CA3AF'
-      ctx.font = '13px sans-serif'
-      ctx.fillText('A1   U2   W1', 160, 355)
-
-      ctx.fillStyle = '#6B7280'
-      ctx.font = '13px sans-serif'
-      ctx.fillText('YUZU DEMO AUCTION SHEET', 32, 520)
-
-      const blob = await new Promise<Blob | null>((resolve) => {
-        canvas.toBlob((result) => resolve(result), 'image/jpeg', 0.88)
-      })
-      if (blob) {
-        return new File([blob], preset.filename, { type: 'image/jpeg' })
-      }
-    }
-  }
-
-  return new File([`DEMO:${preset.auction}:${preset.lotNumber}`], preset.filename, {
-    type: 'image/jpeg',
-  })
-}
-
-export async function createDemoAuctionSheetFiles(
-  maxCount: number = DEMO_SHEET_PRESETS.length,
-): Promise<File[]> {
-  const count = Math.max(0, Math.min(maxCount, DEMO_SHEET_PRESETS.length))
-  return Promise.all(DEMO_SHEET_PRESETS.slice(0, count).map(renderDemoSheetFile))
 }

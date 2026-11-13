@@ -8,9 +8,7 @@ import { BaseButton, BottomSheet } from '@/components/ui'
 import {
   BATCH_ACCEPT_ATTR,
   BATCH_MAX_FILES_PER_UPLOAD,
-  createDemoAuctionSheetFiles,
   formatFileSizeRu,
-  getFileSignature,
   isHeicFile,
   validateBatchFileAddition,
 } from '@/utils/batchFiles'
@@ -52,6 +50,16 @@ const validationError = ref<string | null>(null)
 const isGeneratingDemo = ref(false)
 
 let dragEnterDepth = 0
+let addSequence = 0
+let itemKeyCounter = 0
+
+function createStagedItemId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  itemKeyCounter += 1
+  return `staged-${itemKeyCounter}`
+}
 
 const effectiveMaxFiles = computed(() =>
   Math.max(0, Math.min(BATCH_MAX_FILES_PER_UPLOAD, props.maxFiles)),
@@ -101,6 +109,7 @@ function revokeItemPreview(item: StagedSheetItem): void {
 }
 
 function clearStagedItems(): void {
+  addSequence += 1
   for (const item of stagedItems.value) {
     revokeItemPreview(item)
   }
@@ -130,7 +139,7 @@ function buildStagedItem(file: File): StagedSheetItem {
       : null
 
   return {
-    id: getFileSignature(file),
+    id: createStagedItemId(),
     file,
     previewUrl,
     isHeic: heic,
@@ -138,11 +147,14 @@ function buildStagedItem(file: File): StagedSheetItem {
   }
 }
 
-function addIncomingFiles(incoming: readonly File[]): void {
-  if (props.isSubmitting) return
+async function addIncomingFiles(incoming: readonly File[]): Promise<void> {
+  if (props.isSubmitting || incoming.length === 0) return
 
+  const seq = ++addSequence
   const currentFiles = stagedItems.value.map((item) => item.file)
-  const result = validateBatchFileAddition(currentFiles, incoming, effectiveMaxFiles.value)
+  const result = await validateBatchFileAddition(currentFiles, incoming, effectiveMaxFiles.value)
+  if (seq !== addSequence || !open.value || props.isSubmitting) return
+
   if (!result.ok) {
     validationError.value = result.error
     return
@@ -160,7 +172,7 @@ function handleFileInputChange(event: Event): void {
     input.value = ''
   }
   if (files.length === 0) return
-  addIncomingFiles(files)
+  void addIncomingFiles(files)
 }
 
 function openGalleryPicker(): void {
@@ -200,7 +212,7 @@ function handleDrop(event: DragEvent): void {
   if (props.isSubmitting) return
   const droppedFiles = event.dataTransfer?.files ? Array.from(event.dataTransfer.files) : []
   if (droppedFiles.length === 0) return
-  addIncomingFiles(droppedFiles)
+  void addIncomingFiles(droppedFiles)
 }
 
 function removeStagedItem(id: string): void {
@@ -214,13 +226,14 @@ function removeStagedItem(id: string): void {
 }
 
 async function handleAddDemoSheets(): Promise<void> {
-  if (!canAddMore.value || isGeneratingDemo.value) return
+  if (!isMockMode || !canAddMore.value || isGeneratingDemo.value) return
   isGeneratingDemo.value = true
   try {
     const remaining = effectiveMaxFiles.value - stagedItems.value.length
+    const { createDemoAuctionSheetFiles } = await import('@/utils/batchDemo')
     const demoFiles = await createDemoAuctionSheetFiles(remaining)
     if (demoFiles.length > 0) {
-      addIncomingFiles(demoFiles)
+      await addIncomingFiles(demoFiles)
     }
   } finally {
     isGeneratingDemo.value = false

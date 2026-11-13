@@ -182,8 +182,8 @@ export function queryMockLots(
   }
 }
 
-export function createMockLotsApi(defaultDelay: number): LotsApi {
-  const workspace = createMockLotsWorkspace()
+export function createMockLotsApi(defaultDelay: number, persistState = false): LotsApi {
+  const workspace = createMockLotsWorkspace({ persistState })
 
   return {
     async list(params?: LotListQueryParams): Promise<LotListResponse> {
