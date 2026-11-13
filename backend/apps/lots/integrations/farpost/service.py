@@ -10,6 +10,7 @@ from datetime import timedelta
 from functools import lru_cache
 from pathlib import Path
 
+from django.db import transaction
 from django.utils import timezone
 
 from apps.core.enums import ExternalCacheSource, WorkType
@@ -20,7 +21,7 @@ from apps.lots.integrations.farpost.client import (
     PartCriteria,
     PartOffer,
 )
-from apps.lots.models import Lot
+from apps.lots.models import DamagedPartItem, FarpostRepairSummary, Lot, ServiceWorkItem
 from apps.lots.schemas import FarpostRepairSummary as RepairSchema
 from config.settings.config import get_settings
 
@@ -259,3 +260,22 @@ def estimate_repair(lot: Lot, *, client: FarpostClient | None = None) -> RepairS
             "Оценка ремонта; включение в стоимость под ключ определяется расчётом экономики"
         ),
     )
+
+
+def save_repair_estimate(lot: Lot, *, client: FarpostClient | None = None) -> FarpostRepairSummary:
+    estimate = estimate_repair(lot, client=client)
+    # Network requests have finished before locking the lot or writing the estimate.
+    with transaction.atomic():
+        Lot.objects.select_for_update().get(pk=lot.pk)
+        summary, _ = FarpostRepairSummary.objects.update_or_create(
+            lot=lot, defaults=estimate.model_dump(exclude={"parts", "service_works"})
+        )
+        summary.parts.all().delete()
+        summary.service_works.all().delete()
+        DamagedPartItem.objects.bulk_create(
+            DamagedPartItem(repair=summary, **part.model_dump()) for part in estimate.parts
+        )
+        ServiceWorkItem.objects.bulk_create(
+            ServiceWorkItem(repair=summary, **work.model_dump()) for work in estimate.service_works
+        )
+    return summary
