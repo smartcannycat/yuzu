@@ -144,6 +144,7 @@ _STEP_BID = "Ставка на аукционе"
 _STEP_JAPAN = "Расходы в Японии (FOB и сбор)"
 _STEP_FREIGHT = "Фрахт Тояма-ВЛК"
 _STEP_DUTY = "Таможенная пошлина ЕАЭС и сбор"
+_STEP_DUTY_EV = "Таможня ЕАЭС (пошлина, акциз, НДС, сбор)"
 _STEP_UTIL = "Утилизационный сбор РФ"
 _STEP_BROKER = "СВХ, брокер, СБКТС, ЭПТС"
 _STEP_REPAIR = "Запчасти Farpost и ремонт"
@@ -455,12 +456,22 @@ def calculate_clearance_fee(customs_value_rub: int) -> int:
     raise ValueError("unreachable clearance fee band")  # pragma: no cover
 
 
+def _validate_rates(rates: CurrencyRatesInput) -> None:
+    if rates.jpy_rub <= 0:
+        raise ValueError("jpy_rub must be positive")
+    if rates.eur_rub <= 0:
+        raise ValueError("eur_rub must be positive")
+    if rates.usd_rub <= 0:
+        raise ValueError("usd_rub must be positive")
+
+
 def calculate_customs(
     params: CustomsInput,
     rates: CurrencyRatesInput,
     on_date: date,
 ) -> CustomsResult:
     """Full customs and logistics calculation for a single vehicle."""
+    _validate_rates(rates)
     age_corridor = params.age_corridor or resolve_age_corridor(
         params.first_reg_year, params.first_reg_month, on_date
     )
@@ -547,6 +558,7 @@ def build_wise_cost_ladder(params: LadderInput) -> LadderResult:
     ``sum(steps.amount_rub) == turnkey_cost_rub`` to the ruble).
     """
     rates = params.rates
+    _validate_rates(rates)
     customs = params.customs
 
     bid_rub = math.floor(params.bid_jpy * rates.jpy_rub + 0.5)
@@ -567,6 +579,11 @@ def build_wise_cost_ladder(params: LadderInput) -> LadderResult:
     )
     repair_rub = params.repair_total_rub if params.include_repairs else 0
 
+    is_ev_aggregate = customs.excise_rub > 0 or customs.import_vat_rub > 0
+    duty_step_name = _STEP_DUTY_EV if is_ev_aggregate else _STEP_DUTY
+    duty_original_currency = None if is_ev_aggregate else "EUR"
+    duty_original_amount = None if is_ev_aggregate else customs.customs_duty_eur
+
     steps = [
         WiseCostStepResult(1, _STEP_BID, bid_rub, "JPY", float(params.bid_jpy), False),
         WiseCostStepResult(2, _STEP_JAPAN, fob_rub, "JPY", float(params.japan_fob_jpy), False),
@@ -580,10 +597,10 @@ def build_wise_cost_ladder(params: LadderInput) -> LadderResult:
         ),
         WiseCostStepResult(
             4,
-            _STEP_DUTY,
+            duty_step_name,
             duty_step_rub,
-            "EUR",
-            customs.customs_duty_eur,
+            duty_original_currency,
+            duty_original_amount,
             False,
         ),
         WiseCostStepResult(5, _STEP_UTIL, util_rub, "RUB", float(util_rub), False),
@@ -594,6 +611,8 @@ def build_wise_cost_ladder(params: LadderInput) -> LadderResult:
     steps.append(WiseCostStepResult(7, _STEP_REPAIR, repair_rub, "RUB", float(repair_rub), True))
 
     turnkey_cost_rub = sum(step.amount_rub for step in steps)
+    if turnkey_cost_rub <= 0:
+        raise ValueError("turnkey_cost_rub must be positive")
     net_benefit_rub = params.market_price_rf_rub - turnkey_cost_rub
     benefit_percentage = round(net_benefit_rub / turnkey_cost_rub * 100, 1)
 
@@ -701,6 +720,7 @@ def derive_start_bid_from_market(params: StartBidInput) -> StartBidResult:
         raise ValueError("market_price_rf_rub must not be negative")
 
     rates = params.rates
+    _validate_rates(rates)
     fob_rub = math.floor(params.japan_fob_jpy * rates.jpy_rub + 0.5)
     freight_rub = params.customs_params.freight_rub
     if freight_rub is None:
