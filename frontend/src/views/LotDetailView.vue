@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ArrowLeft, OctagonAlert, Printer, RotateCcw } from '@lucide/vue'
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import LotDetailSheets, {
@@ -127,10 +127,37 @@ function handleResetSimulation(): void {
   lotsStore.resetLotSimulation(lotId.value)
 }
 
-function handlePrintPdf(): void {
-  if (typeof window !== 'undefined') {
-    window.print()
+const baseDocumentTitle = typeof document !== 'undefined' ? document.title : ''
+
+const lotDocumentTitle = computed(() => {
+  if (!detail.value) return baseDocumentTitle
+  const { make, model, first_reg_year: year, frame_id: frameId } = detail.value.passport
+  const titleParts = [make, model, year ? String(year) : null].filter(Boolean).join(' ')
+  return frameId ? `${titleParts} (${frameId}) — YUZU` : `${titleParts} — YUZU`
+})
+
+watch(
+  lotDocumentTitle,
+  (nextTitle) => {
+    if (typeof document !== 'undefined' && nextTitle) {
+      document.title = nextTitle
+    }
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(() => {
+  if (typeof document !== 'undefined' && baseDocumentTitle) {
+    document.title = baseDocumentTitle
   }
+})
+
+function handlePrintPdf(): void {
+  if (typeof window === 'undefined') return
+  if (typeof document !== 'undefined' && lotDocumentTitle.value) {
+    document.title = lotDocumentTitle.value
+  }
+  window.print()
 }
 </script>
 

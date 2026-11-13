@@ -66,7 +66,10 @@ const FUEL_LABELS_RU: Record<FuelType, string> = {
   ev: 'Электро',
 }
 
-export function buildLotTtxItems(detail: LotDetailResponse): TtxItem[] {
+export function buildLotTtxItems(
+  detail: LotDetailResponse,
+  options?: { katashikiSpan?: 1 | 2 },
+): TtxItem[] {
   const { passport, audit } = detail
   const engineStr = passport.engine_cc ? `${passport.engine_cc.toLocaleString('ru-RU')} см³` : '—'
   const powerStr = passport.power_hp
@@ -117,7 +120,7 @@ export function buildLotTtxItems(detail: LotDetailResponse): TtxItem[] {
     {
       label: 'Код модели (Katashiki)',
       value: `${passport.model_code} · торгов в архиве: ${audit.times_auctioned}`,
-      span: 2,
+      span: options?.katashikiSpan ?? 2,
     },
   ]
 }
