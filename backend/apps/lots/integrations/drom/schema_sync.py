@@ -1,5 +1,5 @@
 import json
-import re
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 
 from apps.lots.integrations.drom.client import _DEFAULT_HEADERS, _detect_charset
+from apps.lots.integrations.drom.html_utils import extract_bulls_list_ssr_payload
 from apps.lots.integrations.drom.parser import (
     parse_brand_models_from_html,
     parse_catalog_brands_from_html,
@@ -24,56 +25,57 @@ _FUEL_LABEL_TO_KEY: dict[str, str] = {
 }
 
 
+def _parse_drive_unit_key(label: str) -> str | None:
+    lower = label.strip().lower()
+    if "4wd" in lower:
+        return "4WD"
+    if "перед" in lower:
+        return "FWD"
+    if "зад" in lower:
+        return "RWD"
+    return None
+
+
 def _extract_filter_schema_and_firms(html: str) -> tuple[dict[str, Any], dict[str, int]]:
-    for match in re.finditer(r"<script[^>]*>(.*?)</script>", html, re.DOTALL | re.IGNORECASE):
-        text = match.group(1)
-        if '"__slug":"bulls-list-auto"' not in text or '"bullList"' not in text:
-            continue
-        try:
-            payload = json.loads(text)
-        except ValueError:
-            continue
-        view = (payload.get("filter") or {}).get("view") or {}
+    payload = extract_bulls_list_ssr_payload(html)
+    if payload is None:
+        return {"fuel_types": {}, "drive_units": {}, "frame_types": {}}, {}
 
-        firms_data = view.get("firms") or {}
-        firm_ids: dict[str, int] = {}
-        for bucket in ("top", "regular"):
-            for item in firms_data.get(bucket) or []:
-                if isinstance(item, dict) and item.get("name") and item.get("id") is not None:
-                    firm_ids[str(item["name"]).strip().lower()] = int(item["id"])
+    view = (payload.get("filter") or {}).get("view") or {}
+    firms_data = view.get("firms") or {}
+    firm_ids: dict[str, int] = {}
+    for bucket in ("top", "regular"):
+        for item in firms_data.get(bucket) or []:
+            if isinstance(item, dict) and item.get("name") and item.get("id") is not None:
+                firm_ids[str(item["name"]).strip().lower()] = int(item["id"])
 
-        fuel_types: dict[str, str] = {}
-        for item in view.get("fuelTypes") or []:
-            if isinstance(item, dict) and item.get("label") and item.get("value"):
-                key = _FUEL_LABEL_TO_KEY.get(str(item["label"]).strip().lower())
-                if key:
-                    fuel_types[key] = str(item["value"])
+    fuel_types: dict[str, str] = {}
+    for item in view.get("fuelTypes") or []:
+        if isinstance(item, dict) and item.get("label") and item.get("value"):
+            key = _FUEL_LABEL_TO_KEY.get(str(item["label"]).strip().lower())
+            if key:
+                fuel_types[key] = str(item["value"])
 
-        drive_units: dict[str, str] = {}
-        for item in view.get("driveUnits") or []:
-            if isinstance(item, dict) and item.get("label") and item.get("value"):
-                label = str(item["label"]).strip().lower()
-                if "4wd" in label:
-                    drive_units["4WD"] = str(item["value"])
-                elif "перед" in label:
-                    drive_units["FWD"] = str(item["value"])
-                elif "зад" in label:
-                    drive_units["RWD"] = str(item["value"])
+    drive_units: dict[str, str] = {}
+    for item in view.get("driveUnits") or []:
+        if isinstance(item, dict) and item.get("label") and item.get("value"):
+            key = _parse_drive_unit_key(str(item["label"]))
+            if key:
+                drive_units[key] = str(item["value"])
 
-        frame_types: dict[str, int] = {}
-        for item in view.get("frameTypes") or []:
-            if isinstance(item, dict) and item.get("title") and item.get("id") is not None:
-                frame_types[str(item["title"]).strip().lower()] = int(item["id"])
+    frame_types: dict[str, int] = {}
+    for item in view.get("frameTypes") or []:
+        if isinstance(item, dict) and item.get("title") and item.get("id") is not None:
+            frame_types[str(item["title"]).strip().lower()] = int(item["id"])
 
-        return (
-            {
-                "fuel_types": fuel_types,
-                "drive_units": drive_units,
-                "frame_types": frame_types,
-            },
-            firm_ids,
-        )
-    return {"fuel_types": {}, "drive_units": {}, "frame_types": {}}, {}
+    return (
+        {
+            "fuel_types": fuel_types,
+            "drive_units": drive_units,
+            "frame_types": frame_types,
+        },
+        firm_ids,
+    )
 
 
 def _fetch_text(client: httpx.Client, url: str) -> tuple[int, str, str]:
@@ -82,43 +84,50 @@ def _fetch_text(client: httpx.Client, url: str) -> tuple[int, str, str]:
     return resp.status_code, str(resp.url), resp.content.decode(enc, errors="replace")
 
 
+def _scrape_model_map(
+    client: httpx.Client,
+    *,
+    url: str,
+    expected_path_part: str,
+    extractor: Callable[[str], tuple[list[str], dict[str, str]]],
+) -> dict[str, str]:
+    models: dict[str, str] = {}
+    try:
+        status, final_url, html = _fetch_text(client, url)
+    except httpx.HTTPError:
+        return models
+    if status != 200 or expected_path_part not in final_url.lower():
+        return models
+    names, slug_map = extractor(html)
+    for name in names:
+        key = name.strip()
+        slug = slug_map.get(key.lower())
+        if key and slug:
+            models[key] = slug
+    return models
+
+
 def _scrape_single_brand(
     make_slug: str,
     brand_name: str,
     firm_id: int | None,
     timeout_sec: float,
 ) -> tuple[str, dict[str, Any]]:
-    sales_models: dict[str, str] = {}
-    catalog_models: dict[str, str] = {}
-
     with httpx.Client(
         headers=_DEFAULT_HEADERS, follow_redirects=True, timeout=timeout_sec
     ) as client:
-        try:
-            status, final_url, html = _fetch_text(client, f"https://auto.drom.ru/{make_slug}/")
-            if status == 200 and f"/{make_slug}/" in final_url.lower():
-                names, slug_map = parse_brand_models_from_html(html, make_slug)
-                for name in names:
-                    key = name.strip()
-                    slug = slug_map.get(key.lower())
-                    if key and slug:
-                        sales_models[key] = slug
-        except httpx.HTTPError:
-            pass
-
-        try:
-            status, final_url, html = _fetch_text(
-                client, f"https://www.drom.ru/catalog/{make_slug}/"
-            )
-            if status == 200 and f"/catalog/{make_slug}/" in final_url.lower():
-                names, slug_map = parse_catalog_models_from_html(html, make_slug)
-                for name in names:
-                    key = name.strip()
-                    slug = slug_map.get(key.lower())
-                    if key and slug:
-                        catalog_models[key] = slug
-        except httpx.HTTPError:
-            pass
+        sales_models = _scrape_model_map(
+            client,
+            url=f"https://auto.drom.ru/{make_slug}/",
+            expected_path_part=f"/{make_slug}/",
+            extractor=lambda html: parse_brand_models_from_html(html, make_slug),
+        )
+        catalog_models = _scrape_model_map(
+            client,
+            url=f"https://www.drom.ru/catalog/{make_slug}/",
+            expected_path_part=f"/catalog/{make_slug}/",
+            extractor=lambda html: parse_catalog_models_from_html(html, make_slug),
+        )
 
     return make_slug, {
         "name": brand_name,

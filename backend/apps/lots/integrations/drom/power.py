@@ -1,13 +1,17 @@
 import json
-import re
+from collections.abc import Callable
 from datetime import timedelta
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from apps.core.enums import PowerHpSource
-from apps.lots.integrations.drom.cache import read_drom_cache, write_drom_cache
+from apps.lots.integrations.drom.cache import fetch_with_drom_cache
 from apps.lots.integrations.drom.client import DromHttpClient
+from apps.lots.integrations.drom.katashiki import (
+    matches_katashiki_token,
+    normalize_katashiki_candidates,
+)
 from apps.lots.integrations.drom.parser import (
     parse_catalog_generations,
     parse_catalog_power_specs,
@@ -33,30 +37,6 @@ def _load_katashiki_table() -> dict[str, dict[str, Any]]:
     with _KATASHIKI_PATH.open(encoding="utf-8") as fh:
         data = json.load(fh)
     return {str(k).upper(): v for k, v in data.items() if isinstance(v, dict)}
-
-
-def normalize_katashiki_candidates(model_code: str | None) -> list[str]:
-    """Generate ordered candidate chassis codes (exact, unprefixed, base)."""
-    if not model_code:
-        return []
-    raw = model_code.strip().upper()
-    if not raw:
-        return []
-
-    candidates: list[str] = [raw]
-    parts = [p for p in raw.split("-") if p]
-    # Handle both "3BA-NRE210W" (parts[1]) and "3BA-NRE210W-AWXNB" (parts[1]).
-    base = (parts[1] if len(parts[0]) <= 3 else parts[0]) if len(parts) >= 2 else raw
-
-    if base not in candidates:
-        candidates.append(base)
-
-    # Strip trailing single body letter (e.g. NRE210W -> NRE210, NZE161G -> NZE161).
-    stripped = re.sub(r"[A-Z]$", "", base)
-    if stripped and len(stripped) >= 3 and stripped not in candidates:
-        candidates.append(stripped)
-
-    return candidates
 
 
 class DromPowerResolver:
@@ -116,16 +96,7 @@ class DromPowerResolver:
             entry = table.get(candidate)
             if not entry or "power_hp" not in entry:
                 continue
-            entry_cc = entry.get("engine_cc")
-            if (
-                engine_cc is not None
-                and engine_cc > 0
-                and entry_cc is not None
-                and abs(int(entry_cc) - engine_cc) > _MAX_ENGINE_CC_DELTA
-            ):
-                continue
-            entry_fuel = entry.get("fuel_type")
-            if fuel_type and entry_fuel and entry_fuel != fuel_type:
+            if not _katashiki_entry_matches(entry, engine_cc=engine_cc, fuel_type=fuel_type):
                 continue
             return DromPowerResult(
                 power_hp=int(entry["power_hp"]),
@@ -183,53 +154,69 @@ class DromPowerResolver:
         code_key = candidates[-1] if candidates else "all"
         cache_key = f"drom:catalog:{make_slug}:{model_slug}:{code_key}"[:512]
 
-        cached_payload = read_drom_cache(cache_key, allow_stale=False)
-        if cached_payload is not None:
-            return _deserialize_specs(cached_payload.get("specs", []))
+        def _fetch_live() -> list[DromCatalogSpec]:
+            model_html = self._fetch_catalog_model_html(
+                make=make,
+                model=model,
+                make_slug=make_slug,
+                model_slug=model_slug,
+            )
+            if model_html is None:
+                return []
+            gen_urls = parse_catalog_generations(model_html, model_code=model_code)
+            return self._fetch_generation_specs(gen_urls[:_MAX_GENERATIONS_TO_FETCH])
 
+        specs, _ = fetch_with_drom_cache(
+            cache_key,
+            fetcher=_fetch_live,
+            serialize=lambda items: {"specs": [_serialize_spec(s) for s in items]},
+            deserialize=lambda payload: _deserialize_specs(payload.get("specs", [])),
+            ttl=_CATALOG_TTL,
+            is_cacheable=bool,
+            fallback_to_stale_on_empty=True,
+        )
+        return specs or []
+
+    def _fetch_catalog_model_html(
+        self,
+        *,
+        make: str,
+        model: str,
+        make_slug: str,
+        model_slug: str,
+    ) -> str | None:
         model_url = _CATALOG_MODEL_URL.format(make_slug=make_slug, model_slug=model_slug)
         try:
-            try:
-                model_html = self._client.get_html(
-                    model_url,
-                    expected_path_parts=(
-                        "/catalog/",
-                        f"/{make_slug.lower()}/",
-                        f"/{model_slug.lower()}/",
-                    ),
-                )
-            except DromNotFoundError:
-                catalog_slug = self._slug_resolver.resolve_catalog_slug(make, model)
-                if catalog_slug is None or (
-                    catalog_slug.make_slug == make_slug and catalog_slug.model_slug == model_slug
-                ):
-                    return []
-                model_url = _CATALOG_MODEL_URL.format(
-                    make_slug=catalog_slug.make_slug,
-                    model_slug=catalog_slug.model_slug,
-                )
-                model_html = self._client.get_html(
-                    model_url,
-                    expected_path_parts=(
-                        "/catalog/",
-                        f"/{catalog_slug.make_slug.lower()}/",
-                        f"/{catalog_slug.model_slug.lower()}/",
-                    ),
-                )
-        except DromBlockedError:
-            stale_payload = read_drom_cache(cache_key, allow_stale=True)
-            if stale_payload is not None:
-                return _deserialize_specs(stale_payload.get("specs", []))
-            return []
-        except DromFetchError:
-            stale_payload = read_drom_cache(cache_key, allow_stale=True)
-            if stale_payload is not None:
-                return _deserialize_specs(stale_payload.get("specs", []))
-            return []
+            return self._client.get_html(
+                model_url,
+                expected_path_parts=(
+                    "/catalog/",
+                    f"/{make_slug.lower()}/",
+                    f"/{model_slug.lower()}/",
+                ),
+            )
+        except DromNotFoundError:
+            catalog_slug = self._slug_resolver.resolve_catalog_slug(make, model)
+            if catalog_slug is None or (
+                catalog_slug.make_slug == make_slug and catalog_slug.model_slug == model_slug
+            ):
+                return None
+            fallback_url = _CATALOG_MODEL_URL.format(
+                make_slug=catalog_slug.make_slug,
+                model_slug=catalog_slug.model_slug,
+            )
+            return self._client.get_html(
+                fallback_url,
+                expected_path_parts=(
+                    "/catalog/",
+                    f"/{catalog_slug.make_slug.lower()}/",
+                    f"/{catalog_slug.model_slug.lower()}/",
+                ),
+            )
 
-        gen_urls = parse_catalog_generations(model_html, model_code=model_code)
+    def _fetch_generation_specs(self, gen_urls: list[str]) -> list[DromCatalogSpec]:
         specs: list[DromCatalogSpec] = []
-        for gen_url in gen_urls[:_MAX_GENERATIONS_TO_FETCH]:
+        for gen_url in gen_urls:
             try:
                 gen_html = self._client.get_html(gen_url)
             except DromBlockedError:
@@ -237,24 +224,70 @@ class DromPowerResolver:
             except DromFetchError:
                 continue
             specs.extend(parse_catalog_power_specs(gen_html))
-
-        if specs:
-            write_drom_cache(
-                cache_key,
-                {"specs": [_serialize_spec(s) for s in specs]},
-                ttl=_CATALOG_TTL,
-            )
-            return specs
-
-        stale_payload = read_drom_cache(cache_key, allow_stale=True)
-        if stale_payload is not None:
-            return _deserialize_specs(stale_payload.get("specs", []))
-        return []
+        return specs
 
 
-def _matches_code_token(spec_code: str, candidate: str) -> bool:
-    pattern = rf"(?<![A-Z0-9]){re.escape(candidate)}(?![A-Z0-9])"
-    return bool(re.search(pattern, spec_code.upper()))
+def _katashiki_entry_matches(
+    entry: dict[str, Any],
+    *,
+    engine_cc: int | None,
+    fuel_type: str | None,
+) -> bool:
+    entry_cc = entry.get("engine_cc")
+    if (
+        engine_cc is not None
+        and engine_cc > 0
+        and entry_cc is not None
+        and abs(int(entry_cc) - engine_cc) > _MAX_ENGINE_CC_DELTA
+    ):
+        return False
+    entry_fuel = entry.get("fuel_type")
+    return not (fuel_type and entry_fuel and entry_fuel != fuel_type)
+
+
+def _filter_specs_by_katashiki(
+    specs: list[DromCatalogSpec],
+    model_code: str | None,
+) -> list[DromCatalogSpec]:
+    candidates = normalize_katashiki_candidates(model_code)
+    if not candidates:
+        return specs
+    # Match strictly in priority order (exact -> unprefixed -> body-letter stripped).
+    for cand in candidates:
+        matched = [s for s in specs if matches_katashiki_token(s.model_code, cand)]
+        if matched:
+            return matched
+    return []
+
+
+def _filter_specs_by_engine_cc(
+    specs: list[DromCatalogSpec],
+    engine_cc: int | None,
+) -> list[DromCatalogSpec]:
+    if engine_cc is None or engine_cc <= 0:
+        return specs
+    return [
+        s
+        for s in specs
+        if s.engine_cc is not None and abs(s.engine_cc - engine_cc) <= _MAX_ENGINE_CC_DELTA
+    ]
+
+
+def _filter_specs_by_fuel_type(
+    specs: list[DromCatalogSpec],
+    fuel_type: str | None,
+) -> list[DromCatalogSpec]:
+    if not fuel_type:
+        return specs
+    return [s for s in specs if s.fuel_type is None or s.fuel_type == fuel_type]
+
+
+def _prefer_specs_matching(
+    specs: list[DromCatalogSpec],
+    predicate: Callable[[DromCatalogSpec], bool],
+) -> list[DromCatalogSpec]:
+    matched = [s for s in specs if predicate(s)]
+    return matched if matched else specs
 
 
 def _select_best_power_hp(
@@ -266,51 +299,27 @@ def _select_best_power_hp(
     drive_type: str | None,
     year: int | None,
 ) -> int | None:
-    pool = list(specs)
-    candidates = normalize_katashiki_candidates(model_code)
-    if candidates:
-        # Match strictly in priority order (exact -> unprefixed -> body-letter stripped).
-        tier_matched: list[DromCatalogSpec] = []
-        for cand in candidates:
-            matched = [s for s in pool if _matches_code_token(s.model_code, cand)]
-            if matched:
-                tier_matched = matched
-                break
-        if not tier_matched:
-            return None
-        pool = tier_matched
-
-    if engine_cc is not None and engine_cc > 0:
-        pool = [
-            s
-            for s in pool
-            if s.engine_cc is not None and abs(s.engine_cc - engine_cc) <= _MAX_ENGINE_CC_DELTA
-        ]
-        if not pool:
-            return None
-
-    if fuel_type:
-        pool = [s for s in pool if s.fuel_type is None or s.fuel_type == fuel_type]
-        if not pool:
-            return None
-
-    if drive_type:
-        drive_matched = [s for s in pool if s.drive_type == drive_type]
-        if drive_matched:
-            pool = drive_matched
-
-    if year:
-        year_matched = [
-            s
-            for s in pool
-            if (s.year_start is None or s.year_start <= year)
-            and (s.year_end is None or s.year_end >= year)
-        ]
-        if year_matched:
-            pool = year_matched
-
+    pool = _filter_specs_by_katashiki(list(specs), model_code)
     if not pool:
         return None
+    pool = _filter_specs_by_engine_cc(pool, engine_cc)
+    if not pool:
+        return None
+    pool = _filter_specs_by_fuel_type(pool, fuel_type)
+    if not pool:
+        return None
+
+    if drive_type:
+        pool = _prefer_specs_matching(pool, lambda s: s.drive_type == drive_type)
+    if year:
+        pool = _prefer_specs_matching(
+            pool,
+            lambda s: (
+                (s.year_start is None or s.year_start <= year)
+                and (s.year_end is None or s.year_end >= year)
+            ),
+        )
+
     # Conservative choice for the 160 hp utilization fee threshold.
     return max(s.power_hp for s in pool)
 

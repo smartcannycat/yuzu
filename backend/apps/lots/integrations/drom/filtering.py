@@ -74,6 +74,71 @@ class FilteredMarketStats:
     filtered_out_under_order_count: int
 
 
+def compute_engine_volume_bounds(engine_cc: int, *, delta: float = 0.1) -> tuple[float, float]:
+    """Convert engine displacement in cc into Drom (min_liters, max_liters) filter bounds."""
+    liters = engine_cc / 1000.0
+    min_v = max(0.6, round(liters - delta, 1))
+    max_v = round(liters + delta, 1)
+    return min_v, max_v
+
+
+def _build_search_query_params(
+    criteria: DromSearchCriteria,
+    *,
+    frame_type_id: int | None,
+    year_tolerance: int,
+    relax_specs: bool,
+) -> list[tuple[str, str]]:
+    params: list[tuple[str, str]] = [
+        ("unsold", "1"),
+        ("damaged", "2"),
+        ("whereabouts[]", "0"),
+    ]
+
+    if criteria.year is not None:
+        params.append(("minyear", str(criteria.year - year_tolerance)))
+        params.append(("maxyear", str(criteria.year + year_tolerance)))
+
+    if criteria.engine_cc and criteria.engine_cc > 0:
+        delta = 0.2 if relax_specs else 0.1
+        min_v, max_v = compute_engine_volume_bounds(criteria.engine_cc, delta=delta)
+        params.append(("mv", f"{min_v:.1f}"))
+        params.append(("xv", f"{max_v:.1f}"))
+
+    if relax_specs:
+        return params
+
+    if frame_type_id is not None:
+        params.append(("frametype[]", str(frame_type_id)))
+
+    filter_schema = _load_filter_schema()
+    if criteria.drive_type == "4WD":
+        params.append(("privod[]", filter_schema["drive_units"].get("4WD", "3")))
+    if criteria.fuel_type:
+        fuel_code = filter_schema["fuel_types"].get(criteria.fuel_type.strip().lower())
+        if fuel_code:
+            params.append(("fueltype", fuel_code))
+    if is_manual_transmission(criteria.transmission):
+        params.append(("transmission[]", "1"))
+
+    return params
+
+
+def _truncate_drom_url(
+    prefix: str,
+    safe_make: str,
+    safe_model: str,
+    query: str,
+) -> str:
+    # Keep query parameters intact while bounding slug segments to DB URLField(max_length=500).
+    suffix = f"/bez-probega/?{query}"
+    available = max(2, _MAX_URL_LENGTH - len(prefix) - len(suffix) - 1)
+    half = max(1, available // 2)
+    bounded_make = safe_make[:half]
+    bounded_model = safe_model[: available - len(bounded_make)]
+    return f"{prefix}{bounded_make}/{bounded_model}{suffix}"[:_MAX_URL_LENGTH]
+
+
 def build_drom_search_url(
     criteria: DromSearchCriteria,
     *,
@@ -87,58 +152,18 @@ def build_drom_search_url(
     """Build a Drom search URL filtered for unsold, undamaged, in-stock, non-RF-mileage cars."""
     safe_make = quote(make_slug.strip("/"), safe="-_")
     safe_model = quote(model_slug.strip("/"), safe="-_")
-    if region_scope == "dfo":
-        base = f"https://auto.drom.ru/region25/{safe_make}/{safe_model}/bez-probega/"
-    else:
-        base = f"https://auto.drom.ru/{safe_make}/{safe_model}/bez-probega/"
-
-    params: list[tuple[str, str]] = [
-        ("unsold", "1"),
-        ("damaged", "2"),
-        ("whereabouts[]", "0"),
-    ]
-
-    if criteria.year is not None:
-        min_year = criteria.year - year_tolerance
-        max_year = criteria.year + year_tolerance
-        params.append(("minyear", str(min_year)))
-        params.append(("maxyear", str(max_year)))
-
-    if criteria.engine_cc and criteria.engine_cc > 0:
-        liters = criteria.engine_cc / 1000.0
-        delta = 0.2 if relax_specs else 0.1
-        min_v = max(0.6, round(liters - delta, 1))
-        max_v = round(liters + delta, 1)
-        params.append(("mv", f"{min_v:.1f}"))
-        params.append(("xv", f"{max_v:.1f}"))
-
-    if frame_type_id is not None and not relax_specs:
-        params.append(("frametype[]", str(frame_type_id)))
-
-    if not relax_specs:
-        filter_schema = _load_filter_schema()
-        if criteria.drive_type == "4WD":
-            params.append(("privod[]", filter_schema["drive_units"].get("4WD", "3")))
-        if criteria.fuel_type:
-            fuel_code = filter_schema["fuel_types"].get(criteria.fuel_type.strip().lower())
-            if fuel_code:
-                params.append(("fueltype", fuel_code))
-        if is_manual_transmission(criteria.transmission):
-            params.append(("transmission[]", "1"))
-
-    url = f"{base}?{urlencode(params)}"
+    prefix = "https://auto.drom.ru/region25/" if region_scope == "dfo" else "https://auto.drom.ru/"
+    params = _build_search_query_params(
+        criteria,
+        frame_type_id=frame_type_id,
+        year_tolerance=year_tolerance,
+        relax_specs=relax_specs,
+    )
+    query = urlencode(params)
+    url = f"{prefix}{safe_make}/{safe_model}/bez-probega/?{query}"
     if len(url) <= _MAX_URL_LENGTH:
         return url
-
-    # Keep query parameters intact while bounding slug segments to DB URLField(max_length=500).
-    query = urlencode(params)
-    prefix = "https://auto.drom.ru/region25/" if region_scope == "dfo" else "https://auto.drom.ru/"
-    suffix = f"/bez-probega/?{query}"
-    available = max(2, _MAX_URL_LENGTH - len(prefix) - len(suffix) - 1)
-    half = max(1, available // 2)
-    bounded_make = safe_make[:half]
-    bounded_model = safe_model[: available - len(bounded_make)]
-    return f"{prefix}{bounded_make}/{bounded_model}{suffix}"[:_MAX_URL_LENGTH]
+    return _truncate_drom_url(prefix, safe_make, safe_model, query)
 
 
 def is_under_order_or_unavailable(listing: DromListing) -> bool:

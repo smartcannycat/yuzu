@@ -1,7 +1,7 @@
 import hashlib
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from functools import lru_cache
 from pathlib import Path
@@ -9,11 +9,12 @@ from typing import Any
 
 from django.conf import settings
 
-from apps.lots.integrations.drom.cache import read_drom_cache, write_drom_cache
+from apps.lots.integrations.drom.cache import fetch_with_drom_cache
 from apps.lots.integrations.drom.client import DromHttpClient
 from apps.lots.integrations.drom.filtering import (
     FilteredMarketStats,
     build_drom_search_url,
+    compute_engine_volume_bounds,
     filter_and_aggregate,
     is_manual_transmission,
 )
@@ -107,31 +108,31 @@ class DromMarketService:
             year=criteria.year,
         )
 
-        resolved_slug = self._slug_resolver.resolve(criteria.make, criteria.model)
-        cache_key = _build_market_cache_key(criteria, resolved_slug)
+        current_slug = self._slug_resolver.resolve(criteria.make, criteria.model)
+        cache_key = _build_market_cache_key(criteria, current_slug)
 
-        fresh_cached = self._read_cache(cache_key, allow_stale=False)
-        if fresh_cached is not None:
-            return _with_power(fresh_cached, power)
+        def _fetch_live() -> DromMarketResult | None:
+            nonlocal current_slug
+            live_result, current_slug = self._search_live_cascade(criteria, current_slug)
+            return live_result
 
-        try:
-            live_result, resolved_slug = self._search_live_cascade(criteria, resolved_slug)
-        except DromFetchError as exc:
-            logger.warning(
+        result, is_stale = fetch_with_drom_cache(
+            cache_key,
+            fetcher=_fetch_live,
+            serialize=_serialize_market_result,
+            deserialize=_deserialize_market_result,
+            ttl=_MARKET_CACHE_TTL,
+            fallback_to_stale_on_empty=True,
+            on_error=lambda exc: logger.warning(
                 "Drom live lookup failed for %s %s: %s", criteria.make, criteria.model, exc
-            )
-            live_result = None
+            ),
+        )
+        if result is not None:
+            if is_stale:
+                result = _mark_stale_fallback(result)
+            return _with_power(result, power)
 
-        if live_result is not None:
-            self._write_cache(cache_key, live_result)
-            return _with_power(live_result, power)
-
-        stale_cached = self._read_cache(cache_key, allow_stale=True)
-        if stale_cached is not None:
-            stale_result = _mark_stale_fallback(stale_cached)
-            return _with_power(stale_result, power)
-
-        ref_result = self._lookup_reference_fallback(criteria, resolved_slug)
+        ref_result = self._lookup_reference_fallback(criteria, current_slug)
         if ref_result is not None:
             return _with_power(ref_result, power)
 
@@ -183,12 +184,12 @@ class DromMarketService:
             raise last_error
         return best_partial, current_slug
 
-    def _fetch_step(
+    def _fetch_step_html(
         self,
         criteria: DromSearchCriteria,
         slug: ResolvedDromSlug,
         step: _SearchStep,
-    ) -> tuple[FilteredMarketStats | None, str, ResolvedDromSlug]:
+    ) -> tuple[str, str]:
         url = build_drom_search_url(
             criteria,
             make_slug=slug.make_slug,
@@ -198,38 +199,50 @@ class DromMarketService:
             year_tolerance=step.year_tolerance,
             relax_specs=step.relax_specs,
         )
+        html = self._client.get_html(
+            url,
+            expected_path_parts=(
+                f"/{slug.make_slug.lower()}/",
+                f"/{slug.model_slug.lower()}/",
+            ),
+        )
+        return html, url
+
+    def _fetch_step(
+        self,
+        criteria: DromSearchCriteria,
+        slug: ResolvedDromSlug,
+        step: _SearchStep,
+    ) -> tuple[FilteredMarketStats | None, str, ResolvedDromSlug]:
         try:
-            html = self._client.get_html(
-                url,
-                expected_path_parts=(
-                    f"/{slug.make_slug.lower()}/",
-                    f"/{slug.model_slug.lower()}/",
-                ),
-            )
+            html, url = self._fetch_step_html(criteria, slug, step)
         except DromNotFoundError:
             api_slug = self._slug_resolver.resolve_via_api(criteria.make, criteria.model)
             if api_slug is None or api_slug == slug:
-                return None, url, slug
-            slug = api_slug
-            url = build_drom_search_url(
-                criteria,
-                make_slug=slug.make_slug,
-                model_slug=slug.model_slug,
-                frame_type_id=slug.frame_type_id,
-                region_scope=step.region_scope,
-                year_tolerance=step.year_tolerance,
-                relax_specs=step.relax_specs,
-            )
-            try:
-                html = self._client.get_html(
-                    url,
-                    expected_path_parts=(
-                        f"/{slug.make_slug.lower()}/",
-                        f"/{slug.model_slug.lower()}/",
-                    ),
+                fallback_url = build_drom_search_url(
+                    criteria,
+                    make_slug=slug.make_slug,
+                    model_slug=slug.model_slug,
+                    frame_type_id=slug.frame_type_id,
+                    region_scope=step.region_scope,
+                    year_tolerance=step.year_tolerance,
+                    relax_specs=step.relax_specs,
                 )
+                return None, fallback_url, slug
+            slug = api_slug
+            try:
+                html, url = self._fetch_step_html(criteria, slug, step)
             except DromNotFoundError:
-                return None, url, slug
+                fallback_url = build_drom_search_url(
+                    criteria,
+                    make_slug=slug.make_slug,
+                    model_slug=slug.model_slug,
+                    frame_type_id=slug.frame_type_id,
+                    region_scope=step.region_scope,
+                    year_tolerance=step.year_tolerance,
+                    relax_specs=step.relax_specs,
+                )
+                return None, fallback_url, slug
 
         listings = parse_listings(html)
         return (
@@ -271,58 +284,51 @@ class DromMarketService:
             drom_search_url=fallback_url,
         )
 
-    def _read_cache(self, cache_key: str, *, allow_stale: bool) -> DromMarketResult | None:
-        payload = read_drom_cache(cache_key, allow_stale=allow_stale)
-        if payload is None:
-            return None
-        try:
-            market_price = int(payload["market_price_rf_rub"])
-            analogs_count = int(payload["analogs_count"])
-            if market_price < 0 or analogs_count < 0:
-                return None
-            price_min = payload.get("price_min_rub")
-            price_max = payload.get("price_max_rub")
-            return DromMarketResult(
-                market_price_rf_rub=market_price,
-                analogs_count=analogs_count,
-                price_min_rub=int(price_min) if price_min is not None else None,
-                price_max_rub=int(price_max) if price_max is not None else None,
-                search_region_ru=str(payload["search_region_ru"]),
-                excludes_under_order=bool(payload.get("excludes_under_order", True)),
-                filtered_out_under_order_count=max(
-                    0, int(payload.get("filtered_out_under_order_count", 0))
-                ),
-                is_fallback=bool(payload.get("is_fallback", False)),
-                fallback_reason_ru=payload.get("fallback_reason_ru"),
-                drom_search_url=str(payload["drom_search_url"])[:500],
-            )
-        except (KeyError, TypeError, ValueError):
-            return None
 
-    def _write_cache(self, cache_key: str, result: DromMarketResult) -> None:
-        write_drom_cache(
-            cache_key,
-            {
-                "market_price_rf_rub": result.market_price_rf_rub,
-                "analogs_count": result.analogs_count,
-                "price_min_rub": result.price_min_rub,
-                "price_max_rub": result.price_max_rub,
-                "search_region_ru": result.search_region_ru,
-                "excludes_under_order": result.excludes_under_order,
-                "filtered_out_under_order_count": result.filtered_out_under_order_count,
-                "is_fallback": result.is_fallback,
-                "fallback_reason_ru": result.fallback_reason_ru,
-                "drom_search_url": result.drom_search_url,
-            },
-            ttl=_MARKET_CACHE_TTL,
+def _deserialize_market_result(payload: dict[str, Any]) -> DromMarketResult | None:
+    try:
+        market_price = int(payload["market_price_rf_rub"])
+        analogs_count = int(payload["analogs_count"])
+        if market_price < 0 or analogs_count < 0:
+            return None
+        price_min = payload.get("price_min_rub")
+        price_max = payload.get("price_max_rub")
+        return DromMarketResult(
+            market_price_rf_rub=market_price,
+            analogs_count=analogs_count,
+            price_min_rub=int(price_min) if price_min is not None else None,
+            price_max_rub=int(price_max) if price_max is not None else None,
+            search_region_ru=str(payload["search_region_ru"]),
+            excludes_under_order=bool(payload.get("excludes_under_order", True)),
+            filtered_out_under_order_count=max(
+                0, int(payload.get("filtered_out_under_order_count", 0))
+            ),
+            is_fallback=bool(payload.get("is_fallback", False)),
+            fallback_reason_ru=payload.get("fallback_reason_ru"),
+            drom_search_url=str(payload["drom_search_url"])[:500],
         )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _serialize_market_result(result: DromMarketResult) -> dict[str, Any]:
+    return {
+        "market_price_rf_rub": result.market_price_rf_rub,
+        "analogs_count": result.analogs_count,
+        "price_min_rub": result.price_min_rub,
+        "price_max_rub": result.price_max_rub,
+        "search_region_ru": result.search_region_ru,
+        "excludes_under_order": result.excludes_under_order,
+        "filtered_out_under_order_count": result.filtered_out_under_order_count,
+        "is_fallback": result.is_fallback,
+        "fallback_reason_ru": result.fallback_reason_ru,
+        "drom_search_url": result.drom_search_url,
+    }
 
 
 def _build_market_cache_key(criteria: DromSearchCriteria, slug: ResolvedDromSlug) -> str:
     if criteria.engine_cc and criteria.engine_cc > 0:
-        liters = criteria.engine_cc / 1000.0
-        min_v = max(0.6, round(liters - 0.1, 1))
-        max_v = round(liters + 0.1, 1)
+        min_v, max_v = compute_engine_volume_bounds(criteria.engine_cc, delta=0.1)
         cc_bucket = f"{min_v:.1f}-{max_v:.1f}"
     else:
         cc_bucket = "any"
@@ -340,17 +346,8 @@ def _build_market_cache_key(criteria: DromSearchCriteria, slug: ResolvedDromSlug
 
 
 def _with_power(result: DromMarketResult, power: DromPowerResult) -> DromMarketResult:
-    return DromMarketResult(
-        market_price_rf_rub=result.market_price_rf_rub,
-        analogs_count=result.analogs_count,
-        price_min_rub=result.price_min_rub,
-        price_max_rub=result.price_max_rub,
-        search_region_ru=result.search_region_ru,
-        excludes_under_order=result.excludes_under_order,
-        filtered_out_under_order_count=result.filtered_out_under_order_count,
-        is_fallback=result.is_fallback,
-        fallback_reason_ru=result.fallback_reason_ru,
-        drom_search_url=result.drom_search_url,
+    return replace(
+        result,
         power_hp=power.power_hp,
         power_hp_source=power.power_hp_source,
         is_under_160_hp=power.is_under_160_hp,
@@ -358,18 +355,11 @@ def _with_power(result: DromMarketResult, power: DromPowerResult) -> DromMarketR
 
 
 def _mark_stale_fallback(result: DromMarketResult) -> DromMarketResult:
-    return DromMarketResult(
-        market_price_rf_rub=result.market_price_rf_rub,
-        analogs_count=result.analogs_count,
-        price_min_rub=result.price_min_rub,
-        price_max_rub=result.price_max_rub,
-        search_region_ru=result.search_region_ru,
-        excludes_under_order=result.excludes_under_order,
-        filtered_out_under_order_count=result.filtered_out_under_order_count,
+    return replace(
+        result,
         is_fallback=True,
         fallback_reason_ru=(
             result.fallback_reason_ru
             or "Drom.ru временно недоступен — показаны последние кэшированные данные"
         ),
-        drom_search_url=result.drom_search_url,
     )
