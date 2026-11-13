@@ -211,6 +211,13 @@ async function handleLogout(): Promise<void> {
       </template>
     </AppHeader>
 
+    <InProgressAccordion
+      v-model:open="isInProgressOpen"
+      class="mt-4 sm:mt-5"
+      :summary="lotsStore.inProgress"
+      @select-item="handleSelectInProgressItem"
+    />
+
     <LotsToolbar
       class="mt-4 sm:mt-5"
       :query="lotsStore.query"
@@ -229,28 +236,21 @@ async function handleLogout(): Promise<void> {
       @reset-filters="handleResetAllFilters"
     />
 
-    <div class="mt-6 flex flex-1 flex-col gap-3 sm:mt-7 sm:gap-3.5">
-      <InProgressAccordion
-        v-model:open="isInProgressOpen"
-        :summary="lotsStore.inProgress"
-        @select-item="handleSelectInProgressItem"
-      />
-
-      <LotsFeed
-        :items="lotsStore.items"
-        :is-loading="lotsStore.isLoading"
-        :is-loading-more="lotsStore.isLoadingMore"
-        :has-loaded-once="lotsStore.hasLoadedOnce"
-        :has-more="lotsStore.hasMore"
-        :has-any-active-filter="lotsStore.hasAnyActiveFilter"
-        :error-message="lotsStore.errorMessage"
-        @select-lot="previewLot = $event"
-        @retry="lotsStore.fetchLots()"
-        @reset-filters="handleResetAllFilters"
-        @open-upload="openUploadSheet"
-        @load-more="lotsStore.loadMore()"
-      />
-    </div>
+    <LotsFeed
+      class="mt-5 sm:mt-6"
+      :items="lotsStore.items"
+      :is-loading="lotsStore.isLoading"
+      :is-loading-more="lotsStore.isLoadingMore"
+      :has-loaded-once="lotsStore.hasLoadedOnce"
+      :has-more="lotsStore.hasMore"
+      :has-any-active-filter="lotsStore.hasAnyActiveFilter"
+      :error-message="lotsStore.errorMessage"
+      @select-lot="previewLot = $event"
+      @retry="lotsStore.fetchLots()"
+      @reset-filters="handleResetAllFilters"
+      @open-upload="openUploadSheet"
+      @load-more="lotsStore.loadMore()"
+    />
 
     <button
       type="button"
