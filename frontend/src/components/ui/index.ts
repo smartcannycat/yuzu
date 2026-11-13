@@ -22,3 +22,16 @@ export type { SegmentOption } from './SegmentedControl.vue'
 
 export { default as TtxGrid } from './TtxGrid.vue'
 export type { TtxItem } from './TtxGrid.vue'
+
+export {
+  CapyMascot,
+  resolveCapyState,
+  type BatchStatusContract,
+  type CapyMascotProps,
+  type CapyState,
+  type CapyStateResolverInput,
+  type ItemProcessingStatusContract,
+  type MascotMoodContract,
+  type MascotSize,
+  type TrafficLightColorContract,
+} from '@/components/mascot'
