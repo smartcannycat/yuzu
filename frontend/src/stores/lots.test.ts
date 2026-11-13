@@ -159,4 +159,29 @@ describe('useLotsStore', () => {
 
     expect(store.isLoading).toBe(false)
   })
+
+  it('loads lot detail, applies recalculation across store, and resets cleanly to baseline', async () => {
+    const client = createMockApiClient({ delayMs: 0 })
+    const store = useLotsStore()
+
+    const loaded = await store.fetchLotDetail('892b4e10-3a2c-411f-a801-019283746501', client)
+    expect(loaded).not.toBeNull()
+    expect(store.isSimulationModified).toBe(false)
+
+    const initialTurnkey = store.currentLotDetail!.economics.wise_cost_ladder.turnkey_cost_rub
+    await store.recalculateLot(
+      '892b4e10-3a2c-411f-a801-019283746501',
+      { is_commercial_util: true, include_repairs: true },
+      client,
+    )
+
+    expect(store.isSimulationModified).toBe(true)
+    expect(store.currentLotDetail!.economics.wise_cost_ladder.turnkey_cost_rub).toBeGreaterThan(
+      initialTurnkey,
+    )
+
+    store.resetLotSimulation('892b4e10-3a2c-411f-a801-019283746501')
+    expect(store.isSimulationModified).toBe(false)
+    expect(store.currentLotDetail!.economics.wise_cost_ladder.turnkey_cost_rub).toBe(initialTurnkey)
+  })
 })

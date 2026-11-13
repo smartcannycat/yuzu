@@ -19,6 +19,12 @@ export const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      path: '/lots/:lotId',
+      name: 'lot-detail',
+      component: () => import('@/views/LotDetailView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
       path: '/batches/:batchId',
       name: 'batch-progress',
       component: () => import('@/views/BatchProgressView.vue'),

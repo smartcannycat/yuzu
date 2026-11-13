@@ -14,11 +14,11 @@ import { useMediaQuery } from '@vueuse/core'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { BatchUploadSheet, LotPreviewSheets } from '@/components/lots'
+import { BatchUploadSheet } from '@/components/lots'
 import { CapyMascot } from '@/components/mascot'
 import { BaseBadge, BaseButton, BaseCard, type BadgeVariant } from '@/components/ui'
 import { clampPollIntervalMs, useBatchesStore } from '@/stores/batches'
-import type { BatchItemStatus, LotSummary, TrafficLightColor } from '@/types/api'
+import type { BatchItemStatus, TrafficLightColor } from '@/types/api'
 import { BATCH_MAX_FILES_PER_UPLOAD, BATCH_MAX_TOTAL_FILES } from '@/utils/batchFiles'
 import { formatRub, formatTaskStepRu, formatVerdictLabelRu } from '@/utils/formatters'
 
@@ -29,7 +29,6 @@ const isDesktop = useMediaQuery('(min-width: 768px)')
 
 const isUploadOpen = ref(false)
 const uploadMode = ref<'create' | 'append'>('append')
-const previewLot = ref<LotSummary | null>(null)
 
 const MAX_RETRY_BACKOFF_MS = 30_000
 
@@ -144,6 +143,10 @@ onBeforeUnmount(() => {
 
 function goHome(): void {
   void router.push({ name: 'home' })
+}
+
+function openLotDetail(lotId: string): void {
+  void router.push({ name: 'lot-detail', params: { lotId } })
 }
 
 function openAppendModal(): void {
@@ -355,7 +358,7 @@ function getItemSubtitle(item: BatchItemStatus): string {
               <button
                 type="button"
                 class="focus-visible:outline-accent flex w-full cursor-pointer items-center justify-between gap-3 px-4 py-3.5 text-left focus-visible:outline-2 focus-visible:outline-offset-[-2px]"
-                @click="previewLot = item.summary"
+                @click="openLotDetail(item.summary.lot_id)"
               >
                 <div class="flex min-w-0 items-center gap-3">
                   <span
@@ -464,7 +467,5 @@ function getItemSubtitle(item: BatchItemStatus): string {
       :server-error="batchesStore.uploadError"
       @submit="handleUploadSubmit"
     />
-
-    <LotPreviewSheets v-model:lot="previewLot" />
   </div>
 </template>

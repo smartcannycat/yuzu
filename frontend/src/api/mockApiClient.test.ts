@@ -140,4 +140,36 @@ describe('mockApiClient', () => {
       sortedByBenefit.items[1]!.net_benefit_rub,
     )
   })
+
+  it('returns detailed lot spec, recalculates economics, and throws 404 for unknown lot', async () => {
+    const client = createMockApiClient({ delayMs: 0 })
+
+    const detail = await client.lots.getDetail('892b4e10-3a2c-411f-a801-019283746501')
+    expect(detail.passport.make).toBe('Toyota')
+    expect(detail.passport.model).toBe('Corolla Touring')
+    expect(detail.economics.wise_cost_ladder.steps).toHaveLength(7)
+    const stepsSum = detail.economics.wise_cost_ladder.steps.reduce(
+      (acc, step) => acc + step.amount_rub,
+      0,
+    )
+    expect(stepsSum).toBe(detail.economics.wise_cost_ladder.turnkey_cost_rub)
+
+    const recalc = await client.lots.recalculate(detail.lot_id, {
+      bid_jpy: detail.economics.wise_cost_ladder.car_bid_jpy + 100_000,
+      is_commercial_util: true,
+      include_repairs: false,
+    })
+    expect(recalc.is_commercial_util).toBe(true)
+    expect(recalc.include_repairs).toBe(false)
+    expect(recalc.customs.utilization_fee_rub).toBe(528_000)
+    expect(recalc.turnkey_cost_rub).toBeGreaterThan(
+      detail.economics.wise_cost_ladder.turnkey_cost_rub,
+    )
+
+    await expect(
+      client.lots.getDetail('00000000-0000-0000-0000-000000000000'),
+    ).rejects.toMatchObject({
+      status: 404,
+    })
+  })
 })
