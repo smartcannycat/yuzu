@@ -2,7 +2,7 @@
 # Docs: https://github.com/evilmartians/lefthook
 
 pre-commit:
-  parallel: true
+  parallel: false
   commands:
     oxfmt:
       root: "frontend/"
@@ -17,3 +17,8 @@ pre-commit:
       root: "frontend/"
       glob: "*.{ts,vue}"
       run: bun run typecheck
+    backend-ruff:
+      root: "backend/"
+      glob: "*.py"
+      run: uv run ruff check --fix {staged_files} && uv run ruff format {staged_files}
+      stage_fixed: true

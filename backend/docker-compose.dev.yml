@@ -1,0 +1,61 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: yuzu_backend_db_dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-yuzu_db}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-yuzu_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      target: dev
+    container_name: yuzu_backend_api_dev
+    restart: unless-stopped
+    command: ["granian", "--interface", "asginl", "config.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    volumes:
+      - ./config:/app/config
+      - ./apps:/app/apps
+      - ./tests:/app/tests
+      - media_data_dev:/app/media
+    ports:
+      - "8000:8000"
+    environment:
+      ENVIRONMENT: local
+      DEBUG: "True"
+      SECRET_KEY: ${SECRET_KEY:-django-insecure-yuzu-dev-secret-key-123456}
+      ALLOWED_HOSTS: localhost,127.0.0.1,0.0.0.0,api
+      CORS_ALLOWED_ORIGINS: http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000
+      USE_SQLITE: "False"
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-yuzu_db}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      JWT_ACCESS_TOKEN_LIFETIME_MINUTES: ${JWT_ACCESS_TOKEN_LIFETIME_MINUTES:-60}
+      JWT_REFRESH_TOKEN_LIFETIME_DAYS: ${JWT_REFRESH_TOKEN_LIFETIME_DAYS:-7}
+      ML_SERVICE_URL: ${ML_SERVICE_URL:-http://ml:8001}
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8000/api/v1/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  postgres_data_dev:
+  media_data_dev:
