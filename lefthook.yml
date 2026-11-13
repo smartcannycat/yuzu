@@ -4,13 +4,21 @@
 pre-commit:
   parallel: false
   commands:
-    ruff-check:
-      root: "backend/"
-      glob: "*.py"
-      run: uv run ruff check --fix {staged_files}
+    oxfmt:
+      root: "frontend/"
+      glob: "*.{js,ts,vue,json,css,html,md}"
+      run: bun x oxfmt {staged_files}
       stage_fixed: true
-    ruff-format:
+    oxlint:
+      root: "frontend/"
+      glob: "*.{js,ts,vue}"
+      run: bun x oxlint {staged_files}
+    typecheck:
+      root: "frontend/"
+      glob: "*.{ts,vue}"
+      run: bun run typecheck
+    backend-ruff:
       root: "backend/"
       glob: "*.py"
-      run: uv run ruff format {staged_files}
+      run: uv run ruff check --fix {staged_files} && uv run ruff format {staged_files}
       stage_fixed: true

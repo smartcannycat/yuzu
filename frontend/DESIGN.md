@@ -8,7 +8,7 @@ description: Прецизионная светлая дизайн-система
 
 ## Overview
 
-Прецизионная дизайн-система сервиса сквозного анализа аукционных листов и расчета себестоимости автомобилей под ключ во Владивостоке — **YUZU** (*Интеллект японских автоаукционов*).
+Прецизионная дизайн-система сервиса сквозного анализа аукционных листов и расчета себестоимости автомобилей под ключ во Владивостоке — **YUZU** (_Интеллект японских автоаукционов_).
 
 - **Бренд и дескриптор**: Официальное наименование продукта — **YUZU**. Для снятия абстрактности на всех титульных экранах и документах закрепляется обязательный институциональный дескриптор: `YUZU // Интеллект японских автоаукционов` (в отчетах: `YUZU Report: Экспертное заключение дефектоскопии и себестоимости`).
 - **Маскот «Дзен-Инспектор»**: Капибара по имени **Юдзу** — спокойный, невозмутимый эксперт, снимающий тревогу покупателя. Она присутствует строго в 4 сценариях (Dropzone, сканирование 2с, карточка вердикта 🟢/🟡/🔴, ошибка фото), не загромождая финансовые таблицы.
@@ -30,39 +30,39 @@ description: Прецизионная светлая дизайн-система
 - **Text Hierarchy (`#111827`, `#6B7280`, `#9CA3AF`)**: Глубокий угольный цвет основного чтения, нейтральный серый для метаданных и приглушенный для вспомогательных меток.
 - **Conversion Accent (`#FF6B00`)**: Единственный акцентный цвет для Primary-кнопок, активного состояния свитча iOS 26, активных табов и фокуса.
 - **Soft Seamless Status Colors (Без грубых рамок, иконка строго в цвет текста)**:
-  - *Success (Низкий риск)*: Текст и иконка `#15803D`, мягкий фон `#F0FDF4`.
-  - *Warning (Внимание)*: Текст и иконка `#B45309`, мягкий фон `#FFFBEB`.
-  - *Danger (Стоп-фактор)*: Текст и иконка `#B91C1C`, мягкий фон `#FEF2F2`.
-  - *Info (Служебный)*: Текст и иконка `#1D4ED8`, мягкий фон `#EFF6FF`.
-  - *Neutral TTX Capsule*: Текст и иконка `#6B7280`, мягкий фон `#EFEFF4` (по образцу «Бензин 1.8L»).
+  - _Success (Низкий риск)_: Текст и иконка `#15803D`, мягкий фон `#F0FDF4`.
+  - _Warning (Внимание)_: Текст и иконка `#B45309`, мягкий фон `#FFFBEB`.
+  - _Danger (Стоп-фактор)_: Текст и иконка `#B91C1C`, мягкий фон `#FEF2F2`.
+  - _Info (Служебный)_: Текст и иконка `#1D4ED8`, мягкий фон `#EFF6FF`.
+  - _Neutral TTX Capsule_: Текст и иконка `#6B7280`, мягкий фон `#EFEFF4` (по образцу «Бензин 1.8L»).
 
 ```yaml
 colors:
-  primary: "#111827"
-  secondary: "#6B7280"
-  tertiary: "#FF6B00"
-  tertiary-hover: "#E55F00"
-  tertiary-active: "#CC5500"
-  tertiary-subtle: "#FFF4ED"
-  neutral: "#F2F2F7"
-  surface: "#FFFFFF"
-  surface-inset: "#EFEFF4"
-  surface-hover: "#F8F8FA"
-  border: "#E5E5EA"
-  border-subtle: "#F2F2F7"
-  border-focus: "#FF6B00"
-  text-primary: "#111827"
-  text-secondary: "#6B7280"
-  text-muted: "#9CA3AF"
-  text-on-accent: "#FFFFFF"
-  success: "#15803D"
-  success-bg: "#F0FDF4"
-  warning: "#B45309"
-  warning-bg: "#FFFBEB"
-  danger: "#B91C1C"
-  danger-bg: "#FEF2F2"
-  info: "#1D4ED8"
-  info-bg: "#EFF6FF"
+  primary: '#111827'
+  secondary: '#6B7280'
+  tertiary: '#FF6B00'
+  tertiary-hover: '#E55F00'
+  tertiary-active: '#CC5500'
+  tertiary-subtle: '#FFF4ED'
+  neutral: '#F2F2F7'
+  surface: '#FFFFFF'
+  surface-inset: '#EFEFF4'
+  surface-hover: '#F8F8FA'
+  border: '#E5E5EA'
+  border-subtle: '#F2F2F7'
+  border-focus: '#FF6B00'
+  text-primary: '#111827'
+  text-secondary: '#6B7280'
+  text-muted: '#9CA3AF'
+  text-on-accent: '#FFFFFF'
+  success: '#15803D'
+  success-bg: '#F0FDF4'
+  warning: '#B45309'
+  warning-bg: '#FFFBEB'
+  danger: '#B91C1C'
+  danger-bg: '#FEF2F2'
+  info: '#1D4ED8'
+  info-bg: '#EFF6FF'
 ```
 
 ## Typography
@@ -140,14 +140,14 @@ typography:
 
 ```yaml
 spacing:
-  "2xs": 4px
+  '2xs': 4px
   xs: 8px
   sm: 12px
   md: 16px
   lg: 20px
   xl: 24px
-  "2xl": 32px
-  "3xl": 48px
+  '2xl': 32px
+  '3xl': 48px
   card-padding: 16px
   input-height: 44px
   button-height: 44px
@@ -187,7 +187,7 @@ rounded:
 
 Спецификация базовых атомов и типовых интерфейсных узлов дизайн-системы с иконками Lucide Icons.
 
-- **Switch iOS 26 (Вытянутый капсульный тоггл)**: 
+- **Switch iOS 26 (Вытянутый капсульный тоггл)**:
   - Трек: ширина `52px`, высота `26px`, скругление `9999px`. Цвет: неактивный `#E9E9EB`, активный `#FF6B00`.
   - Бегунок: вытянутая капсула `28×22px`, скругление `9999px`. Ход: от `left: 2px` до `right: 2px` (`translateX(20px)`).
 - **Status Badges (Бесшовные тинты с Lucide иконками)**:
@@ -199,52 +199,52 @@ rounded:
 ```yaml
 components:
   switch-ios-26:
-    width: "{spacing.switch-track-width}"
-    height: "{spacing.switch-track-height}"
-    backgroundColor: "{colors.border}"
-    rounded: "{rounded.full}"
+    width: '{spacing.switch-track-width}'
+    height: '{spacing.switch-track-height}'
+    backgroundColor: '{colors.border}'
+    rounded: '{rounded.full}'
   button-primary:
-    backgroundColor: "{colors.tertiary}"
-    textColor: "{colors.text-on-accent}"
-    rounded: "{rounded.md}"
+    backgroundColor: '{colors.tertiary}'
+    textColor: '{colors.text-on-accent}'
+    rounded: '{rounded.md}'
     padding: 10px 18px
-    typography: "{typography.body-medium}"
+    typography: '{typography.body-medium}'
   input:
-    backgroundColor: "{colors.surface}"
-    textColor: "{colors.text-primary}"
-    rounded: "{rounded.md}"
+    backgroundColor: '{colors.surface}'
+    textColor: '{colors.text-primary}'
+    rounded: '{rounded.md}'
     padding: 10px 14px
-    height: "{spacing.input-height}"
-    typography: "{typography.input-text}"
+    height: '{spacing.input-height}'
+    typography: '{typography.input-text}'
   badge-neutral:
-    backgroundColor: "{colors.surface-inset}"
-    textColor: "{colors.text-secondary}"
-    rounded: "{rounded.full}"
+    backgroundColor: '{colors.surface-inset}'
+    textColor: '{colors.text-secondary}'
+    rounded: '{rounded.full}'
     padding: 4px 10px
-    typography: "{typography.badge-label}"
+    typography: '{typography.badge-label}'
   badge-success:
-    backgroundColor: "{colors.success-bg}"
-    textColor: "{colors.success}"
-    rounded: "{rounded.full}"
+    backgroundColor: '{colors.success-bg}'
+    textColor: '{colors.success}'
+    rounded: '{rounded.full}'
     padding: 4px 10px
-    typography: "{typography.badge-label}"
+    typography: '{typography.badge-label}'
   badge-warning:
-    backgroundColor: "{colors.warning-bg}"
-    textColor: "{colors.warning}"
-    rounded: "{rounded.full}"
+    backgroundColor: '{colors.warning-bg}'
+    textColor: '{colors.warning}'
+    rounded: '{rounded.full}'
     padding: 4px 10px
-    typography: "{typography.badge-label}"
+    typography: '{typography.badge-label}'
   badge-danger:
-    backgroundColor: "{colors.danger-bg}"
-    textColor: "{colors.danger}"
-    rounded: "{rounded.full}"
+    backgroundColor: '{colors.danger-bg}'
+    textColor: '{colors.danger}'
+    rounded: '{rounded.full}'
     padding: 4px 10px
-    typography: "{typography.badge-label}"
+    typography: '{typography.badge-label}'
   card:
-    backgroundColor: "{colors.surface}"
-    textColor: "{colors.text-primary}"
-    rounded: "{rounded.md}"
-    padding: "{spacing.card-padding}"
+    backgroundColor: '{colors.surface}'
+    textColor: '{colors.text-primary}'
+    rounded: '{rounded.md}'
+    padding: '{spacing.card-padding}'
 ```
 
 ## Do's and Don'ts
