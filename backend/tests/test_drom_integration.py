@@ -171,10 +171,25 @@ def test_build_drom_search_url_maps_corolla_touring_and_filters() -> None:
 @pytest.mark.django_db
 def test_drom_service_cascade_to_all_rf_and_caches_result() -> None:
     calls: list[str] = []
+    catalog_model_html = (
+        '<html><body><a href="/catalog/toyota/corolla/g_2019_1/">Corolla (NRE210W)</a>'
+        "</body></html>"
+    )
+    catalog_gen_html = (
+        "<html><body><table>"
+        "<tr><td>1.2 л, 116 л.с., бензин, МКПП, передний привод</td>"
+        "<td>Кузов: 3BA-NRE210W</td></tr>"
+        "<tr><td>10.2019 - н.в.</td></tr>"
+        "</table></body></html>"
+    )
 
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
         calls.append(url)
+        if url.endswith("/catalog/toyota/corolla/"):
+            return httpx.Response(200, text=catalog_model_html)
+        if url.endswith("/catalog/toyota/corolla/g_2019_1/"):
+            return httpx.Response(200, text=catalog_gen_html)
         if "region25" in url and "minyear=2020&maxyear=2020" in url:
             return httpx.Response(
                 200,
@@ -206,13 +221,14 @@ def test_drom_service_cascade_to_all_rf_and_caches_result() -> None:
     )
 
     result = service.evaluate(criteria)
-    assert len(calls) == 3
+    market_calls = [u for u in calls if "auto.drom.ru" in u]
+    assert len(market_calls) == 3
     assert result.is_fallback is True
     assert result.search_region_ru == "Вся РФ"
     assert result.analogs_count == 4
     assert result.market_price_rf_rub == 1550000
     assert result.power_hp == 116
-    assert result.power_hp_source == PowerHpSource.KATASHIKI_CACHE
+    assert result.power_hp_source == PowerHpSource.DROM_CATALOG
     assert result.is_under_160_hp is True
 
     # Second call must hit fresh ExternalCache with zero additional HTTP calls.
@@ -328,12 +344,13 @@ def test_drom_catalog_power_hp_resolution_and_conservative_max() -> None:
 
 
 @pytest.mark.django_db
-def test_qrator_block_uses_stale_cache_then_reference_fallback_without_spam() -> None:
-    attempts = 0
+def test_qrator_block_uses_stale_cache_without_retry_spam() -> None:
+    market_attempts = 0
 
-    def blocked_handler(_request: httpx.Request) -> httpx.Response:
-        nonlocal attempts
-        attempts += 1
+    def blocked_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal market_attempts
+        if "auto.drom.ru" in str(request.url):
+            market_attempts += 1
         return httpx.Response(403, text="QRATOR blocked")
 
     client = DromHttpClient(
@@ -350,14 +367,12 @@ def test_qrator_block_uses_stale_cache_then_reference_fallback_without_spam() ->
         model_code="NRE210",
     )
 
-    # Without cache, falls back to local reference table after single 403 (no retry spam).
-    ref_result = service.evaluate(criteria)
-    assert attempts == 1
-    assert ref_result.is_fallback is True
-    assert ref_result.market_price_rf_rub == 1520000
-    assert "резервный" in (ref_result.fallback_reason_ru or "").lower()
+    # Without cache, raises DromFetchError after single 403 (no retry spam).
+    with pytest.raises(DromFetchError):
+        service.evaluate(criteria)
+    assert market_attempts == 1
 
-    # With stale ExternalCache entry, prefers stale cache over reference table.
+    # With stale ExternalCache entry, returns stale cached market result.
     resolved_slug = DromSlugResolver(client).resolve(criteria.make, criteria.model)
     ExternalCache.objects.create(
         key=_build_market_cache_key(criteria, resolved_slug),
@@ -380,10 +395,6 @@ def test_qrator_block_uses_stale_cache_then_reference_fallback_without_spam() ->
     assert stale_result.market_price_rf_rub == 1599000
     assert stale_result.is_fallback is True
     assert "кэшированные" in (stale_result.fallback_reason_ru or "").lower()
-
-    # Completely unknown model raises DromFetchError when Drom is blocked.
-    with pytest.raises(DromFetchError):
-        service.evaluate(DromSearchCriteria(make="Mitsuoka", model="Orochi", year=2010))
 
 
 @pytest.mark.django_db
@@ -408,8 +419,24 @@ def test_step_drom_market_persists_lot_and_market_info(user_factory) -> None:
         status=ItemProcessingStatus.PROCESSING,
         current_step=TaskStep.DROM_MARKET,
     )
+    catalog_model_html = (
+        '<html><body><a href="/catalog/toyota/corolla/g_2019_1/">Corolla (NRE210W)</a>'
+        "</body></html>"
+    )
+    catalog_gen_html = (
+        "<html><body><table>"
+        "<tr><td>1.2 л, 116 л.с., бензин, МКПП, передний привод</td>"
+        "<td>Кузов: 3BA-NRE210W</td></tr>"
+        "<tr><td>10.2019 - н.в.</td></tr>"
+        "</table></body></html>"
+    )
 
-    def handler(_request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url.endswith("/catalog/toyota/corolla/"):
+            return httpx.Response(200, text=catalog_model_html)
+        if url.endswith("/catalog/toyota/corolla/g_2019_1/"):
+            return httpx.Response(200, text=catalog_gen_html)
         return httpx.Response(
             200,
             headers={"Content-Type": "text/html; charset=windows-1251"},
@@ -424,7 +451,7 @@ def test_step_drom_market_persists_lot_and_market_info(user_factory) -> None:
     lot.refresh_from_db()
     assert lot.market_price_rf_rub == 1520000
     assert lot.power_hp == 116
-    assert lot.power_hp_source == PowerHpSource.KATASHIKI_CACHE
+    assert lot.power_hp_source == PowerHpSource.DROM_CATALOG
     assert lot.is_under_160_hp is True
 
     market_info = MarketComparisonInfo.objects.get(lot=lot)

@@ -6,9 +6,11 @@ from datetime import timedelta
 from difflib import get_close_matches
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 from apps.lots.integrations.drom.cache import fetch_with_drom_cache
 from apps.lots.integrations.drom.client import DromHttpClient
+from apps.lots.integrations.drom.directory_parser import _is_seo_label
 from apps.lots.integrations.drom.parser import (
     parse_brand_models_from_html,
     parse_catalog_brands_from_html,
@@ -23,7 +25,7 @@ _SCHEMA_PATH = Path(__file__).resolve().parent / "data" / "drom_schema.json"
 
 
 @lru_cache(maxsize=1)
-def _load_drom_schema() -> dict:
+def _load_drom_schema() -> dict[str, Any]:
     if not _SCHEMA_PATH.exists():
         return {}
     try:
@@ -32,6 +34,8 @@ def _load_drom_schema() -> dict:
     except (OSError, ValueError):
         return {}
 
+
+load_drom_schema = _load_drom_schema
 
 _CYRILLIC_TRANSLIT: dict[str, str] = {
     "а": "a",
@@ -69,16 +73,17 @@ _CYRILLIC_TRANSLIT: dict[str, str] = {
     "я": "ya",
 }
 
-# Only true structural mismatches where Drom shares one model slug across multiple
-# auction model names (requires frametype[]) or renames a separate catalog entry.
-_MODEL_ALIASES: dict[str, tuple[str, str | None]] = {
+DEFAULT_MODEL_ALIASES: dict[str, tuple[str, str | None]] = {
     "corolla touring": ("corolla", "универсал"),
     "corolla touring hybrid": ("corolla", "универсал"),
     "corolla sport": ("corolla", "хэтчбек 5 дв."),
     "impreza sport": ("impreza", "хэтчбек 5 дв."),
     "impreza xv": ("xv", None),
     "note aura": ("aura", None),
-    "prius a": ("prius_alpha", None),
+    "prius a": ("prius_a", None),
+    "prius alpha": ("prius_a", None),
+    "prius α": ("prius_a", None),
+    "every van": ("every", None),
 }
 
 _DEFAULT_FRAME_TYPES: dict[str, int] = {
@@ -86,7 +91,40 @@ _DEFAULT_FRAME_TYPES: dict[str, int] = {
     "хэтчбек 5 дв.": 5,
 }
 
-_TRIM_NOISE_WORDS = frozenset({"hybrid", "e-power", "epower", "4wd", "2wd", "turbo", "wxb", "w×b"})
+_TRIM_NOISE_WORDS = frozenset(
+    {"hybrid", "hv", "e-power", "epower", "4wd", "2wd", "turbo", "wxb", "w×b"}
+)
+
+# Tokens that denote a distinct model/body line on Drom and must not be dropped
+# when collapsing a multi-word model name onto a shorter base model.
+_SUBMODEL_CONFLICT_TOKENS = frozenset(
+    {
+        "cross",
+        "type",
+        "r",
+        "alpha",
+        "plus",
+        "slash",
+        "van",
+        "wagon",
+        "truck",
+        "latio",
+        "axio",
+        "fielder",
+        "rumion",
+        "spacio",
+        "verso",
+        "allroad",
+        "shuttle",
+        "spike",
+        "aria",
+        "phv",
+        "prime",
+        "gr",
+        "sti",
+        "wrx",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,24 +147,82 @@ def normalize_slug(value: str) -> str:
 
 
 def _alnum_key(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", _transliterate_cyrillic(value.strip()))
+    transliterated = _transliterate_cyrillic(value.strip()).replace("+", "plus")
+    return re.sub(r"[^a-z0-9]+", "", transliterated)
+
+
+def _get_model_aliases(schema: dict[str, Any]) -> dict[str, tuple[str, str | None]]:
+    raw = schema.get("model_aliases")
+    if not isinstance(raw, dict) or not raw:
+        return DEFAULT_MODEL_ALIASES
+    aliases = dict(DEFAULT_MODEL_ALIASES)
+    for k, v in raw.items():
+        if isinstance(v, (list, tuple)) and len(v) >= 1 and v[0]:
+            frame = str(v[1]) if len(v) > 1 and v[1] is not None else None
+            aliases[str(k).strip().lower()] = (str(v[0]), frame)
+    return aliases
+
+
+def _extract_trivial_models(brand_entry: dict[str, Any]) -> list[str]:
+    raw_models = brand_entry.get("models")
+    if isinstance(raw_models, str) and raw_models:
+        return [m.strip() for m in raw_models.split("|") if m.strip()]
+    if isinstance(raw_models, list):
+        return [str(m).strip() for m in raw_models if str(m).strip()]
+    return []
 
 
 def _resolve_model_from_schema_dict(
     model: str,
     model_map: object,
     make_slug: str,
+    *,
+    trivial_models: list[str] | None = None,
 ) -> ResolvedDromSlug | None:
-    if not isinstance(model_map, dict) or not model_map:
+    merged: dict[str, str] = {}
+    for name in trivial_models or []:
+        merged[name] = normalize_slug(name)
+    if isinstance(model_map, dict):
+        for k, v in model_map.items():
+            merged[str(k)] = str(v)
+    if not merged:
         return None
     matched = _pick_best_model_slug(
         model,
-        list(model_map.keys()),
-        {str(k).lower(): str(v) for k, v in model_map.items()},
+        list(merged.keys()),
+        {k.lower(): v for k, v in merged.items()},
+        allow_fuzzy=False,
     )
     if not matched:
         return None
     return ResolvedDromSlug(make_slug=make_slug, model_slug=matched, frame_type_id=None)
+
+
+def _resolve_alias(
+    model: str,
+    make_slug: str,
+    schema: dict[str, Any],
+) -> ResolvedDromSlug | None:
+    aliases = _get_model_aliases(schema)
+    frame_types: dict = (schema.get("filter_schema") or {}).get("frame_types") or {}
+    model_key = re.sub(r"\s+", " ", model.strip().lower())
+    words = [w for w in re.split(r"[\s/]+", model_key) if w and w not in _TRIM_NOISE_WORDS]
+    stripped_key = " ".join(words)
+
+    for alias_key in (model_key, stripped_key):
+        if alias_key in aliases:
+            slug, frame_label = aliases[alias_key]
+            frame_id = (
+                frame_types.get(frame_label, _DEFAULT_FRAME_TYPES.get(frame_label))
+                if frame_label
+                else None
+            )
+            return ResolvedDromSlug(
+                make_slug=make_slug,
+                model_slug=slug,
+                frame_type_id=frame_id,
+            )
+    return None
 
 
 class DromSlugResolver:
@@ -136,61 +232,84 @@ class DromSlugResolver:
         self._client = client
 
     def resolve(self, make: str, model: str) -> ResolvedDromSlug:
-        """Resolve brand and model from scraped Drom schema first, then structural splits."""
+        """Resolve sales brand and model from compact Drom schema and structural aliases."""
         schema = _load_drom_schema()
         brands: dict = schema.get("brands") or {}
-        frame_types: dict = (schema.get("filter_schema") or {}).get("frame_types") or {}
-
         make_slug = _resolve_make_from_schema(make, brands)
-        model_key = re.sub(r"\s+", " ", model.strip().lower())
-        words = [w for w in re.split(r"[\s/]+", model_key) if w and w not in _TRIM_NOISE_WORDS]
-        stripped_key = " ".join(words)
 
-        for alias_key in (model_key, stripped_key):
-            if alias_key in _MODEL_ALIASES:
-                slug, frame_label = _MODEL_ALIASES[alias_key]
-                frame_id = (
-                    frame_types.get(frame_label, _DEFAULT_FRAME_TYPES.get(frame_label))
-                    if frame_label
-                    else None
-                )
-                return ResolvedDromSlug(
-                    make_slug=make_slug,
-                    model_slug=slug,
-                    frame_type_id=frame_id,
-                )
+        aliased = _resolve_alias(model, make_slug, schema)
+        if aliased is not None:
+            return aliased
 
         brand_entry = brands.get(make_slug)
         if isinstance(brand_entry, dict):
+            trivial = _extract_trivial_models(brand_entry)
             from_schema = _resolve_model_from_schema_dict(
-                model, brand_entry.get("sales_models"), make_slug
+                model,
+                brand_entry.get("sales_models"),
+                make_slug,
+                trivial_models=trivial,
             )
             if from_schema is not None:
                 return from_schema
 
+        return self._fallback_normalized_slug(make_slug, model)
+
+    def resolve_via_api(self, make: str, model: str) -> ResolvedDromSlug | None:
+        """Resolve exact Drom brand and model URL slugs dynamically from Drom's live sales pages."""
+        return self._resolve_via_directory(make, model, self._get_sales_models)
+
+    def resolve_catalog_slug(self, make: str, model: str) -> ResolvedDromSlug:
+        """Resolve canonical Drom catalog slug from compact schema."""
+        schema = _load_drom_schema()
+        brands: dict = schema.get("brands") or {}
+        make_slug = _resolve_make_from_schema(make, brands)
+        brand_entry = brands.get(make_slug)
+        trivial = _extract_trivial_models(brand_entry) if isinstance(brand_entry, dict) else []
+
+        if isinstance(brand_entry, dict):
+            from_cat = _resolve_model_from_schema_dict(
+                model,
+                brand_entry.get("catalog_models"),
+                make_slug,
+            )
+            if from_cat is not None:
+                return from_cat
+
+        aliased = _resolve_alias(model, make_slug, schema)
+        if aliased is not None:
+            return ResolvedDromSlug(
+                make_slug=aliased.make_slug,
+                model_slug=aliased.model_slug,
+                frame_type_id=None,
+            )
+
+        if isinstance(brand_entry, dict):
+            from_sales = _resolve_model_from_schema_dict(
+                model,
+                brand_entry.get("sales_models"),
+                make_slug,
+                trivial_models=trivial,
+            )
+            if from_sales is not None:
+                return from_sales
+
+        return self._fallback_normalized_slug(make_slug, model)
+
+    def resolve_catalog_via_api(self, make: str, model: str) -> ResolvedDromSlug | None:
+        """Resolve canonical Drom catalog slug dynamically from live drom.ru/catalog/ pages."""
+        return self._resolve_via_directory(make, model, self._get_catalog_models)
+
+    @staticmethod
+    def _fallback_normalized_slug(make_slug: str, model: str) -> ResolvedDromSlug:
+        model_key = re.sub(r"\s+", " ", model.strip().lower())
+        words = [w for w in re.split(r"[\s/]+", model_key) if w and w not in _TRIM_NOISE_WORDS]
+        stripped_key = " ".join(words)
         return ResolvedDromSlug(
             make_slug=make_slug,
             model_slug=normalize_slug(stripped_key or model_key),
             frame_type_id=None,
         )
-
-    def resolve_via_api(self, make: str, model: str) -> ResolvedDromSlug | None:
-        """Resolve exact Drom brand and model URL slugs dynamically from Drom's live pages."""
-        return self._resolve_via_directory(make, model, self._get_sales_models)
-
-    def resolve_catalog_slug(self, make: str, model: str) -> ResolvedDromSlug | None:
-        """Resolve canonical Drom catalog slug from scraped schema or live catalog page."""
-        brands = _load_drom_schema().get("brands") or {}
-        make_slug = _resolve_make_from_schema(make, brands)
-        brand_entry = brands.get(make_slug)
-        if isinstance(brand_entry, dict):
-            from_schema = _resolve_model_from_schema_dict(
-                model, brand_entry.get("catalog_models"), make_slug
-            )
-            if from_schema is not None:
-                return from_schema
-
-        return self._resolve_via_directory(make, model, self._get_catalog_models)
 
     def _resolve_via_directory(
         self,
@@ -201,8 +320,6 @@ class DromSlugResolver:
         make_slug = _resolve_make_from_schema(make, _load_drom_schema().get("brands") or {})
         names, slug_map = loader(make_slug)
 
-        # If the initial brand slug redirected/404'd (e.g. Cyrillic transliteration mismatch),
-        # look up the canonical brand slug from Drom's full brand directory.
         if not names:
             resolved_make = self._resolve_brand_slug(make)
             if resolved_make and resolved_make != make_slug:
@@ -300,7 +417,9 @@ def _fuzzy_match_alnum(
     *,
     cutoff: float = 0.72,
 ) -> str | None:
-    alnum_to_name = {_alnum_key(n): n for n in candidate_names if _alnum_key(n)}
+    alnum_to_name = {
+        _alnum_key(n): n for n in candidate_names if _alnum_key(n) and not _is_seo_label(n)
+    }
     if not alnum_to_name:
         return None
     for key in target_keys:
@@ -326,7 +445,6 @@ def _pick_best_brand_slug(
         if _alnum_key(name) == target_alnum:
             return slug_map.get(name.strip().lower(), normalize_slug(name))
 
-    # Check both raw transliteration (khonda) and h/kh-normalized form (honda).
     variants = [target_alnum]
     if "kh" in target_alnum:
         variants.append(target_alnum.replace("kh", "h"))
@@ -343,6 +461,8 @@ def _pick_best_model_slug(
     model: str,
     candidate_names: list[str],
     slug_map: dict[str, str],
+    *,
+    allow_fuzzy: bool = True,
 ) -> str | None:
     target_words = [
         _transliterate_cyrillic(word)
@@ -352,7 +472,12 @@ def _pick_best_model_slug(
     if not target_words:
         return None
 
-    best_name = _pick_best_model_name(target_words, candidate_names)
+    clean_candidates = [n for n in candidate_names if not _is_seo_label(n)]
+    best_name = _pick_best_model_name(
+        target_words,
+        clean_candidates,
+        allow_fuzzy=allow_fuzzy,
+    )
     if best_name is None:
         return None
     return slug_map.get(best_name.strip().lower(), normalize_slug(best_name))
@@ -364,7 +489,6 @@ def _match_exact_or_alnum(target_words: list[str], candidate_names: list[str]) -
     for name in candidate_names:
         if name.strip().lower() == target_joined:
             return name
-    # Match alphanumeric forms ignoring hyphens/spaces/colons (e.g. "cx 5" -> "CX-5", "delica d:5").
     for name in candidate_names:
         if _alnum_key(name) == target_alnum:
             return name
@@ -372,8 +496,10 @@ def _match_exact_or_alnum(target_words: list[str], candidate_names: list[str]) -
 
 
 def _match_prefix_words(target_words: list[str], candidate_names: list[str]) -> str | None:
-    # Match progressively shorter prefix (e.g. ["corolla", "rumion", "x"] -> "Corolla Rumion").
     for end in range(len(target_words), 0, -1):
+        dropped = set(target_words[end:])
+        if dropped & _SUBMODEL_CONFLICT_TOKENS:
+            continue
         prefix = " ".join(target_words[:end])
         prefix_alnum = _alnum_key(prefix)
         for name in candidate_names:
@@ -387,19 +513,37 @@ def _match_token_overlap(target_words: list[str], candidate_names: list[str]) ->
     best_key: tuple[int, int] = (0, 0)
     best_match: str | None = None
     for name in candidate_names:
-        cand_tokens = set(re.split(r"[\s_\-/]+", _transliterate_cyrillic(name.strip().lower())))
-        overlap = len(target_set & cand_tokens)
+        cand_tokens = {
+            t for t in re.split(r"[\s_\-/]+", _transliterate_cyrillic(name.strip().lower())) if t
+        }
+        if not cand_tokens or not cand_tokens.issubset(target_set):
+            continue
+        extra_target_tokens = target_set - cand_tokens
+        if extra_target_tokens & _SUBMODEL_CONFLICT_TOKENS:
+            continue
+        overlap = len(cand_tokens)
         score = (overlap, -len(cand_tokens))
-        if overlap > 0 and score > best_key:
+        if score > best_key:
             best_key = score
             best_match = name
     return best_match
 
 
-def _pick_best_model_name(target_words: list[str], candidate_names: list[str]) -> str | None:
-    return (
+def _pick_best_model_name(
+    target_words: list[str],
+    candidate_names: list[str],
+    *,
+    allow_fuzzy: bool = True,
+) -> str | None:
+    if any(w in _SUBMODEL_CONFLICT_TOKENS for w in target_words[1:]):
+        return _match_exact_or_alnum(target_words, candidate_names) or _match_prefix_words(
+            target_words, candidate_names
+        )
+    matched = (
         _match_exact_or_alnum(target_words, candidate_names)
         or _match_prefix_words(target_words, candidate_names)
         or _match_token_overlap(target_words, candidate_names)
-        or _fuzzy_match_alnum([_alnum_key(" ".join(target_words))], candidate_names)
     )
+    if matched or not allow_fuzzy:
+        return matched
+    return _fuzzy_match_alnum([_alnum_key(" ".join(target_words))], candidate_names)

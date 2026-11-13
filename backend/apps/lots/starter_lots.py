@@ -60,11 +60,6 @@ _DEFAULT_RISK_FLAGS: dict[str, bool] = dict.fromkeys(
     False,
 )
 
-
-def _build_risk_flags(**overrides: bool) -> dict[str, bool]:
-    return {**_DEFAULT_RISK_FLAGS, **overrides}
-
-
 _DEFAULT_RATES_SNAPSHOT: dict[str, Any] = {
     "jpy_rub_bank": 0.585,
     "jpy_rate_source": "ДВ-банк (ориентир)",
@@ -88,44 +83,190 @@ _DEFAULT_SAFETY_CHECKLIST: dict[str, Any] = {
     "overall_label_ru": "В норме",
 }
 
+_WISE_COST_TEMPLATE: tuple[tuple[int, str, str, bool], ...] = (
+    (1, "Ставка на аукционе", "JPY", False),
+    (2, "Расходы в Японии (FOB и сбор)", "JPY", False),
+    (3, "Фрахт Тояма-ВЛК", "USD", False),
+    (4, "Таможенная пошлина ЕАЭС и сбор", "EUR", False),
+    (5, "Утилизационный сбор РФ", "RUB", False),
+    (6, "СВХ, брокер, СБКТС, ЭПТС", "RUB", False),
+    (7, "Запчасти Farpost и ремонт", "RUB", True),
+)
 
-def _build_standard_safety_items(engine_detail_ru: str) -> list[dict[str, Any]]:
+
+def _build_safety_items(
+    engine_detail_ru: str,
+    frame_detail_ru: str = "Нарушений геометрии и ремонта несущих элементов не отмечено",
+) -> list[dict[str, Any]]:
+    rows = (
+        (SystemKey.STRUCTURAL_FRAME, "Силовой каркас и лонжероны", frame_detail_ru),
+        (
+            SystemKey.AIRBAGS_SRS,
+            "Подушки безопасности (SRS)",
+            "Отметок о срабатывании или отсутствии подушек нет",
+        ),
+        (SystemKey.ENGINE_TRANSMISSION, "ДВС и трансмиссия", engine_detail_ru),
+        (SystemKey.UNDERBODY_CORROSION, "Днище и пороги", "Сквозная коррозия не отмечена"),
+        (
+            SystemKey.FLOOD_OR_FIRE,
+            "Следы затопления / пожара / града",
+            "Стоп-факторов в бланке не зафиксировано",
+        ),
+    )
     return [
-        {
-            "system_key": SystemKey.STRUCTURAL_FRAME,
-            "label_ru": "Силовой каркас и лонжероны",
-            "status": ChecklistItemStatus.OK,
-            "detail_ru": "Нарушений геометрии и ремонта несущих элементов не отмечено",
-        },
-        {
-            "system_key": SystemKey.AIRBAGS_SRS,
-            "label_ru": "Подушки безопасности (SRS)",
-            "status": ChecklistItemStatus.OK,
-            "detail_ru": "Отметок о срабатывании или отсутствии подушек нет",
-        },
-        {
-            "system_key": SystemKey.ENGINE_TRANSMISSION,
-            "label_ru": "ДВС и трансмиссия",
-            "status": ChecklistItemStatus.OK,
-            "detail_ru": engine_detail_ru,
-        },
-        {
-            "system_key": SystemKey.UNDERBODY_CORROSION,
-            "label_ru": "Днище и пороги",
-            "status": ChecklistItemStatus.OK,
-            "detail_ru": "Сквозная коррозия не отмечена",
-        },
-        {
-            "system_key": SystemKey.FLOOD_OR_FIRE,
-            "label_ru": "Следы затопления / пожара / града",
-            "status": ChecklistItemStatus.OK,
-            "detail_ru": "Стоп-факторов в бланке не зафиксировано",
-        },
+        {"system_key": key, "label_ru": label, "status": ChecklistItemStatus.OK, "detail_ru": desc}
+        for key, label, desc in rows
     ]
 
 
-_COROLLA_FIXTURE: dict[str, Any] = {
-    "lot_fields": {
+def _defect(
+    panel_id: BodyPanel,
+    panel_ru: str,
+    raw_code: str,
+    description_ru: str,
+) -> dict[str, Any]:
+    dtype = raw_code.rstrip("0123456789")
+    sev_digits = raw_code[len(dtype) :]
+    return {
+        "panel_id": panel_id,
+        "panel_ru": panel_ru,
+        "defect_types": [dtype],
+        "severity": int(sev_digits) if sev_digits else None,
+        "raw_code": raw_code,
+        "description_ru": description_ru,
+    }
+
+
+def _work(
+    work_type: WorkType,
+    label_ru: str,
+    amount_rub: int,
+    zero_cost_reason_ru: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "work_type": work_type,
+        "label_ru": label_ru,
+        "amount_rub": amount_rub,
+        "zero_cost_reason_ru": zero_cost_reason_ru,
+    }
+
+
+def _build_fixture(
+    *,
+    lot_fields: dict[str, Any],
+    defects: list[dict[str, Any]],
+    risk_overrides: dict[str, bool] | None = None,
+    headline: str,
+    badge_text: str,
+    body_summary_ru: str,
+    interior_summary_ru: str,
+    reasoning_bullets: list[str],
+    market_stats: tuple[int, int, int, int, str],
+    audit_meta: tuple[date, str, int],
+    safety_items: list[dict[str, Any]],
+    customs_overrides: dict[str, Any],
+    farpost_totals: tuple[int, int, bool],
+    farpost_parts: list[dict[str, Any]] | None = None,
+    farpost_works: list[dict[str, Any]] | None = None,
+    step_amounts: list[tuple[int, float]],
+) -> dict[str, Any]:
+    analogs_count, p_min, p_max, filtered_out, drom_url = market_stats
+    auction_date, defects_summary, closing_jpy = audit_meta
+    parts_rub, works_rub, color_matched = farpost_totals
+    bid_rub, bid_jpy = step_amounts[0]
+
+    return {
+        "lot_fields": lot_fields,
+        "defects": defects,
+        "risk_flags": {**_DEFAULT_RISK_FLAGS, **(risk_overrides or {})},
+        "verdict": {
+            "verdict": lot_fields["verdict"],
+            "headline": headline,
+            "short_verdict_label": lot_fields["verdict_headline"],
+            "badge_text": badge_text,
+            "net_benefit_rub": lot_fields["net_benefit_rub"],
+            "benefit_percentage": lot_fields["benefit_percentage"],
+            "body_summary_ru": body_summary_ru,
+            "interior_summary_ru": interior_summary_ru,
+            "reasoning_bullets": reasoning_bullets,
+        },
+        "market": {
+            "market_price_rf_rub": lot_fields["market_price_rf_rub"],
+            "analogs_count": analogs_count,
+            "price_min_rub": p_min,
+            "price_max_rub": p_max,
+            "search_region_ru": "ДФО / Владивосток",
+            "excludes_under_order": True,
+            "filtered_out_under_order_count": filtered_out,
+            "is_fallback": False,
+            "fallback_reason_ru": None,
+            "drom_search_url": drom_url,
+        },
+        "audit": _DEFAULT_AUDIT,
+        "audit_history": [
+            {
+                "auction_date": auction_date,
+                "auction_house": lot_fields["auction_branch"],
+                "auction_strictness": lot_fields["auction_strictness_index"],
+                "lot_number": lot_fields["lot_number"],
+                "overall_grade": lot_fields["overall_grade"],
+                "mileage_km": lot_fields["mileage_km"],
+                "defects_summary": defects_summary,
+                "closing_price_jpy": closing_jpy,
+                "sheet_archive_url": None,
+            }
+        ],
+        "safety": _DEFAULT_SAFETY_CHECKLIST,
+        "safety_items": safety_items,
+        "customs": {
+            "age_corridor": AgeCorridor.THREE_TO_FIVE_YEARS,
+            "duty_calculation_mode": DutyCalculationMode.EUR_PER_CC,
+            "engine_cc": lot_fields["engine_cc"],
+            "duty_rate_eur_per_cc": 1.7,
+            "effective_duty_pct": None,
+            "is_under_160_hp": True,
+            "is_commercial_util": False,
+            "utilization_fee_rub": 5200,
+            "customs_clearance_fee_rub": 3120,
+            "meti_sanction_risk": lot_fields["meti_sanction_risk"],
+            **customs_overrides,
+        },
+        "rates": _DEFAULT_RATES_SNAPSHOT,
+        "farpost": {
+            "total_parts_from_rub": parts_rub,
+            "total_works_rub": works_rub,
+            "grand_total_repair_rub": parts_rub + works_rub,
+            "has_color_matched_parts": color_matched,
+            "included_in_turnkey_hint_ru": "Сумма уже включена в расчёт под ключ",
+        },
+        "farpost_parts": farpost_parts or [],
+        "farpost_works": farpost_works or [],
+        "wise_cost": {
+            "car_bid_jpy": int(bid_jpy),
+            "car_bid_rub": bid_rub,
+            "turnkey_cost_rub": lot_fields["turnkey_cost_rub"],
+            "market_price_rf_rub": lot_fields["market_price_rf_rub"],
+            "net_benefit_rub": lot_fields["net_benefit_rub"],
+            "benefit_percentage": lot_fields["benefit_percentage"],
+        },
+        "wise_cost_steps": [
+            {
+                "step_number": num,
+                "name_ru": name,
+                "amount_rub": amt_rub,
+                "original_currency": curr,
+                "original_amount": float(orig_amt),
+                "is_optional": opt,
+            }
+            for (num, name, curr, opt), (amt_rub, orig_amt) in zip(
+                _WISE_COST_TEMPLATE, step_amounts, strict=True
+            )
+        ],
+    }
+
+
+_COROLLA_FIXTURE = _build_fixture(
+    lot_fields={
         "lot_number": "3142",
         "auction_house": AuctionHouse.TAA,
         "auction_branch": "TAA Chubu",
@@ -175,9 +316,7 @@ _COROLLA_FIXTURE: dict[str, Any] = {
             "左Fドア交換(XX) / 左Rドア再塗装(W1)",
             "下廻り異常なし・室内に気になる臭いなし",
         ],
-        "seller_comments_ru": [
-            "Один владелец, сервисная книжка в наличии",
-        ],
+        "seller_comments_ru": ["Один владелец, сервисная книжка в наличии"],
         "year": 2020,
         "turnkey_cost_rub": 1104899,
         "market_price_rf_rub": 1520000,
@@ -188,124 +327,71 @@ _COROLLA_FIXTURE: dict[str, Any] = {
         "meti_sanction_risk": False,
         "has_anomaly": False,
     },
-    "defects": [
-        {
-            "panel_id": BodyPanel.FRONT_LEFT_DOOR,
-            "panel_ru": "Передняя левая дверь",
-            "defect_types": ["XX"],
-            "severity": None,
-            "raw_code": "XX",
-            "description_ru": "Передняя левая дверь — замена (в цвет 070)",
-        },
-        {
-            "panel_id": BodyPanel.FRONT_LEFT_FENDER,
-            "panel_ru": "Арка переднего крыла",
-            "defect_types": ["A"],
-            "severity": 2,
-            "raw_code": "A2",
-            "description_ru": "Арка переднего крыла — царапина до 10 см",
-        },
-        {
-            "panel_id": BodyPanel.LEFT_SILL,
-            "panel_ru": "Левый порог",
-            "defect_types": ["U"],
-            "severity": 2,
-            "raw_code": "U2",
-            "description_ru": "Порог — мелкая вмятина (PDR без покраски)",
-        },
-        {
-            "panel_id": BodyPanel.REAR_LEFT_DOOR,
-            "panel_ru": "Задняя левая дверь",
-            "defect_types": ["W"],
-            "severity": 1,
-            "raw_code": "W1",
-            "description_ru": "Задняя левая дверь — вторичный заводской окрас",
-        },
-    ],
-    "risk_flags": _build_risk_flags(panel_replaced_xx=True),
-    "verdict": {
-        "verdict": TrafficLightColor.GREEN,
-        "headline": "РЕКОМЕНДОВАНО К ПОКУПКЕ",
-        "short_verdict_label": "🟢 РЕКОМЕНДОВАНО К ПОКУПКЕ",
-        "badge_text": "Выгода: +415 101 ₽",
-        "net_benefit_rub": 415101,
-        "benefit_percentage": 37.6,
-        "body_summary_ru": (
-            "Кузов (оценка C): замена левой двери (XX), "
-            "деталь найдена на Farpost в цвет за от 18 000 ₽."
+    defects=[
+        _defect(
+            BodyPanel.FRONT_LEFT_DOOR,
+            "Передняя левая дверь",
+            "XX",
+            "Передняя левая дверь — замена (в цвет 070)",
         ),
-        "interior_summary_ru": (
-            "Салон (оценка B): чистый, без прокуров, мелкие естественные следы эксплуатации."
+        _defect(
+            BodyPanel.FRONT_LEFT_FENDER,
+            "Арка переднего крыла",
+            "A2",
+            "Арка переднего крыла — царапина до 10 см",
         ),
-        "reasoning_bullets": [
-            "Строгий аукцион TAA Chubu: оценка 3.5 C/B, родной пробег 58 240 км",
-            "Несущий каркас и подушки SRS целы, повреждены только навесные панели",
-            "Льготный утильсбор (5 200 ₽) и проходной коридор ЕАЭС 3-5 лет",
-        ],
-    },
-    "market": {
-        "market_price_rf_rub": 1520000,
-        "analogs_count": 14,
-        "price_min_rub": 1390000,
-        "price_max_rub": 1680000,
-        "search_region_ru": "ДФО / Владивосток",
-        "excludes_under_order": True,
-        "filtered_out_under_order_count": 6,
-        "is_fallback": False,
-        "fallback_reason_ru": None,
-        "drom_search_url": "https://vladivostok.drom.ru/toyota/corolla_touring/year-2020/engine-1.2/manual/",
-    },
-    "audit": _DEFAULT_AUDIT,
-    "audit_history": [
-        {
-            "auction_date": date(2026, 11, 12),
-            "auction_house": "TAA Chubu",
-            "auction_strictness": 1.0,
-            "lot_number": "3142",
-            "overall_grade": "3.5",
-            "mileage_km": 58240,
-            "defects_summary": "Замена двери XX, окрас задней двери W1, царапина A2",
-            "closing_price_jpy": 1060000,
-            "sheet_archive_url": None,
-        },
+        _defect(
+            BodyPanel.LEFT_SILL,
+            "Левый порог",
+            "U2",
+            "Порог — мелкая вмятина (PDR без покраски)",
+        ),
+        _defect(
+            BodyPanel.REAR_LEFT_DOOR,
+            "Задняя левая дверь",
+            "W1",
+            "Задняя левая дверь — вторичный заводской окрас",
+        ),
     ],
-    "safety": _DEFAULT_SAFETY_CHECKLIST,
-    "safety_items": [
-        {
-            "system_key": SystemKey.STRUCTURAL_FRAME,
-            "label_ru": "Силовой каркас и лонжероны",
-            "status": ChecklistItemStatus.OK,
-            "detail_ru": (
-                "Нарушений геометрии, ремонта стоек и рамки радиатора на листе не отмечено"
-            ),
-        },
-        *_build_standard_safety_items("Замечаний инспектора по работе 1.2T и 6MT в бланке нет")[1:],
+    risk_overrides={"panel_replaced_xx": True},
+    headline="РЕКОМЕНДОВАНО К ПОКУПКЕ",
+    badge_text="Выгода: +415 101 ₽",
+    body_summary_ru=(
+        "Кузов (оценка C): замена левой двери (XX), "
+        "деталь найдена на Farpost в цвет за от 18 000 ₽."
+    ),
+    interior_summary_ru=(
+        "Салон (оценка B): чистый, без прокуров, мелкие естественные следы эксплуатации."
+    ),
+    reasoning_bullets=[
+        "Строгий аукцион TAA Chubu: оценка 3.5 C/B, родной пробег 58 240 км",
+        "Несущий каркас и подушки SRS целы, повреждены только навесные панели",
+        "Льготный утильсбор (5 200 ₽) и проходной коридор ЕАЭС 3-5 лет",
     ],
-    "customs": {
-        "age_corridor": AgeCorridor.THREE_TO_FIVE_YEARS,
-        "duty_calculation_mode": DutyCalculationMode.EUR_PER_CC,
-        "engine_cc": 1196,
-        "duty_rate_eur_per_cc": 1.7,
-        "effective_duty_pct": None,
+    market_stats=(
+        14,
+        1390000,
+        1680000,
+        6,
+        "https://vladivostok.drom.ru/toyota/corolla_touring/year-2020/engine-1.2/manual/",
+    ),
+    audit_meta=(
+        date(2026, 11, 12),
+        "Замена двери XX, окрас задней двери W1, царапина A2",
+        1060000,
+    ),
+    safety_items=_build_safety_items(
+        "Замечаний инспектора по работе 1.2T и 6MT в бланке нет",
+        frame_detail_ru="Нарушений геометрии, ремонта стоек и рамки радиатора на листе не отмечено",
+    ),
+    customs_overrides={
         "customs_duty_eur": 2033.2,
         "customs_duty_rub": 193154,
-        "is_under_160_hp": True,
-        "is_commercial_util": False,
-        "utilization_fee_rub": 5200,
-        "customs_clearance_fee_rub": 3120,
         "freight_vladivostok_rub": 97750,
         "broker_svh_sbkts_rub": 99000,
-        "meti_sanction_risk": False,
     },
-    "rates": _DEFAULT_RATES_SNAPSHOT,
-    "farpost": {
-        "total_parts_from_rub": 18000,
-        "total_works_rub": 13000,
-        "grand_total_repair_rub": 31000,
-        "has_color_matched_parts": True,
-        "included_in_turnkey_hint_ru": "Сумма уже включена в расчёт под ключ",
-    },
-    "farpost_parts": [
+    farpost_totals=(18000, 13000, True),
+    farpost_parts=[
         {
             "panel_id": BodyPanel.FRONT_LEFT_DOOR,
             "defect_code": "XX",
@@ -314,98 +400,26 @@ _COROLLA_FIXTURE: dict[str, Any] = {
             "price_from_rub": 18000,
             "in_stock_vladivostok": True,
             "is_statistical_fallback": False,
-        },
+        }
     ],
-    "farpost_works": [
-        {
-            "work_type": WorkType.MOUNT_DISMOUNT,
-            "label_ru": "Снятие и монтаж двери",
-            "amount_rub": 4000,
-            "zero_cost_reason_ru": None,
-        },
-        {
-            "work_type": WorkType.PAINT,
-            "label_ru": "Покраска двери (в цвет 070)",
-            "amount_rub": 0,
-            "zero_cost_reason_ru": "не требуется",
-        },
-        {
-            "work_type": WorkType.PDR_AND_POLISH,
-            "label_ru": "PDR удаление вмятины + полировка",
-            "amount_rub": 9000,
-            "zero_cost_reason_ru": None,
-        },
+    farpost_works=[
+        _work(WorkType.MOUNT_DISMOUNT, "Снятие и монтаж двери", 4000),
+        _work(WorkType.PAINT, "Покраска двери (в цвет 070)", 0, "не требуется"),
+        _work(WorkType.PDR_AND_POLISH, "PDR удаление вмятины + полировка", 9000),
     ],
-    "wise_cost": {
-        "car_bid_jpy": 1060000,
-        "car_bid_rub": 620100,
-        "turnkey_cost_rub": 1104899,
-        "market_price_rf_rub": 1520000,
-        "net_benefit_rub": 415101,
-        "benefit_percentage": 37.6,
-    },
-    "wise_cost_steps": [
-        {
-            "step_number": 1,
-            "name_ru": "Ставка на аукционе",
-            "amount_rub": 620100,
-            "original_currency": "JPY",
-            "original_amount": 1060000.0,
-            "is_optional": False,
-        },
-        {
-            "step_number": 2,
-            "name_ru": "Расходы в Японии (FOB и сбор)",
-            "amount_rub": 55575,
-            "original_currency": "JPY",
-            "original_amount": 95000.0,
-            "is_optional": False,
-        },
-        {
-            "step_number": 3,
-            "name_ru": "Фрахт Тояма-ВЛК",
-            "amount_rub": 97750,
-            "original_currency": "USD",
-            "original_amount": 1150.0,
-            "is_optional": False,
-        },
-        {
-            "step_number": 4,
-            "name_ru": "Таможенная пошлина ЕАЭС и сбор",
-            "amount_rub": 196274,
-            "original_currency": "EUR",
-            "original_amount": 2033.2,
-            "is_optional": False,
-        },
-        {
-            "step_number": 5,
-            "name_ru": "Утилизационный сбор РФ",
-            "amount_rub": 5200,
-            "original_currency": "RUB",
-            "original_amount": 5200.0,
-            "is_optional": False,
-        },
-        {
-            "step_number": 6,
-            "name_ru": "СВХ, брокер, СБКТС, ЭПТС",
-            "amount_rub": 99000,
-            "original_currency": "RUB",
-            "original_amount": 99000.0,
-            "is_optional": False,
-        },
-        {
-            "step_number": 7,
-            "name_ru": "Запчасти Farpost и ремонт",
-            "amount_rub": 31000,
-            "original_currency": "RUB",
-            "original_amount": 31000.0,
-            "is_optional": True,
-        },
+    step_amounts=[
+        (620100, 1060000.0),
+        (55575, 95000.0),
+        (97750, 1150.0),
+        (196274, 2033.2),
+        (5200, 5200.0),
+        (99000, 99000.0),
+        (31000, 31000.0),
     ],
-}
+)
 
-_VEZEL_FIXTURE: dict[str, Any] = {
-    "lot_fields": {
+_VEZEL_FIXTURE = _build_fixture(
+    lot_fields={
         "lot_number": "5094",
         "auction_house": AuctionHouse.USS,
         "auction_branch": "USS Tokyo",
@@ -448,12 +462,8 @@ _VEZEL_FIXTURE: dict[str, Any] = {
             "Сколы A2 на переднем бампере и вмятина U2 на задней двери",
             "Салон чистый, без замечаний (оценка A)",
         ],
-        "inspector_notes_raw": [
-            "前バンパー A2 / 後ドア U2",
-        ],
-        "seller_comments_ru": [
-            "Один владелец, не курили в салоне",
-        ],
+        "inspector_notes_raw": ["前バンパー A2 / 後ドア U2"],
+        "seller_comments_ru": ["Один владелец, не курили в салоне"],
         "year": 2022,
         "turnkey_cost_rub": 1480000,
         "market_price_rf_rub": 1600000,
@@ -464,175 +474,68 @@ _VEZEL_FIXTURE: dict[str, Any] = {
         "meti_sanction_risk": True,
         "has_anomaly": False,
     },
-    "defects": [
-        {
-            "panel_id": BodyPanel.FRONT_BUMPER,
-            "panel_ru": "Передний бампер",
-            "defect_types": ["A"],
-            "severity": 2,
-            "raw_code": "A2",
-            "description_ru": "Передний бампер — сколы до 10 см",
-        },
-        {
-            "panel_id": BodyPanel.REAR_LEFT_DOOR,
-            "panel_ru": "Задняя левая дверь",
-            "defect_types": ["U"],
-            "severity": 2,
-            "raw_code": "U2",
-            "description_ru": "Задняя левая дверь — вмятина (PDR без покраски)",
-        },
-    ],
-    "risk_flags": _build_risk_flags(),
-    "verdict": {
-        "verdict": TrafficLightColor.YELLOW,
-        "headline": "ВНИМАНИЕ: СКОЛЫ A2/U2",
-        "short_verdict_label": "🟡 ВНИМАНИЕ: СКОЛЫ A2/U2",
-        "badge_text": "Выгода: +120 000 ₽",
-        "net_benefit_rub": 120000,
-        "benefit_percentage": 8.1,
-        "body_summary_ru": (
-            "Кузов (оценка A): сколы A2 на бампере и вмятина U2 на двери, "
-            "ремонт PDR без замены деталей."
+    defects=[
+        _defect(
+            BodyPanel.FRONT_BUMPER,
+            "Передний бампер",
+            "A2",
+            "Передний бампер — сколы до 10 см",
         ),
-        "interior_summary_ru": "Салон (оценка A): чистый, без замечаний.",
-        "reasoning_bullets": [
-            "Гибрид Honda Vezel: санкционный риск METI, но мощность 131 л.с. < 160 л.с.",
-            "Оценка 4.0 A/A, родной пробег 45 000 км",
-            "Ремонт ограничен сколами и вмятинами без замены панелей",
-        ],
-    },
-    "market": {
-        "market_price_rf_rub": 1600000,
-        "analogs_count": 8,
-        "price_min_rub": 1450000,
-        "price_max_rub": 1850000,
-        "search_region_ru": "ДФО / Владивосток",
-        "excludes_under_order": True,
-        "filtered_out_under_order_count": 4,
-        "is_fallback": False,
-        "fallback_reason_ru": None,
-        "drom_search_url": "https://vladivostok.drom.ru/honda/vezel/year-2022/engine-1.5/4wd/",
-    },
-    "audit": _DEFAULT_AUDIT,
-    "audit_history": [
-        {
-            "auction_date": date(2026, 11, 11),
-            "auction_house": "USS Tokyo",
-            "auction_strictness": 0.85,
-            "lot_number": "5094",
-            "overall_grade": "4.0",
-            "mileage_km": 45000,
-            "defects_summary": "Сколы A2 на бампере, вмятина U2 на двери",
-            "closing_price_jpy": 1700000,
-            "sheet_archive_url": None,
-        },
+        _defect(
+            BodyPanel.REAR_LEFT_DOOR,
+            "Задняя левая дверь",
+            "U2",
+            "Задняя левая дверь — вмятина (PDR без покраски)",
+        ),
     ],
-    "safety": _DEFAULT_SAFETY_CHECKLIST,
-    "safety_items": _build_standard_safety_items(
-        "Гибридная установка i-MMD без замечаний инспектора"
+    headline="ВНИМАНИЕ: СКОЛЫ A2/U2",
+    badge_text="Выгода: +120 000 ₽",
+    body_summary_ru=(
+        "Кузов (оценка A): сколы A2 на бампере и вмятина U2 на двери, "
+        "ремонт PDR без замены деталей."
     ),
-    "customs": {
-        "age_corridor": AgeCorridor.THREE_TO_FIVE_YEARS,
-        "duty_calculation_mode": DutyCalculationMode.EUR_PER_CC,
-        "engine_cc": 1496,
-        "duty_rate_eur_per_cc": 1.7,
-        "effective_duty_pct": None,
+    interior_summary_ru="Салон (оценка A): чистый, без замечаний.",
+    reasoning_bullets=[
+        "Гибрид Honda Vezel: санкционный риск METI, но мощность 131 л.с. < 160 л.с.",
+        "Оценка 4.0 A/A, родной пробег 45 000 км",
+        "Ремонт ограничен сколами и вмятинами без замены панелей",
+    ],
+    market_stats=(
+        8,
+        1450000,
+        1850000,
+        4,
+        "https://vladivostok.drom.ru/honda/vezel/year-2022/engine-1.5/4wd/",
+    ),
+    audit_meta=(
+        date(2026, 11, 11),
+        "Сколы A2 на бампере, вмятина U2 на двери",
+        1700000,
+    ),
+    safety_items=_build_safety_items("Гибридная установка i-MMD без замечаний инспектора"),
+    customs_overrides={
         "customs_duty_eur": 2517.68,
         "customs_duty_rub": 239180,
-        "is_under_160_hp": True,
-        "is_commercial_util": False,
-        "utilization_fee_rub": 5200,
-        "customs_clearance_fee_rub": 3120,
         "freight_vladivostok_rub": 95000,
         "broker_svh_sbkts_rub": 65000,
-        "meti_sanction_risk": True,
     },
-    "rates": _DEFAULT_RATES_SNAPSHOT,
-    "farpost": {
-        "total_parts_from_rub": 0,
-        "total_works_rub": 18000,
-        "grand_total_repair_rub": 18000,
-        "has_color_matched_parts": False,
-        "included_in_turnkey_hint_ru": "Сумма уже включена в расчёт под ключ",
-    },
-    "farpost_works": [
-        {
-            "work_type": WorkType.PDR_AND_POLISH,
-            "label_ru": "PDR удаление вмятины + полировка сколов",
-            "amount_rub": 18000,
-            "zero_cost_reason_ru": None,
-        },
+    farpost_totals=(0, 18000, False),
+    farpost_works=[
+        _work(WorkType.PDR_AND_POLISH, "PDR удаление вмятины + полировка сколов", 18000),
     ],
-    "wise_cost": {
-        "car_bid_jpy": 1700000,
-        "car_bid_rub": 994500,
-        "turnkey_cost_rub": 1480000,
-        "market_price_rf_rub": 1600000,
-        "net_benefit_rub": 120000,
-        "benefit_percentage": 8.1,
-    },
-    "wise_cost_steps": [
-        {
-            "step_number": 1,
-            "name_ru": "Ставка на аукционе",
-            "amount_rub": 994500,
-            "original_currency": "JPY",
-            "original_amount": 1700000.0,
-            "is_optional": False,
-        },
-        {
-            "step_number": 2,
-            "name_ru": "Расходы в Японии (FOB и сбор)",
-            "amount_rub": 60000,
-            "original_currency": "JPY",
-            "original_amount": 102500.0,
-            "is_optional": False,
-        },
-        {
-            "step_number": 3,
-            "name_ru": "Фрахт Тояма-ВЛК",
-            "amount_rub": 95000,
-            "original_currency": "USD",
-            "original_amount": 1117.0,
-            "is_optional": False,
-        },
-        {
-            "step_number": 4,
-            "name_ru": "Таможенная пошлина ЕАЭС и сбор",
-            "amount_rub": 242300,
-            "original_currency": "EUR",
-            "original_amount": 2517.68,
-            "is_optional": False,
-        },
-        {
-            "step_number": 5,
-            "name_ru": "Утилизационный сбор РФ",
-            "amount_rub": 5200,
-            "original_currency": "RUB",
-            "original_amount": 5200.0,
-            "is_optional": False,
-        },
-        {
-            "step_number": 6,
-            "name_ru": "СВХ, брокер, СБКТС, ЭПТС",
-            "amount_rub": 65000,
-            "original_currency": "RUB",
-            "original_amount": 65000.0,
-            "is_optional": False,
-        },
-        {
-            "step_number": 7,
-            "name_ru": "Запчасти Farpost и ремонт",
-            "amount_rub": 18000,
-            "original_currency": "RUB",
-            "original_amount": 18000.0,
-            "is_optional": True,
-        },
+    step_amounts=[
+        (994500, 1700000.0),
+        (60000, 102500.0),
+        (95000, 1117.0),
+        (242300, 2517.68),
+        (5200, 5200.0),
+        (65000, 65000.0),
+        (18000, 18000.0),
     ],
-}
+)
 
-_NOTE_FIXTURE: dict[str, Any] = {
-    "lot_fields": {
+_NOTE_FIXTURE = _build_fixture(
+    lot_fields={
         "lot_number": "7281",
         "auction_house": AuctionHouse.CAA,
         "auction_branch": "CAA Kanto",
@@ -674,12 +577,8 @@ _NOTE_FIXTURE: dict[str, Any] = {
             "Состояние отличное, мелкие царапины W1 на переднем крыле",
             "Салон новый, без следов эксплуатации (оценка A)",
         ],
-        "inspector_notes_raw": [
-            "前フェンダー W1",
-        ],
-        "seller_comments_ru": [
-            "Первый владелец, сервисная история доступна",
-        ],
+        "inspector_notes_raw": ["前フェンダー W1"],
+        "seller_comments_ru": ["Первый владелец, сервисная история доступна"],
         "year": 2024,
         "turnkey_cost_rub": 980000,
         "market_price_rf_rub": 1190000,
@@ -690,153 +589,58 @@ _NOTE_FIXTURE: dict[str, Any] = {
         "meti_sanction_risk": True,
         "has_anomaly": False,
     },
-    "defects": [
-        {
-            "panel_id": BodyPanel.FRONT_LEFT_FENDER,
-            "panel_ru": "Переднее левое крыло",
-            "defect_types": ["W"],
-            "severity": 1,
-            "raw_code": "W1",
-            "description_ru": "Переднее левое крыло — мелкий вторичный окрас",
-        },
+    defects=[
+        _defect(
+            BodyPanel.FRONT_LEFT_FENDER,
+            "Переднее левое крыло",
+            "W1",
+            "Переднее левое крыло — мелкий вторичный окрас",
+        ),
     ],
-    "risk_flags": _build_risk_flags(),
-    "verdict": {
-        "verdict": TrafficLightColor.GREEN,
-        "headline": "РЕКОМЕНДОВАНО К ПОКУПКЕ",
-        "short_verdict_label": "🟢 РЕКОМЕНДОВАНО К ПОКУПКЕ",
-        "badge_text": "Выгода: +210 000 ₽",
-        "net_benefit_rub": 210000,
-        "benefit_percentage": 21.4,
-        "body_summary_ru": "Кузов (оценка A): только мелкий вторичный окрас W1 на переднем крыле.",
-        "interior_summary_ru": "Салон (оценка A): новый, без следов эксплуатации.",
-        "reasoning_bullets": [
-            "Nissan Note e-Power: гибрид, санкционный риск METI, но 109 л.с. < 160 л.с.",
-            "Оценка 4.5 A/A, родной пробег 65 000 км",
-            "Льготный утильсбор и коридор до 3 лет, ремонт не требуется",
-        ],
-    },
-    "market": {
-        "market_price_rf_rub": 1190000,
-        "analogs_count": 6,
-        "price_min_rub": 1090000,
-        "price_max_rub": 1390000,
-        "search_region_ru": "ДФО / Владивосток",
-        "excludes_under_order": True,
-        "filtered_out_under_order_count": 3,
-        "is_fallback": False,
-        "fallback_reason_ru": None,
-        "drom_search_url": "https://vladivostok.drom.ru/nissan/note/year-2024/engine-1.2/",
-    },
-    "audit": _DEFAULT_AUDIT,
-    "audit_history": [
-        {
-            "auction_date": date(2026, 11, 10),
-            "auction_house": "CAA Kanto",
-            "auction_strictness": 0.80,
-            "lot_number": "7281",
-            "overall_grade": "4.5",
-            "mileage_km": 65000,
-            "defects_summary": "Мелкий вторичный окрас W1 на переднем крыле",
-            "closing_price_jpy": 1200000,
-            "sheet_archive_url": None,
-        },
+    headline="РЕКОМЕНДОВАНО К ПОКУПКЕ",
+    badge_text="Выгода: +210 000 ₽",
+    body_summary_ru="Кузов (оценка A): только мелкий вторичный окрас W1 на переднем крыле.",
+    interior_summary_ru="Салон (оценка A): новый, без следов эксплуатации.",
+    reasoning_bullets=[
+        "Nissan Note e-Power: гибрид, санкционный риск METI, но 109 л.с. < 160 л.с.",
+        "Оценка 4.5 A/A, родной пробег 65 000 км",
+        "Льготный утильсбор и коридор до 3 лет, ремонт не требуется",
     ],
-    "safety": _DEFAULT_SAFETY_CHECKLIST,
-    "safety_items": _build_standard_safety_items(
-        "Гибридная установка e-Power без замечаний инспектора"
+    market_stats=(
+        6,
+        1090000,
+        1390000,
+        3,
+        "https://vladivostok.drom.ru/nissan/note/year-2024/engine-1.2/",
     ),
-    "customs": {
+    audit_meta=(
+        date(2026, 11, 10),
+        "Мелкий вторичный окрас W1 на переднем крыле",
+        1200000,
+    ),
+    safety_items=_build_safety_items("Гибридная установка e-Power без замечаний инспектора"),
+    customs_overrides={
         "age_corridor": AgeCorridor.UNDER_3_YEARS,
         "duty_calculation_mode": DutyCalculationMode.PCT_OF_VALUE,
-        "engine_cc": 1198,
         "duty_rate_eur_per_cc": None,
         "effective_duty_pct": 48.0,
         "customs_duty_eur": 576.0,
         "customs_duty_rub": 54720,
-        "is_under_160_hp": True,
-        "is_commercial_util": False,
-        "utilization_fee_rub": 5200,
         "customs_clearance_fee_rub": 3100,
         "freight_vladivostok_rub": 90000,
         "broker_svh_sbkts_rub": 27980,
-        "meti_sanction_risk": True,
     },
-    "rates": _DEFAULT_RATES_SNAPSHOT,
-    "farpost": {
-        "total_parts_from_rub": 0,
-        "total_works_rub": 0,
-        "grand_total_repair_rub": 0,
-        "has_color_matched_parts": False,
-        "included_in_turnkey_hint_ru": "Сумма уже включена в расчёт под ключ",
-    },
-    "wise_cost": {
-        "car_bid_jpy": 1200000,
-        "car_bid_rub": 702000,
-        "turnkey_cost_rub": 980000,
-        "market_price_rf_rub": 1190000,
-        "net_benefit_rub": 210000,
-        "benefit_percentage": 21.4,
-    },
-    "wise_cost_steps": [
-        {
-            "step_number": 1,
-            "name_ru": "Ставка на аукционе",
-            "amount_rub": 702000,
-            "original_currency": "JPY",
-            "original_amount": 1200000.0,
-            "is_optional": False,
-        },
-        {
-            "step_number": 2,
-            "name_ru": "Расходы в Японии (FOB и сбор)",
-            "amount_rub": 97000,
-            "original_currency": "JPY",
-            "original_amount": 165800.0,
-            "is_optional": False,
-        },
-        {
-            "step_number": 3,
-            "name_ru": "Фрахт Тояма-ВЛК",
-            "amount_rub": 90000,
-            "original_currency": "USD",
-            "original_amount": 1058.0,
-            "is_optional": False,
-        },
-        {
-            "step_number": 4,
-            "name_ru": "Таможенная пошлина ЕАЭС и сбор",
-            "amount_rub": 57820,
-            "original_currency": "EUR",
-            "original_amount": 576.0,
-            "is_optional": False,
-        },
-        {
-            "step_number": 5,
-            "name_ru": "Утилизационный сбор РФ",
-            "amount_rub": 5200,
-            "original_currency": "RUB",
-            "original_amount": 5200.0,
-            "is_optional": False,
-        },
-        {
-            "step_number": 6,
-            "name_ru": "СВХ, брокер, СБКТС, ЭПТС",
-            "amount_rub": 27980,
-            "original_currency": "RUB",
-            "original_amount": 27980.0,
-            "is_optional": False,
-        },
-        {
-            "step_number": 7,
-            "name_ru": "Запчасти Farpost и ремонт",
-            "amount_rub": 0,
-            "original_currency": "RUB",
-            "original_amount": 0.0,
-            "is_optional": True,
-        },
+    farpost_totals=(0, 0, False),
+    step_amounts=[
+        (702000, 1200000.0),
+        (97000, 165800.0),
+        (90000, 1058.0),
+        (57820, 576.0),
+        (5200, 5200.0),
+        (27980, 27980.0),
+        (0, 0.0),
     ],
-}
+)
 
 _STARTER_FIXTURES: dict[tuple[str, str], dict[str, Any]] = {
     (fixture["lot_fields"]["make"], fixture["lot_fields"]["model"]): fixture

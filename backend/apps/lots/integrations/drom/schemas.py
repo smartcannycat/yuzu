@@ -49,6 +49,7 @@ class DromCatalogSpec:
     drive_type: str | None = None
     year_start: int | None = None
     year_end: int | None = None
+    trim_text: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

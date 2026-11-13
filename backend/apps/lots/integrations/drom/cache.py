@@ -6,12 +6,13 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.core.enums import ExternalCacheSource
-from apps.core.models import ExternalCache
 from apps.lots.integrations.drom.schemas import DromFetchError
 
 
 def read_drom_cache(key: str, *, allow_stale: bool = False) -> dict[str, Any] | None:
     """Read cached JSON payload from ExternalCache, optionally allowing expired entries."""
+    from apps.core.models import ExternalCache
+
     entry = ExternalCache.objects.filter(key=key).first()
     if entry is None:
         return None
@@ -22,6 +23,8 @@ def read_drom_cache(key: str, *, allow_stale: bool = False) -> dict[str, Any] | 
 
 def write_drom_cache(key: str, payload: dict[str, Any], *, ttl: timedelta) -> None:
     """Upsert a JSON payload into ExternalCache safely under concurrent threads."""
+    from apps.core.models import ExternalCache
+
     expires_at = timezone.now() + ttl
     defaults = {
         "source": ExternalCacheSource.DROM,

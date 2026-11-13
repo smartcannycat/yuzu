@@ -318,7 +318,7 @@ def test_outlier_removal_upper_spike_when_iqr_is_zero() -> None:
 
 
 @pytest.mark.django_db
-def test_cascade_zero_analogs_falls_back_to_stale_then_reference_then_error() -> None:
+def test_cascade_zero_analogs_falls_back_to_stale_then_error() -> None:
     calls: list[str] = []
 
     def all_under_order_handler(request: httpx.Request) -> httpx.Response:
@@ -334,14 +334,13 @@ def test_cascade_zero_analogs_falls_back_to_stale_then_reference_then_error() ->
     )
     criteria = DromSearchCriteria(make="Toyota", model="Corolla", year=2020, engine_cc=1196)
 
-    # Without cache, 3 cascade steps yield 0 in-stock -> reference fallback
-    ref_result = service.evaluate(criteria)
+    # Without cache, 3 cascade steps yield 0 in-stock -> raises DromFetchError
+    with pytest.raises(DromFetchError):
+        service.evaluate(criteria)
     search_calls = [u for u in calls if "auto.drom.ru" in u]
     assert len(search_calls) == 3
-    assert ref_result.is_fallback is True
-    assert ref_result.market_price_rf_rub == 1520000
 
-    # With stale cache -> prefers stale cache over reference fallback
+    # With stale cache -> returns stale cache fallback
     resolved_slug = DromSlugResolver(service._client).resolve(criteria.make, criteria.model)
     ExternalCache.objects.create(
         key=_build_market_cache_key(criteria, resolved_slug),
@@ -366,10 +365,6 @@ def test_cascade_zero_analogs_falls_back_to_stale_then_reference_then_error() ->
     assert len(stale_search_calls) == 3
     assert stale_result.is_fallback is True
     assert stale_result.market_price_rf_rub == 1444000
-
-    # Unknown model with 0 in-stock and no cache -> DromFetchError
-    with pytest.raises(DromFetchError):
-        service.evaluate(DromSearchCriteria(make="Mitsuoka", model="Galue", year=2018))
 
 
 @pytest.mark.django_db
@@ -489,14 +484,44 @@ def test_normalize_katashiki_candidates_prefix_and_body_letter() -> None:
 
 @pytest.mark.django_db
 def test_power_hp_conflicting_specs_and_ev_zero_cc() -> None:
-    # No HTTP calls should happen when mocking 404 for catalog
-    def not_found(_request: httpx.Request) -> httpx.Response:
+    corolla_model_html = (
+        '<html><body><a href="/catalog/toyota/corolla/g_2019_1/">Corolla (NRE210W)</a>'
+        "</body></html>"
+    )
+    corolla_gen_html = (
+        "<html><body><table>"
+        "<tr><td>1.2 л, 116 л.с., бензин, МКПП, передний привод</td>"
+        "<td>Кузов: 3BA-NRE210W</td></tr>"
+        "<tr><td>10.2019 - н.в.</td></tr>"
+        "</table></body></html>"
+    )
+    leaf_model_html = (
+        '<html><body><a href="/catalog/nissan/leaf/g_2017_1/">Leaf (ZE1)</a></body></html>'
+    )
+    leaf_gen_html = (
+        "<html><body><table>"
+        "<tr><td>110 кВт (150 л.с.), электро, редуктор, передний привод</td>"
+        "<td>Кузов: ZAA-ZE1</td></tr>"
+        "<tr><td>10.2017 - н.в.</td></tr>"
+        "</table></body></html>"
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url.endswith("/catalog/toyota/corolla/"):
+            return httpx.Response(200, text=corolla_model_html)
+        if url.endswith("/catalog/toyota/corolla/g_2019_1/"):
+            return httpx.Response(200, text=corolla_gen_html)
+        if url.endswith("/catalog/nissan/leaf/"):
+            return httpx.Response(200, text=leaf_model_html)
+        if url.endswith("/catalog/nissan/leaf/g_2017_1/"):
+            return httpx.Response(200, text=leaf_gen_html)
         return httpx.Response(404)
 
-    client = DromHttpClient(transport=httpx.MockTransport(not_found))
+    client = DromHttpClient(transport=httpx.MockTransport(handler))
     resolver = DromPowerResolver(client, DromSlugResolver(client))
 
-    # NRE210W in katashiki_power.json is 1196 cc gasoline -> conflicting 2500 cc must reject it
+    # NRE210W in catalog is 1200 cc gasoline -> conflicting 2500 cc must reject it
     res_bad_cc = resolver.resolve(
         make="Toyota",
         model="Corolla",
@@ -516,7 +541,7 @@ def test_power_hp_conflicting_specs_and_ev_zero_cc() -> None:
     )
     assert res_bad_fuel.power_hp is None
 
-    # ZE1 in katashiki_power.json has engine_cc=0, fuel_type="ev" -> 2000 cc must NOT match ZE1
+    # ZE1 in catalog is EV (engine_cc=None) -> 2000 cc must NOT match ZE1
     res_ze1_bad_cc = resolver.resolve(
         make="Nissan",
         model="Leaf",
@@ -564,10 +589,7 @@ def test_power_hp_drom_catalog_substring_ambiguity_e12_vs_he12() -> None:
 
     client = DromHttpClient(transport=httpx.MockTransport(handler))
     resolver = DromPowerResolver(client, DromSlugResolver(client))
-    # Force catalog path with an unknown prefix/model_code or test catalog lookup directly:
-    # Note: katashiki_power.json has E12=79, so call _lookup_drom_catalog directly to test
-    # catalog disambiguation between DBA-E12 (79 hp) and DAA-HE12 (109 hp) when fuel_type=None.
-    catalog_res = resolver._lookup_drom_catalog(
+    catalog_res = resolver.resolve(
         make="Nissan",
         model="Note",
         model_code="E12",
@@ -576,8 +598,8 @@ def test_power_hp_drom_catalog_substring_ambiguity_e12_vs_he12() -> None:
         drive_type="2WD",
         year=2018,
     )
-    assert catalog_res is not None
     assert catalog_res.power_hp == 79
+    assert catalog_res.power_hp_source == PowerHpSource.DROM_CATALOG
 
 
 @pytest.mark.django_db
@@ -953,7 +975,24 @@ def test_full_lot_step_drom_market_and_contract_serialization(user_factory) -> N
         current_step=TaskStep.DROM_MARKET,
     )
 
-    def handler(_request: httpx.Request) -> httpx.Response:
+    catalog_model_html = (
+        '<html><body><a href="/catalog/toyota/corolla/g_2019_1/">Corolla (NRE210W)</a>'
+        "</body></html>"
+    )
+    catalog_gen_html = (
+        "<html><body><table>"
+        "<tr><td>1.2 л, 116 л.с., бензин, МКПП, передний привод</td>"
+        "<td>Кузов: 3BA-NRE210W</td></tr>"
+        "<tr><td>10.2019 - н.в.</td></tr>"
+        "</table></body></html>"
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url.endswith("/catalog/toyota/corolla/"):
+            return httpx.Response(200, text=catalog_model_html)
+        if url.endswith("/catalog/toyota/corolla/g_2019_1/"):
+            return httpx.Response(200, text=catalog_gen_html)
         return httpx.Response(
             200,
             headers={"Content-Type": "text/html; charset=utf-8"},
@@ -990,7 +1029,7 @@ def test_full_lot_step_drom_market_and_contract_serialization(user_factory) -> N
     assert dumped["market"] == market_schema.model_dump(mode="json")
     assert dumped["media"]["drom_search_url"] == market_schema.drom_search_url
     assert dumped["passport"]["power_hp"] == 116
-    assert dumped["passport"]["power_hp_source"] == "katashiki_cache"
+    assert dumped["passport"]["power_hp_source"] == "drom_catalog"
     assert dumped["passport"]["is_under_160_hp"] is True
 
 
@@ -1022,6 +1061,29 @@ def test_slug_resolver_falls_back_to_brand_and_catalog_directory() -> None:
                 text=(
                     '<html><body><a href="/catalog/honda/">Honda</a>'
                     '<a href="/catalog/suzuki/">Suzuki</a></body></html>'
+                ),
+            )
+        if url == "https://www.drom.ru/catalog/suzuki/":
+            return httpx.Response(
+                200,
+                text='<html><body><a href="/catalog/suzuki/every/">Every</a></body></html>',
+            )
+        if url == "https://www.drom.ru/catalog/suzuki/every/":
+            return httpx.Response(
+                200,
+                text=(
+                    '<html><body><a href="/catalog/suzuki/every/g_2015_1/">Every (DA17V)</a>'
+                    "</body></html>"
+                ),
+            )
+        if url == "https://www.drom.ru/catalog/suzuki/every/g_2015_1/":
+            return httpx.Response(
+                200,
+                text=(
+                    "<html><body><table>"
+                    "<tr><td>0.7 л, 64 л.с., бензин, АКПП, 4WD</td><td>Кузов: HBD-DA17V</td></tr>"
+                    "<tr><td>02.2015 - н.в.</td></tr>"
+                    "</table></body></html>"
                 ),
             )
         if url == "https://auto.drom.ru/suzuki/":
@@ -1183,3 +1245,182 @@ def test_dom_fallback_extracts_href_outside_title_element() -> None:
     listings = parse_listings(dom_html)
     assert len(listings) == 1
     assert listings[0].url == "https://auto.drom.ru/vladivostok/suzuki/every/123.html"
+
+
+def test_directory_parser_filters_seo_garbage_and_respects_ssr_whitelist() -> None:
+    from apps.lots.integrations.drom.directory_parser import (
+        parse_brand_models_from_html,
+        parse_catalog_models_from_html,
+    )
+
+    ssr_payload = {
+        "__slug": "bulls-list-auto",
+        "filter": {
+            "models": [
+                {
+                    "top": [{"id": 1, "name": "T01"}],
+                    "regular": [{"id": 2, "name": "Explorer 01"}],
+                }
+            ]
+        },
+    }
+    sales_html = (
+        "<html><body>"
+        '<a href="https://auto.drom.ru/212/t01/">T01</a>'
+        '<a href="https://auto.drom.ru/212/suv-3d/">212 джип 3 дв.</a>'
+        '<a href="https://auto.drom.ru/212/pickup/">212 пикап</a>'
+        '<a href="https://auto.drom.ru/212/used/">автомобили с пробегом</a>'
+        f"<script>{json.dumps(ssr_payload, ensure_ascii=False)}</script>"
+        "</body></html>"
+    )
+    names, slug_map = parse_brand_models_from_html(sales_html, "212")
+    assert names == ["T01", "Explorer 01"]
+    assert slug_map == {"t01": "t01"}
+
+    cat_html = (
+        "<html><body>"
+        '<a href="/catalog/212/t01/">T01</a>'
+        '<a href="/catalog/212/engine/">Двигатели 212</a>'
+        '<a href="/catalog/212/frame/">Кузова 212</a>'
+        "</body></html>"
+    )
+    cat_names, cat_slugs = parse_catalog_models_from_html(cat_html, "212")
+    assert cat_names == ["T01"]
+    assert cat_slugs == {"t01": "t01"}
+
+
+@pytest.mark.django_db
+def test_power_resolver_uses_catalog_slug_directly_and_handles_fallback_404() -> None:
+    called_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        called_urls.append(url)
+        if url.endswith("/catalog/suzuki/every_van/"):
+            return httpx.Response(
+                200,
+                text=(
+                    '<html><body><a href="/catalog/suzuki/every_van/g_2015_1/">'
+                    "Every Van (DA17V)</a></body></html>"
+                ),
+            )
+        if url.endswith("/catalog/suzuki/every_van/g_2015_1/"):
+            return httpx.Response(
+                200,
+                text=(
+                    "<html><body><table>"
+                    "<tr><td>0.7 л, 64 л.с., бензин</td><td>Кузов: HBD-DA17V</td></tr>"
+                    "</table></body></html>"
+                ),
+            )
+        if url.endswith("/catalog/honda/"):
+            return httpx.Response(
+                200,
+                text='<html><body><a href="/catalog/honda/civic_ferio/">Civic</a></body></html>',
+            )
+        return httpx.Response(404)
+
+    mock_schema = {
+        "brands": {
+            "suzuki": {
+                "name": "Suzuki",
+                "sales_models": {"Every": "every"},
+                "catalog_models": {"Every Van": "every_van"},
+            }
+        }
+    }
+    client = DromHttpClient(transport=httpx.MockTransport(handler))
+    resolver = DromPowerResolver(client, DromSlugResolver(client))
+    with patch("apps.lots.integrations.drom.slugs._load_drom_schema", return_value=mock_schema):
+        res = resolver.resolve(
+            make="Suzuki",
+            model="Every Van",
+            model_code="HBD-DA17V",
+            engine_cc=660,
+        )
+        assert res.power_hp == 64
+        assert "https://www.drom.ru/catalog/suzuki/every/" not in called_urls
+        assert "https://www.drom.ru/catalog/suzuki/every_van/" in called_urls
+        assert ExternalCache.objects.filter(key="drom:catalog:suzuki:every_van:DA17").exists()
+
+        # Both initial and fallback catalog URLs return 404 -> returns None cleanly
+        missing = resolver.resolve(make="Honda", model="Civic", model_code="EK3", engine_cc=1500)
+        assert missing.power_hp is None
+
+
+def test_slug_matching_rejects_conflicting_submodel_collapses() -> None:
+    from apps.lots.integrations.drom.slugs import _pick_best_model_slug
+
+    assert _pick_best_model_slug("Civic Type R", ["Civic", "Accord"], {"civic": "civic"}) is None
+    assert _pick_best_model_slug("Yaris Cross", ["Yaris", "Corolla"], {"yaris": "yaris"}) is None
+    assert _pick_best_model_slug("Carry Van", ["Carry"], {"carry": "carry"}) is None
+    assert (
+        _pick_best_model_slug(
+            "Corolla Rumion X",
+            ["Corolla", "Corolla Rumion"],
+            {"corolla": "corolla", "corolla rumion": "corolla_rumion"},
+        )
+        == "corolla_rumion"
+    )
+
+
+def test_real_auction_sheet_edge_cases_slugs_and_power() -> None:
+    from apps.lots.integrations.drom.power import _select_best_power_hp
+
+    resolver = DromSlugResolver(DromHttpClient())
+
+    # Freed must not collide with Freed+ via _alnum_key
+    assert resolver.resolve("Honda", "Freed").model_slug == "freed"
+    assert resolver.resolve("Honda", "Freed+").model_slug == "freed_plus"
+    assert resolver.resolve("Honda", "Freed FLEX Just Selection").model_slug == "freed"
+    assert resolver.resolve("Honda", "Accord HV").model_slug == "accord"
+    assert resolver.resolve("Honda", "Vezel RS Honda Sensing").model_slug == "vezel"
+    assert resolver.resolve("Honda", "Stepwgn Spada").model_slug == "stepwgn"
+    assert resolver.resolve("Toyota", "Prius a").model_slug == "prius_a"
+
+    # Structural frametype[] must be preserved on relax_specs=True
+    relaxed_wagon = build_drom_search_url(
+        DromSearchCriteria(make="Toyota", model="Corolla Touring", year=2020, engine_cc=1196),
+        make_slug="toyota",
+        model_slug="corolla",
+        frame_type_id=3,
+        relax_specs=True,
+    )
+    assert "frametype%5B%5D=3" in relaxed_wagon
+
+    # Vezel DBA-RU1 RS vs Touring trim disambiguation & hybrid sheet marked gasoline
+    vezel_gen_html = (
+        "<html><body><table>"
+        "<tr><td>1.5 л, 131 л.с., бензин, вариатор, передний привод</td>"
+        "<td>Кузов: DBA-RU1, 6BA-RU1</td></tr>"
+        "<tr><td>1.5 RS Honda Sensing 02.2018 - 06.2020</td></tr>"
+        "<tr><td>1.5 л, 172 л.с., бензин, вариатор, передний привод</td>"
+        "<td>Кузов: DBA-RU1, 6BA-RU1</td></tr>"
+        "<tr><td>1.5 Touring Honda Sensing 01.2019 - 06.2020</td></tr>"
+        "</table></body></html>"
+    )
+    specs = parse_catalog_power_specs(vezel_gen_html)
+    assert (
+        _select_best_power_hp(
+            specs,
+            model="Vezel RS Honda Sensing",
+            model_code="DBA-RU1",
+            engine_cc=1500,
+            fuel_type="gasoline",
+            drive_type="2WD",
+            year=2019,
+        )
+        == 131
+    )
+    assert (
+        _select_best_power_hp(
+            specs,
+            model="Vezel Touring",
+            model_code="6BA-RU1",
+            engine_cc=1500,
+            fuel_type="gasoline",
+            drive_type="2WD",
+            year=2019,
+        )
+        == 172
+    )

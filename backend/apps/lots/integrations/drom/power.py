@@ -1,8 +1,6 @@
-import json
+import re
 from collections.abc import Callable
 from datetime import timedelta
-from functools import lru_cache
-from pathlib import Path
 from typing import Any
 
 from apps.core.enums import PowerHpSource
@@ -25,22 +23,14 @@ from apps.lots.integrations.drom.schemas import (
 )
 from apps.lots.integrations.drom.slugs import DromSlugResolver
 
-_KATASHIKI_PATH = Path(__file__).resolve().parent / "data" / "katashiki_power.json"
 _CATALOG_MODEL_URL = "https://www.drom.ru/catalog/{make_slug}/{model_slug}/"
 _CATALOG_TTL = timedelta(days=14)
 _MAX_GENERATIONS_TO_FETCH = 3
 _MAX_ENGINE_CC_DELTA = 250
 
 
-@lru_cache(maxsize=1)
-def _load_katashiki_table() -> dict[str, dict[str, Any]]:
-    with _KATASHIKI_PATH.open(encoding="utf-8") as fh:
-        data = json.load(fh)
-    return {str(k).upper(): v for k, v in data.items() if isinstance(v, dict)}
-
-
 class DromPowerResolver:
-    """Resolve engine power_hp via katashiki_cache first, then drom.ru/catalog/."""
+    """Resolve engine power_hp via drom.ru/catalog/ backed by ExternalCache."""
 
     def __init__(
         self,
@@ -61,15 +51,7 @@ class DromPowerResolver:
         drive_type: str | None = None,
         year: int | None = None,
     ) -> DromPowerResult:
-        """Resolve power_hp from katashiki_cache, falling back to drom.ru/catalog/."""
-        from_cache = self._lookup_katashiki_cache(
-            model_code=model_code,
-            engine_cc=engine_cc,
-            fuel_type=fuel_type,
-        )
-        if from_cache is not None:
-            return from_cache
-
+        """Resolve power_hp from drom.ru/catalog/ specifications."""
         from_catalog = self._lookup_drom_catalog(
             make=make,
             model=model,
@@ -84,26 +66,6 @@ class DromPowerResolver:
 
         return DromPowerResult(power_hp=None, power_hp_source=None)
 
-    def _lookup_katashiki_cache(
-        self,
-        *,
-        model_code: str | None,
-        engine_cc: int | None,
-        fuel_type: str | None,
-    ) -> DromPowerResult | None:
-        table = _load_katashiki_table()
-        for candidate in normalize_katashiki_candidates(model_code):
-            entry = table.get(candidate)
-            if not entry or "power_hp" not in entry:
-                continue
-            if not _katashiki_entry_matches(entry, engine_cc=engine_cc, fuel_type=fuel_type):
-                continue
-            return DromPowerResult(
-                power_hp=int(entry["power_hp"]),
-                power_hp_source=PowerHpSource.KATASHIKI_CACHE,
-            )
-        return None
-
     def _lookup_drom_catalog(
         self,
         *,
@@ -115,7 +77,7 @@ class DromPowerResolver:
         drive_type: str | None,
         year: int | None,
     ) -> DromPowerResult | None:
-        resolved = self._slug_resolver.resolve(make, model)
+        resolved = self._slug_resolver.resolve_catalog_slug(make, model)
         specs = self._fetch_catalog_specs(
             make=make,
             model=model,
@@ -128,6 +90,7 @@ class DromPowerResolver:
 
         best_hp = _select_best_power_hp(
             specs,
+            model=model,
             model_code=model_code,
             engine_cc=engine_cc,
             fuel_type=fuel_type,
@@ -196,23 +159,26 @@ class DromPowerResolver:
                 ),
             )
         except DromNotFoundError:
-            catalog_slug = self._slug_resolver.resolve_catalog_slug(make, model)
-            if catalog_slug is None or (
-                catalog_slug.make_slug == make_slug and catalog_slug.model_slug == model_slug
+            api_slug = self._slug_resolver.resolve_catalog_via_api(make, model)
+            if api_slug is None or (
+                api_slug.make_slug == make_slug and api_slug.model_slug == model_slug
             ):
                 return None
             fallback_url = _CATALOG_MODEL_URL.format(
-                make_slug=catalog_slug.make_slug,
-                model_slug=catalog_slug.model_slug,
+                make_slug=api_slug.make_slug,
+                model_slug=api_slug.model_slug,
             )
-            return self._client.get_html(
-                fallback_url,
-                expected_path_parts=(
-                    "/catalog/",
-                    f"/{catalog_slug.make_slug.lower()}/",
-                    f"/{catalog_slug.model_slug.lower()}/",
-                ),
-            )
+            try:
+                return self._client.get_html(
+                    fallback_url,
+                    expected_path_parts=(
+                        "/catalog/",
+                        f"/{api_slug.make_slug.lower()}/",
+                        f"/{api_slug.model_slug.lower()}/",
+                    ),
+                )
+            except DromNotFoundError:
+                return None
 
     def _fetch_generation_specs(self, gen_urls: list[str]) -> list[DromCatalogSpec]:
         specs: list[DromCatalogSpec] = []
@@ -227,24 +193,6 @@ class DromPowerResolver:
         return specs
 
 
-def _katashiki_entry_matches(
-    entry: dict[str, Any],
-    *,
-    engine_cc: int | None,
-    fuel_type: str | None,
-) -> bool:
-    entry_cc = entry.get("engine_cc")
-    if (
-        engine_cc is not None
-        and engine_cc > 0
-        and entry_cc is not None
-        and abs(int(entry_cc) - engine_cc) > _MAX_ENGINE_CC_DELTA
-    ):
-        return False
-    entry_fuel = entry.get("fuel_type")
-    return not (fuel_type and entry_fuel and entry_fuel != fuel_type)
-
-
 def _filter_specs_by_katashiki(
     specs: list[DromCatalogSpec],
     model_code: str | None,
@@ -252,9 +200,16 @@ def _filter_specs_by_katashiki(
     candidates = normalize_katashiki_candidates(model_code)
     if not candidates:
         return specs
-    # Match strictly in priority order (exact -> unprefixed -> body-letter stripped).
     for cand in candidates:
         matched = [s for s in specs if matches_katashiki_token(s.model_code, cand)]
+        if matched:
+            return matched
+    if len(candidates) >= 3:
+        matched = [
+            s
+            for s in specs
+            if matches_katashiki_token(s.model_code, candidates[-1], allow_body_suffix=True)
+        ]
         if matched:
             return matched
     return []
@@ -276,10 +231,17 @@ def _filter_specs_by_engine_cc(
 def _filter_specs_by_fuel_type(
     specs: list[DromCatalogSpec],
     fuel_type: str | None,
+    *,
+    has_katashiki_match: bool = False,
 ) -> list[DromCatalogSpec]:
     if not fuel_type:
         return specs
-    return [s for s in specs if s.fuel_type is None or s.fuel_type == fuel_type]
+    exact = [s for s in specs if s.fuel_type is None or s.fuel_type == fuel_type]
+    if exact:
+        return exact
+    if has_katashiki_match and fuel_type == "gasoline":
+        return [s for s in specs if s.fuel_type == "hybrid"]
+    return []
 
 
 def _prefer_specs_matching(
@@ -290,9 +252,53 @@ def _prefer_specs_matching(
     return matched if matched else specs
 
 
+_SPECIAL_PERF_TRIM_MARKERS: tuple[str, ...] = (
+    "touring",
+    "turbo",
+    "modulo",
+    "type r",
+    "sti",
+    "nismo",
+)
+
+_IGNORED_TRIM_TOKENS = frozenset(
+    {"honda", "sensing", "hybrid", "4wd", "2wd", "just", "selection", "flex"}
+)
+
+
+def _prefer_specs_by_trim(
+    specs: list[DromCatalogSpec],
+    model: str | None,
+) -> list[DromCatalogSpec]:
+    if not model or len({s.power_hp for s in specs}) <= 1:
+        return specs
+    model_lower = model.lower()
+    tokens = [
+        t
+        for t in re.split(r"[\s_\-/]+", model_lower)
+        if len(t) >= 2 and t not in _IGNORED_TRIM_TOKENS
+    ]
+    for token in tokens[1:]:
+        pattern = rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])"
+        matched = [s for s in specs if s.trim_text and re.search(pattern, s.trim_text)]
+        if matched:
+            specs = matched
+    if not any(marker in model_lower for marker in _SPECIAL_PERF_TRIM_MARKERS):
+        standard = [
+            s
+            for s in specs
+            if not s.trim_text
+            or not any(marker in s.trim_text for marker in _SPECIAL_PERF_TRIM_MARKERS)
+        ]
+        if standard:
+            specs = standard
+    return specs
+
+
 def _select_best_power_hp(
     specs: list[DromCatalogSpec],
     *,
+    model: str | None = None,
     model_code: str | None,
     engine_cc: int | None,
     fuel_type: str | None,
@@ -305,7 +311,8 @@ def _select_best_power_hp(
     pool = _filter_specs_by_engine_cc(pool, engine_cc)
     if not pool:
         return None
-    pool = _filter_specs_by_fuel_type(pool, fuel_type)
+    has_code = bool(normalize_katashiki_candidates(model_code))
+    pool = _filter_specs_by_fuel_type(pool, fuel_type, has_katashiki_match=has_code)
     if not pool:
         return None
 
@@ -319,8 +326,8 @@ def _select_best_power_hp(
                 and (s.year_end is None or s.year_end >= year)
             ),
         )
+    pool = _prefer_specs_by_trim(pool, model)
 
-    # Conservative choice for the 160 hp utilization fee threshold.
     return max(s.power_hp for s in pool)
 
 
@@ -333,6 +340,7 @@ def _serialize_spec(spec: DromCatalogSpec) -> dict[str, Any]:
         "drive_type": spec.drive_type,
         "year_start": spec.year_start,
         "year_end": spec.year_end,
+        "trim_text": spec.trim_text,
     }
 
 
@@ -352,6 +360,7 @@ def _deserialize_specs(raw_items: Any) -> list[DromCatalogSpec]:
                 drive_type=item.get("drive_type"),
                 year_start=item.get("year_start"),
                 year_end=item.get("year_end"),
+                trim_text=item.get("trim_text"),
             )
         )
     return specs

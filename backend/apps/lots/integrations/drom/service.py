@@ -1,10 +1,7 @@
 import hashlib
-import json
 import logging
 from dataclasses import dataclass, replace
 from datetime import timedelta
-from functools import lru_cache
-from pathlib import Path
 from typing import Any
 
 from django.conf import settings
@@ -32,7 +29,6 @@ from apps.lots.integrations.drom.slugs import DromSlugResolver, ResolvedDromSlug
 
 logger = logging.getLogger(__name__)
 
-_FALLBACK_PATH = Path(__file__).resolve().parent / "data" / "drom_fallback.json"
 _MARKET_CACHE_TTL = timedelta(hours=6)
 _MIN_ANALOGS_THRESHOLD = 3
 
@@ -69,25 +65,18 @@ _SEARCH_CASCADE: tuple[_SearchStep, ...] = (
     _SearchStep(
         region_scope="rf",
         region_label_ru="Вся РФ",
-        year_tolerance=1,
+        year_tolerance=2,
         relax_specs=True,
         is_fallback=True,
         fallback_reason_ru=(
-            "Мало точных аналогов в ДФО — выборка расширена на всю РФ (без пробега по РФ, ±1 год)"
+            "Мало точных аналогов в ДФО — выборка расширена на всю РФ (без пробега по РФ, ±2 года)"
         ),
     ),
 )
 
 
-@lru_cache(maxsize=1)
-def _load_fallback_table() -> dict[str, dict[str, Any]]:
-    with _FALLBACK_PATH.open(encoding="utf-8") as fh:
-        data = json.load(fh)
-    return {str(k).lower(): v for k, v in data.items() if isinstance(v, dict)}
-
-
 class DromMarketService:
-    """Orchestrates Drom analog search, Read-Through caching, fallback, and power_hp lookup."""
+    """Orchestrates Drom analog search, Read-Through caching, and power_hp lookup."""
 
     def __init__(self, client: DromHttpClient | None = None) -> None:
         self._client = client or DromHttpClient(
@@ -131,10 +120,6 @@ class DromMarketService:
             if is_stale:
                 result = _mark_stale_fallback(result)
             return _with_power(result, power)
-
-        ref_result = self._lookup_reference_fallback(criteria, current_slug)
-        if ref_result is not None:
-            return _with_power(ref_result, power)
 
         raise DromFetchError(
             f"Не удалось получить рыночные аналоги Drom для {criteria.make} {criteria.model}"
@@ -190,11 +175,12 @@ class DromMarketService:
         slug: ResolvedDromSlug,
         step: _SearchStep,
     ) -> tuple[str, str]:
+        frame_type_id = None if step.region_scope == "rf" else slug.frame_type_id
         url = build_drom_search_url(
             criteria,
             make_slug=slug.make_slug,
             model_slug=slug.model_slug,
-            frame_type_id=slug.frame_type_id,
+            frame_type_id=frame_type_id,
             region_scope=step.region_scope,
             year_tolerance=step.year_tolerance,
             relax_specs=step.relax_specs,
@@ -249,39 +235,6 @@ class DromMarketService:
             filter_and_aggregate(listings, exclude_nearby_cities=(step.region_scope == "dfo")),
             url,
             slug,
-        )
-
-    def _lookup_reference_fallback(
-        self,
-        criteria: DromSearchCriteria,
-        slug: ResolvedDromSlug,
-    ) -> DromMarketResult | None:
-        table = _load_fallback_table()
-        entry = table.get(f"{slug.make_slug}:{slug.model_slug}")
-        if entry is None:
-            return None
-        fallback_url = build_drom_search_url(
-            criteria,
-            make_slug=slug.make_slug,
-            model_slug=slug.model_slug,
-            frame_type_id=slug.frame_type_id,
-            region_scope="dfo",
-            year_tolerance=0,
-            relax_specs=False,
-        )
-        return DromMarketResult(
-            market_price_rf_rub=int(entry["market_price_rf_rub"]),
-            analogs_count=int(entry["analogs_count"]),
-            price_min_rub=int(entry["price_min_rub"]),
-            price_max_rub=int(entry["price_max_rub"]),
-            search_region_ru=str(entry.get("search_region_ru") or "ДФО / Владивосток"),
-            excludes_under_order=True,
-            filtered_out_under_order_count=0,
-            is_fallback=True,
-            fallback_reason_ru=(
-                "Drom.ru временно недоступен — использован резервный рыночный справочник"
-            ),
-            drom_search_url=fallback_url,
         )
 
 

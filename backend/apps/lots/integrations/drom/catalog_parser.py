@@ -25,15 +25,35 @@ _FUEL_MARKERS: tuple[tuple[str, str], ...] = (
 )
 
 
+_FOREIGN_MARKET_MARKERS: tuple[str, ...] = (
+    "китай",
+    "европа",
+    "сша",
+    "россия",
+    "южная корея",
+)
+
+
+def _match_generation_candidate_rank(text: str, candidates: list[str]) -> int | None:
+    for idx, cand in enumerate(candidates):
+        if matches_katashiki_token(text, cand):
+            return idx
+    if len(candidates) >= 3 and matches_katashiki_token(
+        text, candidates[-1], allow_body_suffix=True
+    ):
+        return len(candidates)
+    return None
+
+
 def parse_catalog_generations(html: str, *, model_code: str | None = None) -> list[str]:
     """Extract generation page URLs from a Drom catalog model page, prioritizing matching codes."""
     soup = BeautifulSoup(html, "html.parser")
     candidates = normalize_katashiki_candidates(model_code)
-    prioritized: list[str] = []
+    prioritized: list[tuple[int, int, int, str]] = []
     fallback: list[str] = []
     seen: set[str] = set()
 
-    for link in soup.find_all("a", href=True):
+    for order_idx, link in enumerate(soup.find_all("a", href=True)):
         href = str(link["href"])
         if "/g_" not in href:
             continue
@@ -42,12 +62,23 @@ def parse_catalog_generations(html: str, *, model_code: str | None = None) -> li
             continue
         seen.add(full_url)
         text = link.get_text(" ", strip=True)
-        if candidates and any(matches_katashiki_token(text, cand) for cand in candidates):
-            prioritized.append(full_url)
+        cand_rank = _match_generation_candidate_rank(text, candidates) if candidates else None
+        if cand_rank is not None:
+            lower = text.lower()
+            market_rank = (
+                1
+                if "япония" not in lower
+                and any(marker in lower for marker in _FOREIGN_MARKET_MARKERS)
+                else 0
+            )
+            prioritized.append((cand_rank, market_rank, order_idx, full_url))
         else:
             fallback.append(full_url)
 
-    return prioritized if prioritized else fallback
+    if prioritized:
+        prioritized.sort()
+        return [url for _, _, _, url in prioritized]
+    return fallback
 
 
 def parse_catalog_power_specs(html: str) -> list[DromCatalogSpec]:
@@ -64,7 +95,7 @@ def parse_catalog_power_specs(html: str) -> list[DromCatalogSpec]:
         engine_cc = _extract_engine_cc(row_text)
         fuel_type = _extract_fuel_type(row_text)
         drive_type = _extract_drive_type(row_text)
-        year_start, year_end = _extract_row_years(row, row_text)
+        year_start, year_end, trim_text = _extract_row_years(row, row_text)
         for chassis_code in chassis_codes:
             specs.append(
                 DromCatalogSpec(
@@ -75,6 +106,7 @@ def parse_catalog_power_specs(html: str) -> list[DromCatalogSpec]:
                     drive_type=drive_type,
                     year_start=year_start,
                     year_end=year_end,
+                    trim_text=trim_text,
                 )
             )
     return specs
@@ -95,8 +127,12 @@ def _extract_chassis_codes(row_text: str) -> list[str]:
     return codes
 
 
-def _extract_row_years(header_row: Any, header_text: str) -> tuple[int | None, int | None]:
+def _extract_row_years(
+    header_row: Any,
+    header_text: str,
+) -> tuple[int | None, int | None, str | None]:
     years: list[int] = []
+    trim_parts: list[str] = []
     is_ongoing = False
 
     def _scan_text(text: str) -> None:
@@ -111,16 +147,18 @@ def _extract_row_years(header_row: Any, header_text: str) -> tuple[int | None, i
     _scan_text(header_text)
     sibling = header_row.find_next_sibling("tr")
     steps = 0
-    while sibling is not None and steps < 8:
+    while sibling is not None and steps < 20:
         text = sibling.get_text(" ", strip=True)
         if _CHASSIS_BLOCK_RE.search(text):
             break
         _scan_text(text)
+        trim_parts.append(text.lower())
         sibling = sibling.find_next_sibling("tr")
         steps += 1
+    trim_text = " ".join(trim_parts).strip() or None
     if not years:
-        return None, None
-    return min(years), (None if is_ongoing else max(years))
+        return None, None, trim_text
+    return min(years), (None if is_ongoing else max(years)), trim_text
 
 
 def _extract_engine_cc(text: str) -> int | None:

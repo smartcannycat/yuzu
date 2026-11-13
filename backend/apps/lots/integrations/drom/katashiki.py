@@ -25,7 +25,13 @@ def normalize_katashiki_candidates(model_code: str | None) -> list[str]:
     return candidates
 
 
-def matches_katashiki_token(text: str, candidate: str) -> bool:
+def matches_katashiki_token(
+    text: str,
+    candidate: str,
+    *,
+    allow_body_suffix: bool = False,
+) -> bool:
     """Return True if candidate appears as an alphanumeric token in text."""
-    pattern = rf"(?<![A-Z0-9]){re.escape(candidate)}(?![A-Z0-9])"
+    suffix = "[A-Z]?" if allow_body_suffix and candidate[-1:].isdigit() else ""
+    pattern = rf"(?<![A-Z0-9]){re.escape(candidate)}{suffix}(?![A-Z0-9])"
     return bool(re.search(pattern, text.upper()))

@@ -1,15 +1,12 @@
-import json
 import re
 import statistics
 from dataclasses import dataclass
-from functools import lru_cache
-from pathlib import Path
 from urllib.parse import quote, urlencode
 
 from apps.lots.integrations.drom.schemas import DromListing, DromSearchCriteria
+from apps.lots.integrations.drom.slugs import load_drom_schema
 
 _MAX_URL_LENGTH = 500
-_SCHEMA_PATH = Path(__file__).resolve().parent / "data" / "drom_schema.json"
 _DEFAULT_DRIVE_UNITS: dict[str, str] = {"4WD": "3", "FWD": "1", "RWD": "2"}
 _DEFAULT_FUEL_TYPES: dict[str, str] = {
     "gasoline": "1",
@@ -19,19 +16,13 @@ _DEFAULT_FUEL_TYPES: dict[str, str] = {
 }
 
 
-@lru_cache(maxsize=1)
 def _load_filter_schema() -> dict[str, dict[str, str]]:
-    if _SCHEMA_PATH.exists():
-        try:
-            payload = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
-            schema = payload.get("filter_schema") or {}
-            if isinstance(schema, dict):
-                return {
-                    "drive_units": dict(schema.get("drive_units") or _DEFAULT_DRIVE_UNITS),
-                    "fuel_types": dict(schema.get("fuel_types") or _DEFAULT_FUEL_TYPES),
-                }
-        except (OSError, ValueError):
-            pass
+    schema = load_drom_schema().get("filter_schema") or {}
+    if isinstance(schema, dict):
+        return {
+            "drive_units": dict(schema.get("drive_units") or _DEFAULT_DRIVE_UNITS),
+            "fuel_types": dict(schema.get("fuel_types") or _DEFAULT_FUEL_TYPES),
+        }
     return {"drive_units": dict(_DEFAULT_DRIVE_UNITS), "fuel_types": dict(_DEFAULT_FUEL_TYPES)}
 
 
@@ -105,11 +96,11 @@ def _build_search_query_params(
         params.append(("mv", f"{min_v:.1f}"))
         params.append(("xv", f"{max_v:.1f}"))
 
-    if relax_specs:
-        return params
-
     if frame_type_id is not None:
         params.append(("frametype[]", str(frame_type_id)))
+
+    if relax_specs:
+        return params
 
     filter_schema = _load_filter_schema()
     if criteria.drive_type == "4WD":
