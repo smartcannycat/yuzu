@@ -2,7 +2,6 @@
 import { AlertTriangle, CheckCircle2, OctagonAlert } from '@lucide/vue'
 import { computed } from 'vue'
 
-import BrandLogo from '@/components/brand/BrandLogo.vue'
 import LotBodyDiagram from '@/components/lots/detail/LotBodyDiagram.vue'
 import { getDefectTone } from '@/components/lots/detail/lotDefects'
 import {
@@ -12,7 +11,7 @@ import {
   buildLotTtxItems,
 } from '@/components/lots/detail/lotPresentation'
 import { CapyMascot } from '@/components/mascot'
-import { BaseBadge, CostLadder, TtxGrid } from '@/components/ui'
+import { BaseBadge, BrandLogo, CostLadder, TtxGrid } from '@/components/ui'
 import type { ChecklistItemStatus, LotDetailResponse, SafetyCheckItem } from '@/types/api'
 import { formatEngineLiters, formatMileageKm, formatRub } from '@/utils/formatters'
 
@@ -395,13 +394,16 @@ const SAFETY_SHORT_LABELS: Record<SafetyCheckItem['system_key'], string> = {
 
     <!-- PAGE 2: Body Defects Diagram (5 cols) + Defects, Notes, Farpost Repair (7 cols) + Cost Ladder -->
     <div class="break-before-page pt-[9mm] pb-[6mm]">
-      <div class="flex items-center justify-between border-b border-[#E5E5EA] pb-2 text-[11px]">
-        <span class="font-semibold text-[#111827]">
-          {{ detail.passport.make }} {{ detail.passport.model }} · Лот #{{
-            detail.passport.lot_number
-          }}
-        </span>
-        <span class="text-[#6B7280]">Техническое состояние и калькуляция привоза</span>
+      <div class="flex items-center justify-between gap-4 border-b border-[#E5E5EA] pb-2">
+        <div class="flex min-w-0 items-baseline gap-2 text-[11px]">
+          <span class="font-semibold text-[#111827]">
+            {{ detail.passport.make }} {{ detail.passport.model }} · Лот #{{
+              detail.passport.lot_number
+            }}
+          </span>
+          <span class="text-[#6B7280]">· Техническое состояние и калькуляция привоза</span>
+        </div>
+        <BrandLogo layout="report" :size="24" :animated="false" hide-subtitle class="shrink-0" />
       </div>
 
       <!-- Bento Row 4: Diagram (5 cols stretched) | Defects + Notes + Farpost Repair (7 cols stacked) -->
