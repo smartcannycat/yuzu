@@ -345,6 +345,8 @@ def _build_customs_out(customs: CustomsCalculation) -> schemas.CustomsCalculatio
         effective_duty_pct=customs.effective_duty_pct,
         customs_duty_eur=customs.customs_duty_eur,
         customs_duty_rub=customs.customs_duty_rub,
+        excise_rub=customs.excise_rub,
+        import_vat_rub=customs.import_vat_rub,
         is_under_160_hp=customs.is_under_160_hp,
         is_commercial_util=customs.is_commercial_util,
         utilization_fee_rub=customs.utilization_fee_rub,

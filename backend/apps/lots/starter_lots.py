@@ -648,7 +648,13 @@ _STARTER_FIXTURES: dict[tuple[str, str], dict[str, Any]] = {
 }
 
 
-def _create_lot_relations(lot: Lot, now, *, fixture: dict[str, Any]) -> None:
+def _create_lot_relations(
+    lot: Lot,
+    now,
+    *,
+    fixture: dict[str, Any],
+    customs_model=CustomsCalculation,
+) -> None:
     for defect_data in fixture.get("defects") or []:
         LotDefect.objects.create(lot=lot, **defect_data)
 
@@ -664,8 +670,11 @@ def _create_lot_relations(lot: Lot, now, *, fixture: dict[str, Any]) -> None:
     for item_data in fixture.get("safety_items") or []:
         SafetyCheckItem.objects.create(checklist=checklist, **item_data)
 
-    customs_obj = CustomsCalculation.objects.create(lot=lot, **fixture["customs"])
-    CurrencyRatesSnapshot.objects.create(customs=customs_obj, **fixture["rates"])
+    customs_obj = customs_model.objects.create(lot=lot, **fixture["customs"])
+    if customs_model is CustomsCalculation:
+        CurrencyRatesSnapshot.objects.create(customs=customs_obj, **fixture["rates"])
+    else:
+        CurrencyRatesSnapshot.objects.create(customs_id=customs_obj.pk, **fixture["rates"])
 
     repair = FarpostRepairSummary.objects.create(lot=lot, **fixture["farpost"])
     for part_data in fixture.get("farpost_parts") or []:
@@ -692,7 +701,7 @@ def seed_starter_lots(user: User) -> None:
 
 
 @transaction.atomic
-def backfill_starter_lots() -> int:
+def backfill_starter_lots(*, defer_fields=(), customs_model=CustomsCalculation) -> int:
     """Repair legacy starter lots missing related detail records."""
     now = timezone.now()
     repaired = 0
@@ -706,10 +715,15 @@ def backfill_starter_lots() -> int:
             model=fields["model"],
             frame_id=fields["frame_id"],
         )
-        for lot in lots.iterator():
+        for lot in lots.defer(*defer_fields).iterator():
             for field, value in fields.items():
                 setattr(lot, field, value)
             lot.save(update_fields=[*fields, "updated_at"])
-            _create_lot_relations(lot, now, fixture=fixture)
+            _create_lot_relations(
+                lot,
+                now,
+                fixture=fixture,
+                customs_model=customs_model,
+            )
             repaired += 1
     return repaired

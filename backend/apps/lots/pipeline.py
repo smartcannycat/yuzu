@@ -24,8 +24,13 @@ from apps.core.exceptions import (
     ConflictProblemError,
     NotFoundProblemError,
 )
+from apps.lots.economics import (
+    _missing_customs_inputs,
+    _resolve_start_bid_jpy,
+    recompute_lot_economics,
+)
 from apps.lots.integrations.drom.schemas import DromFetchError, DromMarketResult, DromSearchCriteria
-from apps.lots.models import Batch, BatchItem, Lot, MarketComparisonInfo
+from apps.lots.models import Batch, BatchItem, Lot, MarketComparisonInfo, WiseCostLadder
 from apps.lots.queries import _build_lot_summary, _has_full_detail
 from apps.lots.schemas import (
     BatchCreateResponse,
@@ -376,6 +381,35 @@ def _step_farpost_parts(_item: BatchItem) -> bool:
 
 def _step_customs_calc(item: BatchItem) -> bool:
     _advance_step(item, TaskStep.CUSTOMS_CALC)
+    lot = item.lot
+    if lot is None:
+        _fail_item(item, TaskStep.FAILED, "Лот не привязан к элементу пачки")
+        return False
+    # Fill in the start bid (sheet -> auction history -> reverse calculation
+    # from the Drom price) before checking the remaining inputs, so a new
+    # lot without an explicit bid still gets its economics built.
+    try:
+        ladder = WiseCostLadder.objects.filter(lot=lot).first()
+        bid_jpy = ladder.car_bid_jpy if ladder is not None else _resolve_start_bid_jpy(lot)
+    except Exception:
+        logger.exception("Start bid derivation failed for lot %s", lot.pk)
+        _fail_item(item, TaskStep.FAILED, "Не удалось определить стартовую ставку лота")
+        return False
+    missing = _missing_customs_inputs(lot, bid_jpy)
+    if missing:
+        _fail_item(
+            item,
+            TaskStep.FAILED,
+            "Недостаточно данных для расчёта таможни: " + ", ".join(missing),
+        )
+        return False
+    try:
+        recompute_lot_economics(lot, bid_jpy=bid_jpy)
+        lot.refresh_from_db()
+    except Exception:
+        logger.exception("Customs recomputation failed for lot %s", lot.pk)
+        _fail_item(item, TaskStep.FAILED, "Не удалось рассчитать таможные платежи")
+        return False
     return True
 
 
