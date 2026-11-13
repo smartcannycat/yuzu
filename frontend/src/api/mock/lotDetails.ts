@@ -34,6 +34,7 @@ const DEFAULT_RISK_FLAGS: RiskFlags = {
   hail_damage: false,
   underbody_corrosion: false,
   pillar_or_frame_repair: false,
+  core_support_repair: false,
   underbody_rust: false,
   panel_needs_replacement_x: false,
   panel_replaced_xx: false,

@@ -6,7 +6,6 @@ import type { AuthApi } from '@/api/types'
 import type {
   AuthTokensResponse,
   InvalidParamDetail,
-  TokenLogoutRequest,
   TokenRefreshRequest,
   UserLoginRequest,
   UserProfileResponse,
@@ -95,11 +94,8 @@ const mockUsersStorage = useStorage<MockUserRecord[]>(
   },
 )
 
-const revokedRefreshTokens = new Set<string>()
-
 export function resetMockUsers(): void {
   mockUsersStorage.value = [DEFAULT_DEMO_USER]
-  revokedRefreshTokens.clear()
 }
 
 function toPublicProfile(record: MockUserRecord): UserProfileResponse {
@@ -223,10 +219,7 @@ export function createMockAuthApi(defaultDelay: number): AuthApi {
       await delay(Math.min(defaultDelay, 120))
       const userId = extractUserIdFromToken(payload.refresh_token, REFRESH_TOKEN_PREFIX)
       const users = mockUsersStorage.value
-      const matched =
-        userId && !revokedRefreshTokens.has(payload.refresh_token)
-          ? users.find((user) => user.user_id === userId)
-          : undefined
+      const matched = userId ? users.find((user) => user.user_id === userId) : undefined
 
       if (!matched) {
         throw createMockProblem({
@@ -239,13 +232,6 @@ export function createMockAuthApi(defaultDelay: number): AuthApi {
       }
 
       return createTokensResponse(matched)
-    },
-
-    async logout(payload: TokenLogoutRequest): Promise<void> {
-      await delay(Math.min(defaultDelay, 80))
-      if (payload.refresh_token) {
-        revokedRefreshTokens.add(payload.refresh_token)
-      }
     },
 
     async me(): Promise<UserProfileResponse> {

@@ -49,37 +49,20 @@ describe('useAuthStore', () => {
     expect(tokenStorage.getSession()).toBeNull()
   })
 
-  it('revokes refresh token on server during logout and still clears tokens if remote fails', async () => {
+  it('clears local session and storage synchronously on logout', async () => {
     const store = useAuthStore()
     await store.login({
       email: DEMO_ACCOUNT_CREDENTIALS.email,
       password: DEMO_ACCOUNT_CREDENTIALS.password,
     })
-    const refreshToken = tokenStorage.getRefreshToken()!
-    expect(refreshToken).toBeTruthy()
+    expect(tokenStorage.getRefreshToken()).toBeTruthy()
+    expect(store.isAuthenticated).toBe(true)
 
-    const logoutSpy = vi.spyOn(apiClient.auth, 'logout')
-    await store.logout()
+    store.logout()
 
-    expect(logoutSpy).toHaveBeenCalledWith({ refresh_token: refreshToken })
     expect(tokenStorage.getSession()).toBeNull()
     expect(store.isAuthenticated).toBe(false)
-    await expect(apiClient.auth.refresh({ refresh_token: refreshToken })).rejects.toThrow()
-    logoutSpy.mockRestore()
-
-    await store.login({
-      email: DEMO_ACCOUNT_CREDENTIALS.email,
-      password: DEMO_ACCOUNT_CREDENTIALS.password,
-    })
-    const failingSpy = vi
-      .spyOn(apiClient.auth, 'logout')
-      .mockRejectedValueOnce(new Error('offline'))
-    await store.logout()
-
-    expect(failingSpy).toHaveBeenCalledTimes(1)
-    expect(tokenStorage.getSession()).toBeNull()
-    expect(store.isAuthenticated).toBe(false)
-    failingSpy.mockRestore()
+    expect(store.user).toBeNull()
   })
 
   it('registers a new account and clears stale invalid tokens on initialize', async () => {

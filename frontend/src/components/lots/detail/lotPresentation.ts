@@ -18,7 +18,7 @@ export const FX_RATE_SOURCE_LABEL = 'VL.ru Деньги'
 export const MIN_BID_JPY = 100_000
 export const MAX_BID_JPY = 50_000_000
 export const MIN_BID_RUB = 50_000
-export const MAX_BID_RUB = 35_000_000
+export const MAX_BID_RUB = 50_000_000
 
 export const NET_BENEFIT_SUCCESS_THRESHOLD_RUB = 150_000
 export const NET_BENEFIT_WARNING_THRESHOLD_RUB = 50_000
@@ -56,6 +56,7 @@ export function buildActiveRiskLabels(flags: RiskFlags): ActiveRiskChip[] {
   const chips: ActiveRiskChip[] = []
   if (flags.repaired_grade_r_ra) chips.push({ label: 'Аварийная оценка R/RA', variant: 'danger' })
   if (flags.pillar_or_frame_repair) chips.push({ label: 'Ремонт стоек/каркаса', variant: 'danger' })
+  if (flags.core_support_repair) chips.push({ label: 'Ремонт рамки радиатора', variant: 'danger' })
   if (flags.odometer_issue) chips.push({ label: 'Нестыковка одометра', variant: 'danger' })
   if (flags.is_flooded) chips.push({ label: 'Риск затопления', variant: 'danger' })
   if (flags.airbag_deployed) chips.push({ label: 'Срабатывали SRS', variant: 'danger' })
@@ -92,11 +93,12 @@ export const VERDICT_META: Record<
 
 export const CHECKLIST_STATUS_META: Record<
   ChecklistItemStatus,
-  { variant: 'success' | 'warning' | 'danger'; label: string; squircleColor: string }
+  { variant: 'neutral' | 'success' | 'warning' | 'danger'; label: string; squircleColor: string }
 > = {
   ok: { variant: 'success', label: 'Норма', squircleColor: '#34C759' },
   warning: { variant: 'warning', label: 'Риск', squircleColor: '#FF9500' },
   critical: { variant: 'danger', label: 'Критично', squircleColor: '#FF3B30' },
+  unknown: { variant: 'neutral', label: 'Нет данных', squircleColor: '#8E8E93' },
 }
 
 export const SAFETY_SHORT_LABELS: Record<SafetyCheckItem['system_key'], string> = {
@@ -119,6 +121,7 @@ const FUEL_LABELS_RU: Record<FuelType, string> = {
   hybrid: 'Гибрид',
   diesel: 'Дизель',
   ev: 'Электро',
+  other: 'Другое',
 }
 
 export function formatLotSpecsSubtitle(
@@ -191,9 +194,13 @@ export function buildLotTtxItems(
 ): TtxItem[] {
   const { passport, audit } = detail
   const engineStr = passport.engine_cc ? `${passport.engine_cc.toLocaleString('ru-RU')} см³` : '—'
-  const powerStr = passport.power_hp
-    ? `${passport.power_hp} л.с.${passport.is_under_160_hp ? ' (≤ 160)' : ' (> 160)'}`
-    : 'не указана'
+  const hpNote =
+    passport.is_under_160_hp === true
+      ? ' (≤ 160)'
+      : passport.is_under_160_hp === false
+        ? ' (> 160)'
+        : ''
+  const powerStr = passport.power_hp ? `${passport.power_hp} л.с.${hpNote}` : 'не указана'
 
   const mileageValue =
     passport.mileage_km !== null
