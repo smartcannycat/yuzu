@@ -36,3 +36,11 @@ export {
   type MascotSize,
   type TrafficLightColorContract,
 } from '@/components/mascot'
+
+export {
+  BrandLogo,
+  type BrandLogoLayout,
+  type BrandLogoProps,
+  type BrandLogoVariant,
+  type BrandWordmarkStyle,
+} from '@/components/brand'

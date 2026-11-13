@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { BrandLogo } from '@/components/ui'
+
 interface Props {
   initials: string
   displayName: string
@@ -16,22 +18,7 @@ const emit = defineEmits<{
 
 <template>
   <header class="flex items-center justify-between gap-3">
-    <div class="flex min-w-0 items-center gap-2.5">
-      <span
-        class="bg-accent text-text-on-accent flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] text-[14px] font-semibold tracking-tight"
-        aria-hidden="true"
-      >
-        YZ
-      </span>
-      <div class="flex min-w-0 flex-col">
-        <span class="text-text-primary text-[18px] leading-tight font-semibold tracking-tight">
-          YUZU
-        </span>
-        <span class="text-text-secondary hidden truncate text-[12px] leading-tight sm:block">
-          {{ subtitle }}
-        </span>
-      </div>
-    </div>
+    <BrandLogo layout="header" :subtitle="subtitle" responsive-subtitle />
 
     <div class="flex shrink-0 items-center gap-2.5">
       <slot name="actions" />
