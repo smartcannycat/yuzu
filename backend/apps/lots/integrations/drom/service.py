@@ -199,7 +199,13 @@ class DromMarketService:
             relax_specs=step.relax_specs,
         )
         try:
-            html = self._client.get_html(url)
+            html = self._client.get_html(
+                url,
+                expected_path_parts=(
+                    f"/{slug.make_slug.lower()}/",
+                    f"/{slug.model_slug.lower()}/",
+                ),
+            )
         except DromNotFoundError:
             api_slug = self._slug_resolver.resolve_via_api(criteria.make, criteria.model)
             if api_slug is None or api_slug == slug:
@@ -215,12 +221,22 @@ class DromMarketService:
                 relax_specs=step.relax_specs,
             )
             try:
-                html = self._client.get_html(url)
+                html = self._client.get_html(
+                    url,
+                    expected_path_parts=(
+                        f"/{slug.make_slug.lower()}/",
+                        f"/{slug.model_slug.lower()}/",
+                    ),
+                )
             except DromNotFoundError:
                 return None, url, slug
 
         listings = parse_listings(html)
-        return filter_and_aggregate(listings), url, slug
+        return (
+            filter_and_aggregate(listings, exclude_nearby_cities=(step.region_scope == "dfo")),
+            url,
+            slug,
+        )
 
     def _lookup_reference_fallback(
         self,
@@ -314,7 +330,8 @@ def _build_market_cache_key(criteria: DromSearchCriteria, slug: ResolvedDromSlug
     key = (
         f"drom:market:{slug.make_slug}:{slug.model_slug}:"
         f"y={criteria.year or 'any'}:cc={cc_bucket}:"
-        f"drv={criteria.drive_type or 'any'}:tr={trans_bucket}:ft={slug.frame_type_id or 'any'}"
+        f"drv={criteria.drive_type or 'any'}:fuel={criteria.fuel_type or 'any'}:"
+        f"tr={trans_bucket}:ft={slug.frame_type_id or 'any'}"
     )
     if len(key) <= 450:
         return key

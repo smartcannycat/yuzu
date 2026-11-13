@@ -86,5 +86,7 @@
   "JB74W": {"power_hp": 102, "engine_cc": 1462, "fuel_type": "gasoline"},
   "ZC33S": {"power_hp": 140, "engine_cc": 1371, "fuel_type": "gasoline"},
   "MN71S": {"power_hp": 99, "engine_cc": 996, "fuel_type": "hybrid"},
+  "DA17V": {"power_hp": 64, "engine_cc": 658, "fuel_type": "gasoline"},
+  "DA17W": {"power_hp": 64, "engine_cc": 658, "fuel_type": "gasoline"},
   "CV1W": {"power_hp": 145, "engine_cc": 2267, "fuel_type": "diesel"}
 }

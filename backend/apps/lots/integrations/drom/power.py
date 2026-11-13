@@ -190,15 +190,32 @@ class DromPowerResolver:
         model_url = _CATALOG_MODEL_URL.format(make_slug=make_slug, model_slug=model_slug)
         try:
             try:
-                model_html = self._client.get_html(model_url)
+                model_html = self._client.get_html(
+                    model_url,
+                    expected_path_parts=(
+                        "/catalog/",
+                        f"/{make_slug.lower()}/",
+                        f"/{model_slug.lower()}/",
+                    ),
+                )
             except DromNotFoundError:
-                api_slug = self._slug_resolver.resolve_via_api(make, model)
-                if api_slug is None or api_slug.model_slug == model_slug:
+                catalog_slug = self._slug_resolver.resolve_catalog_slug(make, model)
+                if catalog_slug is None or (
+                    catalog_slug.make_slug == make_slug and catalog_slug.model_slug == model_slug
+                ):
                     return []
                 model_url = _CATALOG_MODEL_URL.format(
-                    make_slug=api_slug.make_slug, model_slug=api_slug.model_slug
+                    make_slug=catalog_slug.make_slug,
+                    model_slug=catalog_slug.model_slug,
                 )
-                model_html = self._client.get_html(model_url)
+                model_html = self._client.get_html(
+                    model_url,
+                    expected_path_parts=(
+                        "/catalog/",
+                        f"/{catalog_slug.make_slug.lower()}/",
+                        f"/{catalog_slug.model_slug.lower()}/",
+                    ),
+                )
         except DromBlockedError:
             stale_payload = read_drom_cache(cache_key, allow_stale=True)
             if stale_payload is not None:

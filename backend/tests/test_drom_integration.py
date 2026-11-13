@@ -229,17 +229,25 @@ def test_drom_slug_api_fallback_on_404() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
         calls.append(url)
-        if "/api/sales/model-list/by-firm-id" in url:
-            return httpx.Response(
-                200,
-                json={
-                    "message": "Success",
-                    "data": {
-                        "top": [{"id": 100, "name": "Corolla Rumion"}],
-                        "regular": [{"id": 101, "name": "Corolla"}],
-                    },
+        if url == "https://auto.drom.ru/toyota/":
+            payload = {
+                "__slug": "bulls-list-auto",
+                "filter": {
+                    "models": [
+                        {
+                            "top": [{"id": 100, "name": "Corolla Rumion"}],
+                            "regular": [{"id": 101, "name": "Corolla"}],
+                        }
+                    ]
                 },
+            }
+            html = (
+                "<html><body>"
+                '<a href="https://auto.drom.ru/toyota/corolla_rumion/">Corolla Rumion</a>'
+                f"<script>{json.dumps(payload)}</script>"
+                "</body></html>"
             )
+            return httpx.Response(200, text=html)
         if "/toyota/corolla_rumion_x/" in url:
             return httpx.Response(404, text="Not Found")
         if "/toyota/corolla_rumion/" in url:
@@ -253,9 +261,10 @@ def test_drom_slug_api_fallback_on_404() -> None:
         return httpx.Response(404)
 
     service = DromMarketService(client=DromHttpClient(transport=httpx.MockTransport(handler)))
-    result = service.evaluate(
-        DromSearchCriteria(make="Toyota", model="Corolla Rumion X", year=2015, engine_cc=1496)
-    )
+    with patch("apps.lots.integrations.drom.slugs._load_drom_schema", return_value={}):
+        result = service.evaluate(
+            DromSearchCriteria(make="Toyota", model="Corolla Rumion X", year=2015, engine_cc=1496)
+        )
     assert result.analogs_count == 3
     assert result.market_price_rf_rub == 1150000
     assert "/toyota/corolla_rumion/" in result.drom_search_url

@@ -1,11 +1,39 @@
+import json
 import re
 import statistics
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 from urllib.parse import quote, urlencode
 
 from apps.lots.integrations.drom.schemas import DromListing, DromSearchCriteria
 
 _MAX_URL_LENGTH = 500
+_SCHEMA_PATH = Path(__file__).resolve().parent / "data" / "drom_schema.json"
+_DEFAULT_DRIVE_UNITS: dict[str, str] = {"4WD": "3", "FWD": "1", "RWD": "2"}
+_DEFAULT_FUEL_TYPES: dict[str, str] = {
+    "gasoline": "1",
+    "diesel": "2",
+    "ev": "4",
+    "hybrid": "5",
+}
+
+
+@lru_cache(maxsize=1)
+def _load_filter_schema() -> dict[str, dict[str, str]]:
+    if _SCHEMA_PATH.exists():
+        try:
+            payload = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
+            schema = payload.get("filter_schema") or {}
+            if isinstance(schema, dict):
+                return {
+                    "drive_units": dict(schema.get("drive_units") or _DEFAULT_DRIVE_UNITS),
+                    "fuel_types": dict(schema.get("fuel_types") or _DEFAULT_FUEL_TYPES),
+                }
+        except (OSError, ValueError):
+            pass
+    return {"drive_units": dict(_DEFAULT_DRIVE_UNITS), "fuel_types": dict(_DEFAULT_FUEL_TYPES)}
+
 
 _ORDER_STOP_PHRASES: tuple[str, ...] = (
     "под заказ",
@@ -26,7 +54,10 @@ _NEGATIVE_VEHICLE_TYPE_RE = re.compile(
     re.IGNORECASE,
 )
 
-_FOREIGN_LOCATION_RE = re.compile(r"\b(?:япония|китай|корея)\b", re.IGNORECASE)
+_FOREIGN_LOCATION_RE = re.compile(
+    r"\b(?:япония|японии|китай|китая|корея|кореи)\b",
+    re.IGNORECASE,
+)
 
 _MANUAL_TRANSMISSION_RE = re.compile(
     r"(?:^|[\d\s/\-_])(?:mt|мт|мкпп|manual|мех(?:аника)?)\b",
@@ -85,8 +116,13 @@ def build_drom_search_url(
         params.append(("frametype[]", str(frame_type_id)))
 
     if not relax_specs:
+        filter_schema = _load_filter_schema()
         if criteria.drive_type == "4WD":
-            params.append(("privod[]", "3"))
+            params.append(("privod[]", filter_schema["drive_units"].get("4WD", "3")))
+        if criteria.fuel_type:
+            fuel_code = filter_schema["fuel_types"].get(criteria.fuel_type.strip().lower())
+            if fuel_code:
+                params.append(("fueltype", fuel_code))
         if is_manual_transmission(criteria.transmission):
             params.append(("transmission[]", "1"))
 
@@ -109,7 +145,10 @@ def is_under_order_or_unavailable(listing: DromListing) -> bool:
     """Return True if a Drom listing is sold, on order, in transit, or non-standard."""
     if listing.sold:
         return True
-    if listing.location and _FOREIGN_LOCATION_RE.search(listing.location):
+    meta_text = " ".join(
+        part for part in [listing.location, *listing.car_state, *listing.badges] if part
+    )
+    if meta_text and _FOREIGN_LOCATION_RE.search(meta_text):
         return True
 
     combined_parts = [
@@ -125,7 +164,11 @@ def is_under_order_or_unavailable(listing: DromListing) -> bool:
     return bool(_NEGATIVE_VEHICLE_TYPE_RE.search(haystack))
 
 
-def filter_and_aggregate(listings: list[DromListing]) -> FilteredMarketStats | None:
+def filter_and_aggregate(
+    listings: list[DromListing],
+    *,
+    exclude_nearby_cities: bool = False,
+) -> FilteredMarketStats | None:
     """Filter under-order listings and price outliers, returning median/min/max stats."""
     in_stock: list[DromListing] = []
     rejected_count = 0
@@ -135,6 +178,8 @@ def filter_and_aggregate(listings: list[DromListing]) -> FilteredMarketStats | N
             continue
         if is_under_order_or_unavailable(listing):
             rejected_count += 1
+            continue
+        if exclude_nearby_cities and listing.is_nearby_city:
             continue
         in_stock.append(listing)
 

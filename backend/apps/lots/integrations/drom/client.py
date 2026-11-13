@@ -38,9 +38,20 @@ class DromHttpClient:
         self._retry_backoff_sec = retry_backoff_sec
         self._transport = transport
 
-    def get_html(self, url: str) -> str:
+    def get_html(
+        self,
+        url: str,
+        *,
+        expected_path_parts: tuple[str, ...] | None = None,
+    ) -> str:
         """Fetch an HTML page from Drom, decoding windows-1251/UTF-8 properly."""
         response = self._request(url, headers=_DEFAULT_HEADERS)
+        if expected_path_parts:
+            final_path = response.url.path.lower()
+            if not all(part in final_path for part in expected_path_parts):
+                raise DromNotFoundError(
+                    f"Drom redirected {url} to {response.url} (missing {expected_path_parts})"
+                )
         encoding = _detect_charset(response)
         return response.content.decode(encoding, errors="replace")
 

@@ -37,6 +37,7 @@ class DromListing:
     car_state: list[str] = field(default_factory=list)
     attributes: list[str] = field(default_factory=list)
     badges: list[str] = field(default_factory=list)
+    is_nearby_city: bool = False
 
 
 @dataclass(frozen=True, slots=True)

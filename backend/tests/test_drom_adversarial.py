@@ -992,3 +992,194 @@ def test_full_lot_step_drom_market_and_contract_serialization(user_factory) -> N
     assert dumped["passport"]["power_hp"] == 116
     assert dumped["passport"]["power_hp_source"] == "katashiki_cache"
     assert dumped["passport"]["is_under_160_hp"] is True
+
+
+def test_http_client_detects_silent_drom_redirect_as_not_found() -> None:
+    def redirect_handler(request: httpx.Request) -> httpx.Response:
+        if "/suzuki/every_van/" in str(request.url):
+            return httpx.Response(
+                301,
+                headers={"Location": "https://auto.drom.ru/year-2021/?minyear=2021&maxyear=2021"},
+            )
+        return httpx.Response(200, text="<html><body>all cars</body></html>")
+
+    client = DromHttpClient(transport=httpx.MockTransport(redirect_handler))
+    with pytest.raises(Exception) as exc_info:
+        client.get_html(
+            "https://auto.drom.ru/region25/suzuki/every_van/bez-probega/",
+            expected_path_parts=("/suzuki/", "/every_van/"),
+        )
+    assert "redirected" in str(exc_info.value).lower()
+
+
+@pytest.mark.django_db
+def test_slug_resolver_falls_back_to_brand_and_catalog_directory() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url == "https://www.drom.ru/catalog/":
+            return httpx.Response(
+                200,
+                text=(
+                    '<html><body><a href="/catalog/honda/">Honda</a>'
+                    '<a href="/catalog/suzuki/">Suzuki</a></body></html>'
+                ),
+            )
+        if url == "https://auto.drom.ru/suzuki/":
+            payload = {
+                "__slug": "bulls-list-auto",
+                "filter": {
+                    "models": [
+                        {
+                            "top": [{"id": 250, "name": "Every"}],
+                            "regular": [{"id": 251, "name": "Carry Van"}],
+                        }
+                    ]
+                },
+            }
+            html = (
+                "<html><body>"
+                '<a href="https://auto.drom.ru/suzuki/every/">Every</a>'
+                f"<script>{json.dumps(payload)}</script>"
+                "</body></html>"
+            )
+            return httpx.Response(200, text=html)
+        if url == "https://auto.drom.ru/honda/":
+            return httpx.Response(
+                200,
+                text='<html><body><a href="https://auto.drom.ru/honda/vezel/">Vezel</a></body></html>',
+            )
+        if "/khonda/" in url:
+            return httpx.Response(301, headers={"Location": "https://auto.drom.ru/"})
+        if "/suzuki/every_join/" in url:
+            return httpx.Response(301, headers={"Location": "https://auto.drom.ru/year-2021/"})
+        if "/suzuki/every/" in url:
+            return httpx.Response(
+                200,
+                headers={"Content-Type": "text/html; charset=utf-8"},
+                content=_make_ssr_html([_bull(1, 855000), _bull(2, 920000), _bull(3, 1120000)]),
+            )
+        return httpx.Response(404)
+
+    client = DromHttpClient(transport=httpx.MockTransport(handler))
+    service = DromMarketService(client=client)
+    with patch("apps.lots.integrations.drom.slugs._load_drom_schema", return_value={}):
+        result = service.evaluate(
+            DromSearchCriteria(
+                make="Suzuki",
+                model="Every Join",
+                year=2021,
+                engine_cc=660,
+                drive_type="4WD",
+                model_code="HBD-DA17V",
+            )
+        )
+        assert result.market_price_rf_rub == 920000
+        assert result.analogs_count == 3
+        assert "/suzuki/every/" in result.drom_search_url
+        assert result.power_hp == 64
+
+        cyr_resolved = DromSlugResolver(client).resolve_via_api("Хонда", "Везел")
+        assert cyr_resolved is not None
+        assert cyr_resolved.make_slug == "honda"
+        assert cyr_resolved.model_slug == "vezel"
+
+
+def test_scraped_drom_schema_resolves_arbitrary_models_without_http() -> None:
+    resolver = DromSlugResolver(DromHttpClient())
+
+    every = resolver.resolve("Suzuki", "Every Van")
+    assert (every.make_slug, every.model_slug) == ("suzuki", "every")
+
+    cyr = resolver.resolve("Хонда", "Везел")
+    assert (cyr.make_slug, cyr.model_slug) == ("honda", "vezel")
+
+    cx5 = resolver.resolve("Mazda", "CX 5")
+    assert (cx5.make_slug, cx5.model_slug) == ("mazda", "cx-5")
+
+    bmw = resolver.resolve("BMW", "X3")
+    assert (bmw.make_slug, bmw.model_slug) == ("bmw", "x3")
+
+    touring = resolver.resolve("Toyota", "Corolla Touring")
+    assert (touring.make_slug, touring.model_slug, touring.frame_type_id) == (
+        "toyota",
+        "corolla",
+        3,
+    )
+
+
+def test_parser_marks_under_order_groups_location_from_and_nearby_cities() -> None:
+    payload = {
+        "__slug": "bulls-list-auto",
+        "bullList": {
+            "bullsData": [
+                {
+                    "title": None,
+                    "bulls": [
+                        {
+                            "bullId": 1,
+                            "price": 855000,
+                            "title": "Suzuki Every, 2022",
+                            "location": "Владивосток",
+                            "carState": [],
+                        }
+                    ],
+                },
+                {
+                    "title": "Объявления в ближайших городах",
+                    "bulls": [
+                        {
+                            "bullId": 2,
+                            "price": 1120000,
+                            "title": "Suzuki Every, 2021",
+                            "location": "Ростов-на-Дону",
+                            "carState": [],
+                        }
+                    ],
+                },
+                {
+                    "title": "Объявления под заказ",
+                    "bulls": [
+                        {
+                            "bullId": 3,
+                            "price": 625000,
+                            "title": "Suzuki Every, 2021",
+                            "location": "Владивосток",
+                            "locationFrom": "Япония",
+                            "marks": [{"type": 12, "locationCountryFrom": "Японии"}],
+                            "carState": [],
+                        }
+                    ],
+                },
+            ]
+        },
+    }
+    html = f"<html><body><script>{json.dumps(payload, ensure_ascii=False)}</script></body></html>"
+    listings = parse_listings(html)
+    assert len(listings) == 3
+
+    dfo_stats = filter_and_aggregate(listings, exclude_nearby_cities=True)
+    assert dfo_stats is not None
+    assert dfo_stats.analogs_count == 1
+    assert dfo_stats.market_price_rf_rub == 855000
+    assert dfo_stats.filtered_out_under_order_count == 1
+
+    rf_stats = filter_and_aggregate(listings, exclude_nearby_cities=False)
+    assert rf_stats is not None
+    assert rf_stats.analogs_count == 2
+    assert rf_stats.filtered_out_under_order_count == 1
+
+
+def test_dom_fallback_extracts_href_outside_title_element() -> None:
+    dom_html = """
+    <html><body>
+      <div data-ftid="bulls-list_bull">
+        <div data-ftid="bull_image"><a href="https://auto.drom.ru/vladivostok/suzuki/every/123.html"></a></div>
+        <div data-ftid="bull_title"><span>Suzuki Every, 2022</span></div>
+        <div data-ftid="bull_price">855 000 ₽</div>
+        <div data-ftid="bull_location">Владивосток</div>
+      </div>
+    </body></html>
+    """
+    listings = parse_listings(dom_html)
+    assert len(listings) == 1
+    assert listings[0].url == "https://auto.drom.ru/vladivostok/suzuki/every/123.html"

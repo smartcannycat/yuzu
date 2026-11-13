@@ -51,13 +51,19 @@ def _extract_bulls_from_groups(groups: list[Any]) -> list[DromListing]:
     for group in groups:
         if not isinstance(group, dict):
             continue
+        group_title = str(group.get("title") or "").strip()
+        is_nearby_city = "ближайших городах" in group_title.lower()
         bulls = group.get("bulls")
         if not isinstance(bulls, list):
             continue
         for raw in bulls:
             if not isinstance(raw, dict):
                 continue
-            listing = _raw_bull_to_listing(raw)
+            listing = _raw_bull_to_listing(
+                raw,
+                group_title=group_title,
+                is_nearby_city=is_nearby_city,
+            )
             if listing is None:
                 continue
             if listing.bull_id and listing.bull_id in seen_ids:
@@ -68,7 +74,12 @@ def _extract_bulls_from_groups(groups: list[Any]) -> list[DromListing]:
     return results
 
 
-def _raw_bull_to_listing(raw: dict[str, Any]) -> DromListing | None:
+def _raw_bull_to_listing(
+    raw: dict[str, Any],
+    *,
+    group_title: str = "",
+    is_nearby_city: bool = False,
+) -> DromListing | None:
     price = _parse_int(raw.get("price"))
     if price is None or price <= 0:
         return None
@@ -93,6 +104,15 @@ def _raw_bull_to_listing(raw: dict[str, Any]) -> DromListing | None:
     badges: list[str] = []
     if raw.get("info"):
         badges.append(str(raw["info"]))
+    if group_title and any(
+        marker in group_title.lower() for marker in ("под заказ", "на заказ", "в пути")
+    ):
+        badges.append(group_title)
+    if raw.get("locationFrom"):
+        badges.append(str(raw["locationFrom"]))
+    for mark in raw.get("marks") or []:
+        if isinstance(mark, dict) and mark.get("locationCountryFrom"):
+            badges.append(str(mark["locationCountryFrom"]))
 
     return DromListing(
         bull_id=bull_id,
@@ -105,6 +125,7 @@ def _raw_bull_to_listing(raw: dict[str, Any]) -> DromListing | None:
         car_state=car_state,
         attributes=attributes,
         badges=badges,
+        is_nearby_city=is_nearby_city,
     )
 
 
@@ -121,7 +142,7 @@ def _parse_listings_from_html(html: str) -> list[DromListing]:
             continue
         title_el = card.find(attrs={"data-ftid": "bull_title"})
         title = title_el.get_text(" ", strip=True) if title_el else ""
-        link_el = title_el.find("a") if title_el else card.find("a", href=True)
+        link_el = (title_el.find("a", href=True) if title_el else None) or card.find("a", href=True)
         url = link_el["href"] if link_el and link_el.has_attr("href") else None
         location_el = card.find(attrs={"data-ftid": "bull_location"})
         location = location_el.get_text(" ", strip=True) if location_el else ""
@@ -318,3 +339,115 @@ def _parse_int(value: Any) -> int | None:
         digits = "".join(_PRICE_DIGITS_RE.findall(cleaned))
         return int(digits) if digits else None
     return None
+
+
+def parse_brand_models_from_html(html: str, make_slug: str) -> tuple[list[str], dict[str, str]]:
+    """Extract model names and slug map from a Drom brand page HTML."""
+    soup = BeautifulSoup(html, "html.parser")
+    names: list[str] = []
+    seen_names: set[str] = set()
+    slug_map: dict[str, str] = {}
+
+    for script in soup.find_all("script"):
+        text = script.string or ""
+        if '"__slug":"bulls-list-auto"' not in text and '"__slug": "bulls-list-auto"' not in text:
+            continue
+        try:
+            payload = json.loads(text)
+        except ValueError:
+            continue
+        models_groups = (payload.get("filter") or {}).get("models")
+        if not isinstance(models_groups, list):
+            continue
+        for group in models_groups:
+            if not isinstance(group, dict):
+                continue
+            for item in (group.get("top") or []) + (group.get("regular") or []):
+                if isinstance(item, dict) and item.get("name"):
+                    name = str(item["name"]).strip()
+                    if name and name not in seen_names:
+                        seen_names.add(name)
+                        names.append(name)
+        break
+
+    escaped_make = re.escape(make_slug.strip("/").lower())
+    link_re = re.compile(rf"^https://auto\.drom\.ru/{escaped_make}/([a-z0-9_-]+)/$", re.IGNORECASE)
+    for link in soup.find_all("a", href=True):
+        match = link_re.match(str(link["href"]))
+        if not match:
+            continue
+        model_slug = match.group(1).lower()
+        if model_slug in {
+            "bez-probega",
+            "benzin",
+            "diesel",
+            "gibrid",
+            "electro",
+            "all",
+            "new",
+        } or model_slug.startswith(("color-", "do-", "ot-", "year-", "page")):
+            continue
+        label = link.get_text(" ", strip=True)
+        if not label or len(label) > 60:
+            continue
+        slug_map.setdefault(label.lower(), model_slug)
+        if label not in seen_names:
+            seen_names.add(label)
+            names.append(label)
+
+    return names, slug_map
+
+
+def parse_catalog_brands_from_html(html: str) -> tuple[list[str], dict[str, str]]:
+    """Extract brand names and catalog URL slugs from https://www.drom.ru/catalog/."""
+    soup = BeautifulSoup(html, "html.parser")
+    names: list[str] = []
+    seen_names: set[str] = set()
+    slug_map: dict[str, str] = {}
+    ignored = frozenset({"chinese", "lcv", "all", "search"})
+    link_re = re.compile(r"^(?:https://www\.drom\.ru)?/catalog/([a-z0-9_-]+)/$", re.IGNORECASE)
+
+    for link in soup.find_all("a", href=True):
+        match = link_re.match(str(link["href"]))
+        if not match:
+            continue
+        brand_slug = match.group(1).lower()
+        if brand_slug in ignored:
+            continue
+        label = link.get_text(" ", strip=True)
+        if not label or len(label) > 60:
+            continue
+        slug_map.setdefault(label.lower(), brand_slug)
+        if label not in seen_names:
+            seen_names.add(label)
+            names.append(label)
+
+    return names, slug_map
+
+
+def parse_catalog_models_from_html(html: str, make_slug: str) -> tuple[list[str], dict[str, str]]:
+    """Extract model names and catalog URL slugs from https://www.drom.ru/catalog/{make_slug}/."""
+    soup = BeautifulSoup(html, "html.parser")
+    names: list[str] = []
+    seen_names: set[str] = set()
+    slug_map: dict[str, str] = {}
+    escaped_make = re.escape(make_slug.strip("/").lower())
+    link_re = re.compile(
+        rf"^(?:https://www\.drom\.ru)?/catalog/{escaped_make}/([a-z0-9_-]+)/$",
+        re.IGNORECASE,
+    )
+
+    for link in soup.find_all("a", href=True):
+        match = link_re.match(str(link["href"]))
+        if not match:
+            continue
+        model_slug = match.group(1).lower()
+        label = link.get_text(" ", strip=True)
+        if not label or len(label) > 60:
+            continue
+        slug_map.setdefault(label.lower(), model_slug)
+        if label not in seen_names:
+            seen_names.add(label)
+            names.append(label)
+
+    return names, slug_map
