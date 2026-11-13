@@ -2,18 +2,22 @@ from typing import Literal
 
 from django.http import HttpRequest
 from ninja import Query, Status, UploadedFile
-from ninja_extra import ControllerBase, api_controller, http_get, http_post
+from ninja_extra import ControllerBase, api_controller, http_delete, http_get, http_patch, http_post
 from pydantic import UUID4
 
-from apps.core.enums import TrafficLightColor
+from apps.core.enums import LotLifecycleFilter, TrafficLightColor
 from apps.core.exceptions import UnauthorizedProblemError
 from apps.core.schemas import ProblemDetail
 from apps.lots import services
 from apps.lots.schemas import (
     BatchCreateResponse,
     BatchProgressResponse,
+    LotBulkDeleteRequest,
+    LotBulkDeleteResponse,
     LotDetailResponse,
+    LotLifecyclePatchRequest,
     LotListResponse,
+    LotSummary,
     RecalculateRequest,
     RecalculateResponse,
 )
@@ -47,6 +51,7 @@ class LotController(ControllerBase):
         model: str | None = None,
         verdict: TrafficLightColor | None = None,
         has_anomaly: bool | None = None,
+        lifecycle: LotLifecycleFilter = LotLifecycleFilter.ACTIVE,
         page: int = Query(1, ge=1),
         page_size: int = Query(20, ge=1, le=100),
         sort_by: Literal["created_at", "net_benefit", "turnkey_cost"] = "created_at",
@@ -60,6 +65,7 @@ class LotController(ControllerBase):
             model=model,
             verdict=verdict,
             has_anomaly=has_anomaly,
+            lifecycle=lifecycle,
             page=page,
             page_size=page_size,
             sort_by=sort_by,
@@ -120,6 +126,22 @@ class LotController(ControllerBase):
         user = self._require_user(request)
         return Status(202, services.append_batch_items(user, batch_id, files))
 
+    @http_post(
+        "/bulk-delete",
+        response={
+            200: LotBulkDeleteResponse,
+            401: ProblemDetail,
+            422: ProblemDetail,
+        },
+    )
+    def bulk_delete_lots(
+        self,
+        request: HttpRequest,
+        payload: LotBulkDeleteRequest,
+    ) -> LotBulkDeleteResponse:
+        user = self._require_user(request)
+        return services.bulk_delete_lots(user, payload.lot_ids)
+
     @http_get(
         "/{lot_id}",
         response={
@@ -155,3 +177,43 @@ class LotController(ControllerBase):
     ) -> RecalculateResponse:
         user = self._require_user(request)
         return services.recalculate_lot(user, lot_id, payload)
+
+    @http_patch(
+        "/{lot_id}",
+        response={
+            200: LotSummary,
+            401: ProblemDetail,
+            404: ProblemDetail,
+            422: ProblemDetail,
+        },
+    )
+    def update_lot_lifecycle(
+        self,
+        request: HttpRequest,
+        lot_id: UUID4,
+        payload: LotLifecyclePatchRequest,
+    ) -> LotSummary:
+        user = self._require_user(request)
+        return services.update_lot_lifecycle(
+            user,
+            lot_id,
+            is_archived=payload.is_archived,
+        )
+
+    @http_delete(
+        "/{lot_id}",
+        response={
+            204: None,
+            401: ProblemDetail,
+            404: ProblemDetail,
+            422: ProblemDetail,
+        },
+    )
+    def delete_lot(
+        self,
+        request: HttpRequest,
+        lot_id: UUID4,
+    ) -> Status:
+        user = self._require_user(request)
+        services.delete_lot(user, lot_id)
+        return Status(204, None)

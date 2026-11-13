@@ -186,3 +186,14 @@ class ExternalCacheSource(TextChoices):
     DROM = "drom"
     FARPOST = "farpost"
     AUCJP = "aucjp"
+
+
+class LotLifecycleFilter(TextChoices):
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+    ALL = "all"
+
+
+class LotArchiveReason(TextChoices):
+    EXPIRED = "expired"
+    MANUAL = "manual"

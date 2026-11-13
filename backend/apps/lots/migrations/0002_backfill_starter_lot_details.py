@@ -2,9 +2,8 @@ from django.db import migrations
 
 
 def backfill_starter_lot_details(apps, schema_editor):
-    from apps.lots.services import backfill_starter_lots
-
     from apps.lots.models import Lot
+    from apps.lots.services import backfill_starter_lots
 
     historical_lot = apps.get_model("lots", "Lot")
     historical_fields = {field.name for field in historical_lot._meta.concrete_fields}

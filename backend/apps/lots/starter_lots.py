@@ -21,6 +21,7 @@ from apps.core.enums import (
     TrafficLightColor,
     WorkType,
 )
+from apps.lots.lifecycle import compute_lot_expires_at
 from apps.lots.models import (
     CrossAuditReport,
     CurrencyRatesSnapshot,
@@ -650,7 +651,11 @@ _STARTER_FIXTURES: dict[tuple[str, str], dict[str, Any]] = {
 
 
 def _create_lot_relations(
-    lot: Lot, now, *, fixture: dict[str, Any], customs_model=CustomsCalculation
+    lot: Lot,
+    now,
+    *,
+    fixture: dict[str, Any],
+    customs_model=CustomsCalculation,
 ) -> None:
     for defect_data in fixture.get("defects") or []:
         LotDefect.objects.create(lot=lot, **defect_data)
@@ -667,8 +672,11 @@ def _create_lot_relations(
     for item_data in fixture.get("safety_items") or []:
         SafetyCheckItem.objects.create(checklist=checklist, **item_data)
 
-    customs_obj = customs_model.objects.create(lot_id=lot.pk, **fixture["customs"])
-    CurrencyRatesSnapshot.objects.create(customs_id=customs_obj.pk, **fixture["rates"])
+    customs_obj = customs_model.objects.create(lot=lot, **fixture["customs"])
+    if customs_model is CustomsCalculation:
+        CurrencyRatesSnapshot.objects.create(customs=customs_obj, **fixture["rates"])
+    else:
+        CurrencyRatesSnapshot.objects.create(customs_id=customs_obj.pk, **fixture["rates"])
 
     repair = FarpostRepairSummary.objects.create(lot=lot, **fixture["farpost"])
     for part_data in fixture.get("farpost_parts") or []:
@@ -682,7 +690,9 @@ def _create_lot_relations(
 
 
 def _seed_lot_from_fixture(user: User, now, fixture: dict[str, Any]) -> Lot:
-    lot = Lot.objects.create(user=user, completed_at=now, **fixture["lot_fields"])
+    lot_fields = fixture["lot_fields"]
+    expires_at = compute_lot_expires_at(now, lot_fields.get("auction_date"))
+    lot = Lot.objects.create(user=user, completed_at=now, expires_at=expires_at, **lot_fields)
     _create_lot_relations(lot, now, fixture=fixture)
     return lot
 
@@ -713,6 +723,11 @@ def backfill_starter_lots(*, defer_fields=(), customs_model=CustomsCalculation) 
             for field, value in fields.items():
                 setattr(lot, field, value)
             lot.save(update_fields=[*fields, "updated_at"])
-            _create_lot_relations(lot, now, fixture=fixture, customs_model=customs_model)
+            _create_lot_relations(
+                lot,
+                now,
+                fixture=fixture,
+                customs_model=customs_model,
+            )
             repaired += 1
     return repaired

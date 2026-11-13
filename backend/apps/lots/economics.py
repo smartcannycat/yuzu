@@ -1,10 +1,3 @@
-"""Lot economics: start bid resolution, customs recalculation and ladder rebuild.
-
-Bridges the BE-09 pure calculation engine (``apps.lots.customs``) with the
-Django models. No pipeline orchestration here -- call these helpers from
-pipeline steps or API endpoints.
-"""
-
 import math
 from datetime import date
 
@@ -35,42 +28,42 @@ from apps.lots.models import (
 )
 from apps.lots.starter_lots import _COROLLA_FIXTURE
 
-# Canonical Corolla fixture frame id, used to pin the benchmark calculation date.
-_COROLLA_FRAME_ID = _COROLLA_FIXTURE["lot_fields"]["frame_id"]
+
+def _resolve_calculation_date(lot: Lot, on_date: date | None) -> date:
+    if on_date is not None:
+        return on_date
+    if lot.frame_id == _COROLLA_FIXTURE["lot_fields"]["frame_id"] and not hasattr(
+        lot, "batch_item"
+    ):
+        # TODO(BE-05/BE-11): benchmark freeze. The canonical Corolla
+        # fixture pins the declaration date so the seeded lot keeps
+        # reproducing the "3-5 years" corridor of the API contract
+        # (its real age at the 12.11.2026 rates snapshot is 6 years).
+        # Remove once a real declaration date source exists.
+        return date(2025, 10, 15)
+    return timezone.localdate()
 
 
-def load_lot_currency_rates(lot: Lot) -> schemas.CurrencyRates | None:
-    """Resolve the currency rates snapshot for a lot (stored snapshot or inline input)."""
-    customs_model = CustomsCalculation.objects.filter(lot=lot).first()
+def _extract_rates(
+    lot: Lot, customs_model: CustomsCalculation | None
+) -> tuple[schemas.CurrencyRates | None, CurrencyRatesSnapshot | None]:
     rates_model = (
         CurrencyRatesSnapshot.objects.filter(customs=customs_model).first()
         if customs_model is not None
         else None
     )
-    if rates_model is not None:
-        return schemas.CurrencyRates.model_validate(rates_model)
-    if lot.customs_rates_input:
-        return schemas.CurrencyRates.model_validate(lot.customs_rates_input)
-    return None
+    raw_rates = rates_model if rates_model is not None else lot.customs_rates_input
+    if raw_rates is None:
+        return None, rates_model
+    return schemas.CurrencyRates.model_validate(raw_rates), rates_model
 
 
-def to_currency_rates_input(rates: schemas.CurrencyRates) -> CurrencyRatesInput:
+def _to_rates_input(rates_data: schemas.CurrencyRates) -> CurrencyRatesInput:
     return CurrencyRatesInput(
-        jpy_rub=rates.jpy_rub_bank,
-        eur_rub=rates.eur_rub_cbrf,
-        usd_rub=rates.usd_rub_cbrf,
+        jpy_rub=rates_data.jpy_rub_bank,
+        eur_rub=rates_data.eur_rub_cbrf,
+        usd_rub=rates_data.usd_rub_cbrf,
     )
-
-
-def _benchmark_calculation_date(lot: Lot) -> date | None:
-    if lot.frame_id == _COROLLA_FRAME_ID and not hasattr(lot, "batch_item"):
-        # TODO(BE-05/BE-11): benchmark freeze. The canonical Corolla fixture
-        # pins the declaration date so the seeded lot keeps reproducing the
-        # "3-5 years" corridor of the API contract (its real age at the
-        # 12.11.2026 rates snapshot is 6 years). Remove once a real
-        # declaration date source exists.
-        return date(2025, 10, 15)
-    return None
 
 
 def recompute_lot_economics(
@@ -96,13 +89,13 @@ def recompute_lot_economics(
     """
     with transaction.atomic():
         lot = Lot.objects.select_for_update().get(pk=lot.pk)
-        calculation_date = on_date or _benchmark_calculation_date(lot) or timezone.localdate()
-        rates_data = load_lot_currency_rates(lot)
-        if rates_data is None:
-            raise ValueError("Отсутствует снимок курсов валют")
-        rates = to_currency_rates_input(rates_data)
-
+        calculation_date = _resolve_calculation_date(lot, on_date)
         customs_model = CustomsCalculation.objects.filter(lot=lot).first()
+        rates_data, rates_model = _extract_rates(lot, customs_model)
+        if rates_data is None:
+            raise ValueError("Отсутствуют курсы валют для расчёта экономики лота")
+        rates = _to_rates_input(rates_data)
+
         ladder = WiseCostLadder.objects.filter(lot=lot).first()
         # Base bid priority: explicit request -> the lot's base (sheet/history/
         # derived) bid -> the previously stored ladder bid (legacy rows only).
@@ -137,6 +130,10 @@ def recompute_lot_economics(
             lot_update_fields += ["power_hp", "power_hp_source", "is_under_160_hp"]
 
         power_hp = custom_power_hp if custom_power_hp is not None else lot.power_hp
+        if lot.fuel_type != FuelType.EV and not lot.engine_cc:
+            raise ValueError("Отсутствует объём двигателя для расчёта пошлины")
+        if not lot.first_reg_year:
+            raise ValueError("Отсутствует год первой регистрации для расчёта пошлины")
         customs_value_rub = bid_rub + fob_rub + freight_rub
 
         result = calculate_customs(
@@ -162,6 +159,8 @@ def recompute_lot_economics(
         repair = FarpostRepairSummary.objects.filter(lot=lot).first()
         repair_total_rub = repair.grand_total_repair_rub if repair else 0
         market_price_rub = lot.market_price_rf_rub
+        if market_price_rub is None:
+            raise ValueError("Отсутствует рыночная цена РФ для расчёта экономики лота")
 
         ladder_result = build_wise_cost_ladder(
             LadderInput(
@@ -194,7 +193,7 @@ def recompute_lot_economics(
         customs_model.broker_svh_sbkts_rub = result.broker_svh_sbkts_rub
         customs_model.meti_sanction_risk = result.meti_sanction_risk
         customs_model.save()
-        if not CurrencyRatesSnapshot.objects.filter(customs=customs_model).exists():
+        if rates_model is None:
             CurrencyRatesSnapshot.objects.create(customs=customs_model, **rates_data.model_dump())
 
         if ladder is None:
@@ -238,7 +237,7 @@ def recompute_lot_economics(
         lot.save(update_fields=lot_update_fields)
 
 
-def resolve_start_bid_jpy(lot: Lot) -> int | None:
+def _resolve_start_bid_jpy(lot: Lot) -> int | None:
     """Start bid for a new lot, by priority (see BE-09 start bid spec):
 
     1. Sheet data: the bid captured by the OCR pipeline (``auction_bid_jpy``).
@@ -269,12 +268,12 @@ def resolve_start_bid_jpy(lot: Lot) -> int | None:
     if not lot.market_price_rf_rub:
         return None
 
-    rates_data = load_lot_currency_rates(lot)
+    customs_model = CustomsCalculation.objects.filter(lot=lot).first()
+    rates_data, _ = _extract_rates(lot, customs_model)
     if rates_data is None:
         return None
-    rates = to_currency_rates_input(rates_data)
+    rates = _to_rates_input(rates_data)
 
-    customs_model = CustomsCalculation.objects.filter(lot=lot).first()
     repair = FarpostRepairSummary.objects.filter(lot=lot).first()
     result = derive_start_bid_from_market(
         StartBidInput(
@@ -305,7 +304,7 @@ def resolve_start_bid_jpy(lot: Lot) -> int | None:
     return result.bid_jpy
 
 
-def missing_customs_inputs(lot: Lot, bid_jpy: int | None) -> list[str]:
+def _missing_customs_inputs(lot: Lot, bid_jpy: int | None) -> list[str]:
     """Mandatory inputs for the customs_calc pipeline step (Russian labels)."""
     missing: list[str] = []
     if lot.fuel_type != FuelType.EV and not lot.engine_cc:

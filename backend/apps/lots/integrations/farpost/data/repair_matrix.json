@@ -1,0 +1,29 @@
+{
+  "version": "v1",
+  "region": "Vladivostok",
+  "basis": "Planning estimates from research/03_AUCTION_INSPECTION_AND_REPAIR_ECONOMETRICS.md; not verified STO quotes. Midpoints rounded half up to RUB 500.",
+  "parts": {"default": 29000},
+  "mount_dismount": 2500,
+  "paint": 10000,
+  "bodywork": 21500,
+  "operations": {
+    "A1": {"pdr_and_polish": 2000},
+    "A2": {"paint": 10000},
+    "A3": {"paint": 12000},
+    "U1": {"pdr_and_polish": 2500},
+    "U2": {"pdr_and_polish": 5500},
+    "U3": {"bodywork": 15000},
+    "W1": {},
+    "W2": {"paint": 6500},
+    "W3": {"bodywork": 17000},
+    "Y1": {"bodywork": 8000},
+    "Y2": {"bodywork": 8000},
+    "Y3": {"bodywork": 8000},
+    "S1": {"bodywork": 6500},
+    "S2": {"bodywork": 6500},
+    "C1": {"bodywork": 37500},
+    "C2": {"bodywork": 37500},
+    "P": {"paint": 11000}
+  },
+  "maximum_severity": {"A": 3, "U": 3, "W": 3, "Y": 3, "S": 2, "C": 2}
+}

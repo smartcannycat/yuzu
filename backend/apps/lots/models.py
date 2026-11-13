@@ -17,6 +17,7 @@ from apps.core.enums import (
     FrameIdConfidence,
     FuelType,
     ItemProcessingStatus,
+    LotArchiveReason,
     OdometerStatus,
     PowerHpSource,
     RiskLevel,
@@ -159,6 +160,19 @@ class Lot(models.Model):
     bid_slider_step_jpy = models.PositiveIntegerField(default=10000)
     is_repairs_included = models.BooleanField(default=True)
 
+    auction_date = models.CharField(max_length=20, blank=True, null=True)
+    is_archived = models.BooleanField(default=False)
+    archived_at = models.DateTimeField(null=True, blank=True)
+    archived_reason = models.CharField(
+        max_length=20,
+        choices=LotArchiveReason.choices,
+        blank=True,
+        null=True,
+    )
+    expires_at = models.DateTimeField(null=True, blank=True)
+    auto_archive_disabled = models.BooleanField(default=False)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -167,6 +181,14 @@ class Lot(models.Model):
         ordering = ["-created_at"]
         indexes = [
             models.Index(fields=["user", "created_at"]),
+            models.Index(
+                fields=["user", "deleted_at", "is_archived"],
+                name="lots_user_del_arch_idx",
+            ),
+            models.Index(
+                fields=["user", "deleted_at", "expires_at"],
+                name="lots_user_del_exp_idx",
+            ),
             models.Index(fields=["frame_id"]),
             models.Index(fields=["verdict"]),
             models.Index(fields=["make"]),

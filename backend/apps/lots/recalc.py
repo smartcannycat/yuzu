@@ -7,7 +7,7 @@ from django.utils import timezone
 from apps.core.enums import TrafficLightColor
 from apps.core.exceptions import BadRequestProblemError, NotFoundProblemError
 from apps.lots import schemas
-from apps.lots.economics import load_lot_currency_rates, recompute_lot_economics
+from apps.lots.economics import _extract_rates, recompute_lot_economics
 from apps.lots.models import CustomsCalculation, Lot, WiseCostLadder
 from apps.lots.scoring import compute_verdict
 from apps.users.models import User
@@ -29,7 +29,8 @@ def recalculate_lot(
     # using the stored rates so the ladder keeps a single JPY base.
     bid_jpy = payload.bid_jpy
     if bid_jpy is None and payload.bid_rub is not None:
-        rates_data = load_lot_currency_rates(lot)
+        customs_model = CustomsCalculation.objects.filter(lot=lot).first()
+        rates_data, _ = _extract_rates(lot, customs_model)
         if rates_data is None:
             raise BadRequestProblemError(
                 "Для пересчёта по ставке в рублях требуется снимок курсов валют",

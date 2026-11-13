@@ -406,6 +406,8 @@ class CustomsCalculation(StrictBaseModel):
     effective_duty_pct: Optional[float] = Field(None, description="Процент пошлины от стоимости авто (для авто до 3 лет: 48-54%)")
     customs_duty_eur: float = Field(..., description="Пошлина в EUR", examples=[2033.20])
     customs_duty_rub: int = Field(..., description="Пошлина в RUB", examples=[193154])
+    excise_rub: int = Field(0, ge=0, description="Акциз РФ (для электромобилей вне единых ставок ЕАЭС)", examples=[0])
+    import_vat_rub: int = Field(0, ge=0, description="Ввозной НДС РФ (для электромобилей вне единых ставок ЕАЭС)", examples=[0])
     is_under_160_hp: Optional[bool] = Field(None, description="Мощность <= 160 л.с. (null если мощность не подтверждена)")
     is_commercial_util: bool = Field(..., description="Коммерческий утильсбор")
     utilization_fee_rub: int = Field(..., description="Утильсбор РФ", examples=[5200])
@@ -426,6 +428,15 @@ class TrafficLightVerdict(StrictBaseModel):
     interior_summary_ru: str = Field(..., description="Короткий буллит 'Салон' на Экране 4 (оценка + заметки)")
     reasoning_bullets: List[str] = Field(default_factory=list, description="Дополнительные тезисы для PDF-отчета")
 ```
+
+### 3.1. Шлюз курсов валют (BE-05): источник и дисциплина данных
+
+> **Источник данных:** [Курсы валют, API — cbr-xml-daily.ru](https://www.cbr-xml-daily.ru/) — сторонний сервис данных ЦБ РФ. Условия использования сервиса требуют размещения обратной ссылки в документации интегрирующихся продуктов.
+
+- `EUR/RUB` и `USD/RUB` берутся из официального ответа ЦБ РФ (нормализация `Value / Nominal`).
+- Коммерческий курс `JPY/RUB` является **расчётным ориентиром**: курс ЦБ РФ + спред 3% (настраивается). Строка `jpy_rate_source` всегда формируется как `Расчётный ориентир: ЦБ РФ + N%` и не приписывает котировку конкретному банку.
+- Кэширование: PostgreSQL `ExternalCache` (TTL 1 час), fallback-каскад `stale` (до 7 суток) → конфигурация. `cbrf_date` всегда берётся из ответа источника (в выходные ЦБ не публикует новые котировки — дата остаётся с последнего торгового дня).
+- Снимок курсов (`rates_snapshot` / `customs_rates_input`) фиксируется на момент расчёта лота и не ретроактивно обновляется при обновлении общего кэша.
 
 ---
 
@@ -1145,6 +1156,8 @@ class LotDetailResponse(StrictBaseModel):
       "effective_duty_pct": null,
       "customs_duty_eur": 2033.2,
       "customs_duty_rub": 193154,
+      "excise_rub": 0,
+      "import_vat_rub": 0,
       "is_under_160_hp": true,
       "is_commercial_util": false,
       "utilization_fee_rub": 5200,
@@ -1351,6 +1364,8 @@ class RecalculateResponse(StrictBaseModel):
     "effective_duty_pct": null,
     "customs_duty_eur": 2033.2,
     "customs_duty_rub": 193154,
+    "excise_rub": 0,
+    "import_vat_rub": 0,
     "is_under_160_hp": true,
     "is_commercial_util": false,
     "utilization_fee_rub": 5200,
