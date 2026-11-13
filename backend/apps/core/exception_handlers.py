@@ -71,6 +71,26 @@ def _extract_detail_text(raw_detail: Any, fallback: str) -> str:
     return fallback
 
 
+def _validation_reason(error: dict[str, Any]) -> str:
+    error_type = error.get("type")
+    context = error.get("ctx") or {}
+    if error_type == "exclusive_bid_currency":
+        return str(error["msg"])
+    if error_type == "string_too_short":
+        return f"Минимальная длина: {context['min_length']} символов"
+    if error_type == "string_too_long":
+        return f"Максимальная длина: {context['max_length']} символов"
+    if error_type == "greater_than_equal":
+        return f"Значение должно быть не меньше {context['ge']}"
+    if error_type == "less_than_equal":
+        return f"Значение должно быть не больше {context['le']}"
+    return {
+        "missing": "Обязательное поле отсутствует",
+        "extra_forbidden": "Недопустимое поле",
+        "value_error": "Некорректное значение",
+    }.get(error_type, "Некорректное значение")
+
+
 def register_exception_handlers(api: NinjaExtraAPI) -> None:
     """Register global RFC 7807 exception handlers on NinjaExtraAPI."""
 
@@ -91,7 +111,7 @@ def register_exception_handlers(api: NinjaExtraAPI) -> None:
         invalid_params = [
             InvalidParamDetail(
                 name=_format_error_loc(err.get("loc")),
-                reason=str(err.get("msg", "Некорректное значение")),
+                reason=_validation_reason(err),
             )
             for err in exc.errors
         ]
