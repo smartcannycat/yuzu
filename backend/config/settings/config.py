@@ -55,6 +55,8 @@ class AppSettings(BaseSettings):
     ML_SERVICE_TIMEOUT_SEC: float = 30.0
     CBRF_API_URL: str = "https://www.cbr-xml-daily.ru/daily_json.js"
     HTTP_CLIENT_TIMEOUT_SEC: float = 10.0
+    FARPOST_TIMEOUT_SEC: float = Field(default=5.0, gt=0, allow_inf_nan=False)
+    FARPOST_BUDGET_SEC: float = Field(default=20.0, gt=0, allow_inf_nan=False)
 
     # CBRF currency gateway (BE-05)
     CBRF_TIMEOUT_SEC: float = Field(default=5.0, gt=0, allow_inf_nan=False)

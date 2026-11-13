@@ -406,6 +406,8 @@ class CustomsCalculation(StrictBaseModel):
     effective_duty_pct: Optional[float] = Field(None, description="Процент пошлины от стоимости авто (для авто до 3 лет: 48-54%)")
     customs_duty_eur: float = Field(..., description="Пошлина в EUR", examples=[2033.20])
     customs_duty_rub: int = Field(..., description="Пошлина в RUB", examples=[193154])
+    excise_rub: int = Field(0, ge=0, description="Акциз РФ (для электромобилей вне единых ставок ЕАЭС)", examples=[0])
+    import_vat_rub: int = Field(0, ge=0, description="Ввозной НДС РФ (для электромобилей вне единых ставок ЕАЭС)", examples=[0])
     is_under_160_hp: Optional[bool] = Field(None, description="Мощность <= 160 л.с. (null если мощность не подтверждена)")
     is_commercial_util: bool = Field(..., description="Коммерческий утильсбор")
     utilization_fee_rub: int = Field(..., description="Утильсбор РФ", examples=[5200])
@@ -1154,6 +1156,8 @@ class LotDetailResponse(StrictBaseModel):
       "effective_duty_pct": null,
       "customs_duty_eur": 2033.2,
       "customs_duty_rub": 193154,
+      "excise_rub": 0,
+      "import_vat_rub": 0,
       "is_under_160_hp": true,
       "is_commercial_util": false,
       "utilization_fee_rub": 5200,
@@ -1360,6 +1364,8 @@ class RecalculateResponse(StrictBaseModel):
     "effective_duty_pct": null,
     "customs_duty_eur": 2033.2,
     "customs_duty_rub": 193154,
+    "excise_rub": 0,
+    "import_vat_rub": 0,
     "is_under_160_hp": true,
     "is_commercial_util": false,
     "utilization_fee_rub": 5200,

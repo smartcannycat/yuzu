@@ -17,6 +17,7 @@ from apps.core.enums import (
     DutyCalculationMode,
     FuelType,
     ItemProcessingStatus,
+    LotArchiveReason,
     MascotMood,
     OdometerStatus,
     RiskLevel,
@@ -65,6 +66,7 @@ class NormalizedSheet(StrictBaseModel):
     lot_number: str = Field(..., description="Auction lot number")
     auction_house: AuctionHouse = Field(..., description="Canonical auction house")
     auction_branch: str | None = Field(None, description="Auction branch if specified")
+    auction_date: str | None = Field(None, description="Auction date (DD.MM.YYYY)")
     auction_strictness_index: float = Field(
         ..., ge=0.0, le=1.0, description="Strictness index (0.55..1.00)"
     )
@@ -238,6 +240,8 @@ class CustomsCalculation(StrictBaseModel):
     )
     customs_duty_eur: float = Field(..., description="Duty in EUR")
     customs_duty_rub: int = Field(..., description="Duty in RUB")
+    excise_rub: int = Field(0, ge=0, description="Import excise (EVs outside unified EAEU rates)")
+    import_vat_rub: int = Field(0, ge=0, description="Import VAT (EVs outside unified EAEU rates)")
     is_under_160_hp: bool | None = Field(None, description="Power <= 160 hp")
     is_commercial_util: bool = Field(..., description="Commercial utilization fee")
     utilization_fee_rub: int = Field(..., description="RF utilization fee")
@@ -297,6 +301,11 @@ class LotSummary(StrictBaseModel):
     has_anomaly: bool = Field(..., description="Cross-audit anomaly flag")
     anomaly_text: str | None = Field(None, description="Anomaly warning text")
     thumbnail_url: str | None = Field(None, description="Auction sheet scan thumbnail URL")
+    auction_date: str | None = Field(None, description="Auction date (DD.MM.YYYY)")
+    is_archived: bool = Field(False, description="Whether lot is archived")
+    archived_at: datetime | None = Field(None, description="Archive timestamp (UTC)")
+    archived_reason: LotArchiveReason | None = Field(None, description="Archive reason")
+    expires_at: datetime | None = Field(None, description="Auto-archive deadline (UTC)")
     created_at: datetime = Field(..., description="Record creation timestamp (UTC)")
 
 
@@ -360,6 +369,10 @@ class LotDetailResponse(StrictBaseModel):
     lot_id: UUID = Field(..., description="Unique lot identifier")
     created_at: datetime = Field(..., description="Creation timestamp (UTC)")
     updated_at: datetime = Field(..., description="Update timestamp (UTC)")
+    is_archived: bool = Field(False, description="Whether lot is archived")
+    archived_at: datetime | None = Field(None, description="Archive timestamp (UTC)")
+    archived_reason: LotArchiveReason | None = Field(None, description="Archive reason")
+    expires_at: datetime | None = Field(None, description="Auto-archive deadline (UTC)")
     passport: NormalizedSheet = Field(
         ..., description="Vehicle passport, defects, risks, inspector notes"
     )
@@ -407,6 +420,9 @@ class FilterCountItem(StrictBaseModel):
 
 class AvailableFilters(StrictBaseModel):
     total_lots_count: int = Field(..., ge=0, description="Counter for 'All (N)' chip")
+    archived_lots_count: int = Field(
+        0, ge=0, description="Total non-deleted archived lots for user"
+    )
     makes: list[FilterCountItem] = Field(default_factory=list, description="Makes with counts")
     models: list[FilterCountItem] = Field(default_factory=list, description="Models with counts")
     counts_by_verdict: dict[TrafficLightColor, int] = Field(
@@ -462,3 +478,28 @@ class RecalculateResponse(StrictBaseModel):
     benefit_percentage: float = Field(..., description="Updated benefit percentage")
     verdict: TrafficLightVerdict = Field(..., description="Updated traffic light verdict")
     pdf_report_stale: bool = Field(True, description="Flag that PDF export needs simulation params")
+
+
+class LotLifecyclePatchRequest(StrictBaseModel):
+    is_archived: bool = Field(
+        ...,
+        description="Archive manually (true) or restore to active without auto-archive (false)",
+    )
+
+
+class LotBulkDeleteRequest(StrictBaseModel):
+    lot_ids: list[UUID] = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        description="List of lot UUIDs to soft-delete (1 to 100 per request)",
+    )
+
+
+class LotBulkDeleteResponse(StrictBaseModel):
+    deleted_ids: list[UUID] = Field(..., description="UUIDs soft-deleted by this request")
+    not_found_ids: list[UUID] = Field(
+        default_factory=list,
+        description="UUIDs not found, already deleted, or inaccessible to user",
+    )
+    deleted_count: int = Field(..., ge=0, description="Number of lots deleted in this request")
