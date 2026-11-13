@@ -1,0 +1,163 @@
+{
+  "toyota:corolla": {
+    "market_price_rf_rub": 1520000,
+    "price_min_rub": 1390000,
+    "price_max_rub": 1680000,
+    "analogs_count": 8,
+    "search_region_ru": "ДФО / Владивосток (резервный справочник)"
+  },
+  "toyota:corolla_fielder": {
+    "market_price_rf_rub": 1320000,
+    "price_min_rub": 1150000,
+    "price_max_rub": 1520000,
+    "analogs_count": 10,
+    "search_region_ru": "ДФО / Владивосток (резервный справочник)"
+  },
+  "toyota:prius": {
+    "market_price_rf_rub": 1750000,
+    "price_min_rub": 1550000,
+    "price_max_rub": 2050000,
+    "analogs_count": 9,
+    "search_region_ru": "ДФО / Владивосток (резервный справочник)"
+  },
+  "toyota:aqua": {
+    "market_price_rf_rub": 1150000,
+    "price_min_rub": 980000,
+    "price_max_rub": 1350000,
+    "analogs_count": 10,
+    "search_region_ru": "ДФО / Владивосток (резервный справочник)"
+  },
+  "toyota:yaris": {
+    "market_price_rf_rub": 1350000,
+    "price_min_rub": 1180000,
+    "price_max_rub": 1550000,
+    "analogs_count": 6,
+    "search_region_ru": "ДФО / Владивосток (резервный справочник)"
+  },
+  "toyota:yaris_cross": {
+    "market_price_rf_rub": 1950000,
+    "price_min_rub": 1750000,
+    "price_max_rub": 2250000,
+    "analogs_count": 6,
+    "search_region_ru": "ДФО / Владивосток (резервный справочник)"
+  },
+  "toyota:rav4": {
+    "market_price_rf_rub": 2850000,
+    "price_min_rub": 2500000,
+    "price_max_rub": 3300000,
+    "analogs_count": 5,
+    "search_region_ru": "ДФО / Владивосток (резервный справочник)"
+  },
+  "toyota:harrier": {
+    "market_price_rf_rub": 2750000,
+    "price_min_rub": 2400000,
+    "price_max_rub": 3250000,
+    "analogs_count": 6,
+    "search_region_ru": "ДФО / Владивосток (резервный справочник)"
+  },
+  "toyota:tank": {
+    "market_price_rf_rub": 1080000,
+    "price_min_rub": 920000,
+    "price_max_rub": 1240000,
+    "analogs_count": 8,
+    "search_region_ru": "ДФО / Владивосток (резервный справочник)"
+  },
+  "honda:vezel": {
+    "market_price_rf_rub": 1600000,
+    "price_min_rub": 1450000,
+    "price_max_rub": 1850000,
+    "analogs_count": 8,
+    "search_region_ru": "ДФО / Владивосток (резервный справочник)"
+  },
+  "honda:fit": {
+    "market_price_rf_rub": 1220000,
+    "price_min_rub": 1050000,
+    "price_max_rub": 1450000,
+    "analogs_count": 9,
+    "search_region_ru": "ДФО / Владивосток (резервный справочник)"
+  },
+  "honda:freed": {
+    "market_price_rf_rub": 1680000,
+    "price_min_rub": 1480000,
+    "price_max_rub": 1950000,
+    "analogs_count": 7,
+    "search_region_ru": "ДФО / Владивосток (резервный справочник)"
+  },
+  "honda:stepwgn": {
+    "market_price_rf_rub": 2150000,
+    "price_min_rub": 1850000,
+    "price_max_rub": 2500000,
+    "analogs_count": 6,
+    "search_region_ru": "ДФО / Владивосток (резервный справочник)"
+  },
+  "nissan:note": {
+    "market_price_rf_rub": 1190000,
+    "price_min_rub": 1090000,
+    "price_max_rub": 1390000,
+    "analogs_count": 6,
+    "search_region_ru": "ДФО / Владивосток (резервный справочник)"
+  },
+  "nissan:x-trail": {
+    "market_price_rf_rub": 2100000,
+    "price_min_rub": 1850000,
+    "price_max_rub": 2450000,
+    "analogs_count": 6,
+    "search_region_ru": "ДФО / Владивосток (резервный справочник)"
+  },
+  "nissan:serena": {
+    "market_price_rf_rub": 1950000,
+    "price_min_rub": 1700000,
+    "price_max_rub": 2250000,
+    "analogs_count": 5,
+    "search_region_ru": "ДФО / Владивосток (резервный справочник)"
+  },
+  "subaru:forester": {
+    "market_price_rf_rub": 2450000,
+    "price_min_rub": 2150000,
+    "price_max_rub": 2850000,
+    "analogs_count": 6,
+    "search_region_ru": "ДФО / Владивосток (резервный справочник)"
+  },
+  "subaru:levorg": {
+    "market_price_rf_rub": 2150000,
+    "price_min_rub": 1850000,
+    "price_max_rub": 2550000,
+    "analogs_count": 5,
+    "search_region_ru": "ДФО / Владивосток (резервный справочник)"
+  },
+  "subaru:xv": {
+    "market_price_rf_rub": 1850000,
+    "price_min_rub": 1620000,
+    "price_max_rub": 2150000,
+    "analogs_count": 5,
+    "search_region_ru": "ДФО / Владивосток (резервный справочник)"
+  },
+  "mazda:cx-5": {
+    "market_price_rf_rub": 2350000,
+    "price_min_rub": 2050000,
+    "price_max_rub": 2700000,
+    "analogs_count": 6,
+    "search_region_ru": "ДФО / Владивосток (резервный справочник)"
+  },
+  "mazda:cx-3": {
+    "market_price_rf_rub": 1580000,
+    "price_min_rub": 1390000,
+    "price_max_rub": 1820000,
+    "analogs_count": 5,
+    "search_region_ru": "ДФО / Владивосток (резервный справочник)"
+  },
+  "suzuki:jimny": {
+    "market_price_rf_rub": 1850000,
+    "price_min_rub": 1600000,
+    "price_max_rub": 2150000,
+    "analogs_count": 5,
+    "search_region_ru": "ДФО / Владивосток (резервный справочник)"
+  },
+  "suzuki:swift": {
+    "market_price_rf_rub": 1150000,
+    "price_min_rub": 980000,
+    "price_max_rub": 1350000,
+    "analogs_count": 5,
+    "search_region_ru": "ДФО / Владивосток (резервный справочник)"
+  }
+}

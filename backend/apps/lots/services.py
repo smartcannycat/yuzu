@@ -42,6 +42,8 @@ from apps.core.exceptions import (
     NotFoundProblemError,
 )
 from apps.lots import schemas
+from apps.lots.integrations.drom import DromMarketService
+from apps.lots.integrations.drom.schemas import DromFetchError, DromSearchCriteria
 from apps.lots.models import (
     Batch,
     BatchItem,
@@ -1545,8 +1547,60 @@ def _step_cross_audit(_item: BatchItem) -> bool:
     return True
 
 
-def _step_drom_market(_item: BatchItem) -> bool:
-    return True
+def _step_drom_market(item: BatchItem) -> bool:
+    try:
+        lot = item.lot
+        if lot is None or not lot.make or not lot.model:
+            _fail_item(item, TaskStep.FAILED, "Недостаточно данных для поиска аналогов на Drom.ru")
+            return False
+
+        criteria = DromSearchCriteria(
+            make=lot.make,
+            model=lot.model,
+            year=lot.year or lot.first_reg_year,
+            engine_cc=lot.engine_cc,
+            drive_type=lot.drive_type,
+            transmission=lot.transmission,
+            fuel_type=lot.fuel_type,
+            model_code=lot.model_code,
+        )
+        result = DromMarketService().evaluate(criteria)
+
+        with transaction.atomic():
+            lot_locked = Lot.objects.select_for_update().get(pk=lot.pk)
+            lot_locked.market_price_rf_rub = result.market_price_rf_rub
+            update_fields = ["market_price_rf_rub", "updated_at"]
+            if lot_locked.power_hp is None and result.power_hp is not None:
+                lot_locked.power_hp = result.power_hp
+                lot_locked.power_hp_source = result.power_hp_source
+                lot_locked.is_under_160_hp = result.is_under_160_hp
+                update_fields.extend(["power_hp", "power_hp_source", "is_under_160_hp"])
+            lot_locked.save(update_fields=update_fields)
+
+            MarketComparisonInfo.objects.update_or_create(
+                lot=lot_locked,
+                defaults={
+                    "market_price_rf_rub": result.market_price_rf_rub,
+                    "analogs_count": result.analogs_count,
+                    "price_min_rub": result.price_min_rub,
+                    "price_max_rub": result.price_max_rub,
+                    "search_region_ru": result.search_region_ru,
+                    "excludes_under_order": result.excludes_under_order,
+                    "filtered_out_under_order_count": result.filtered_out_under_order_count,
+                    "is_fallback": result.is_fallback,
+                    "fallback_reason_ru": result.fallback_reason_ru,
+                    "drom_search_url": result.drom_search_url,
+                },
+            )
+        return True
+    except DromFetchError as exc:
+        logger.warning("Drom market step failed for item %s: %s", item.pk, exc)
+        _fail_item(item, TaskStep.FAILED, "Не удалось получить рыночные аналоги на Drom.ru")
+        return False
+    except Exception:
+        logger.exception("Unexpected error in Drom market step for item %s", item.pk)
+        _fail_item(item, TaskStep.FAILED, "Ошибка при подборе рыночных аналогов на Drom.ru")
+        return False
 
 
 def _step_farpost_parts(_item: BatchItem) -> bool:
@@ -1563,9 +1617,28 @@ def _step_scoring(item: BatchItem) -> bool:
     return True
 
 
+def _run_step_in_worker(step_fn, item: BatchItem) -> bool:
+    try:
+        return bool(step_fn(item))
+    except Exception:
+        logger.exception("Parallel pipeline step %s crashed for item %s", step_fn.__name__, item.pk)
+        try:
+            already_failed = BatchItem.objects.filter(
+                pk=item.pk,
+                status=ItemProcessingStatus.FAILED,
+            ).exists()
+            if not already_failed:
+                _fail_item(item, TaskStep.FAILED, "Внутренняя ошибка при обработке лота")
+        except Exception:
+            logger.exception("Failed to mark item %s as FAILED after step crash", item.pk)
+        return False
+    finally:
+        connection.close()
+
+
 def _run_parallel_steps(item: BatchItem, step_fns: list) -> bool:
     with ThreadPoolExecutor(max_workers=len(step_fns)) as pool:
-        futures = {pool.submit(fn, item): fn for fn in step_fns}
+        futures = {pool.submit(_run_step_in_worker, fn, item): fn for fn in step_fns}
         for future in as_completed(futures):
             if not future.result():
                 pool.shutdown(wait=False, cancel_futures=True)
@@ -1604,6 +1677,8 @@ def _process_item(item: BatchItem) -> None:
         [_step_cross_audit, _step_drom_market, _step_farpost_parts],
     ):
         return
+    if item.lot is not None:
+        item.lot.refresh_from_db()
     if not _step_customs_calc(item):
         return
     if not _step_scoring(item):
