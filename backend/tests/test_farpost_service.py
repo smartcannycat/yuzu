@@ -294,3 +294,23 @@ def test_existing_detail_endpoint_exposes_saved_estimate(user_factory, api_clien
         == repair["total_parts_from_rub"] + repair["total_works_rub"]
     )
     assert "farpost_url" not in str(repair)
+
+
+@pytest.mark.django_db
+def test_existing_economics_includes_saved_repair_exactly_once(user_factory):
+    from apps.lots.economics import recompute_lot_economics
+    from apps.lots.starter_lots import seed_starter_lots
+
+    user = user_factory()
+    seed_starter_lots(user)
+    vehicle = Lot.objects.get(user=user, make="Toyota")
+    summary = save_repair_estimate(vehicle, client=source(error=True))
+    recompute_lot_economics(vehicle, include_repairs=False)
+    vehicle.refresh_from_db()
+    without_repairs = vehicle.turnkey_cost_rub
+    recompute_lot_economics(vehicle, include_repairs=True)
+    vehicle.refresh_from_db()
+    assert vehicle.turnkey_cost_rub - without_repairs == summary.grand_total_repair_rub
+    recompute_lot_economics(vehicle, include_repairs=True)
+    vehicle.refresh_from_db()
+    assert vehicle.turnkey_cost_rub - without_repairs == summary.grand_total_repair_rub
