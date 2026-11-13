@@ -9,6 +9,7 @@ import {
   BaseButton,
   BaseCard,
   BottomSheet,
+  BrandLogo,
   InsetListGroup,
   InsetListItem,
 } from '@/components/ui'
@@ -29,22 +30,7 @@ async function handleLogout(): Promise<void> {
 <template>
   <main class="mx-auto flex min-h-dvh w-full max-w-[680px] flex-col gap-5 px-4 py-6">
     <header class="flex items-center justify-between gap-3">
-      <div class="flex items-center gap-2.5">
-        <span
-          class="bg-accent text-text-on-accent flex h-8 w-8 items-center justify-center rounded-[9px] text-[14px] font-semibold tracking-tight"
-          aria-hidden="true"
-        >
-          YZ
-        </span>
-        <div class="flex flex-col">
-          <span class="text-text-primary text-[17px] leading-tight font-semibold tracking-tight">
-            YUZU
-          </span>
-          <span class="text-text-secondary text-[12px] leading-tight">
-            Интеллект японских автоаукционов
-          </span>
-        </div>
-      </div>
+      <BrandLogo layout="header" />
 
       <button
         type="button"
