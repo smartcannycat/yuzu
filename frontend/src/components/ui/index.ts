@@ -10,6 +10,7 @@ export type { CardPadding, CardVariant } from './BaseCard.vue'
 export { default as BaseInput } from './BaseInput.vue'
 export { default as BaseSwitch } from './BaseSwitch.vue'
 export { default as BottomSheet } from './BottomSheet.vue'
+export type { SheetPlacement } from './BottomSheet.vue'
 
 export { default as CostLadder } from './CostLadder.vue'
 export type { CostLadderStep } from './CostLadder.vue'

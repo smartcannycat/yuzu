@@ -5,12 +5,15 @@ import { computed, ref, useId, useTemplateRef, watch } from 'vue'
 
 import { useFocusTrap } from '@/composables/useFocusTrap'
 
+export type SheetPlacement = 'center' | 'left' | 'right'
+
 interface Props {
   title?: string
   subtitle?: string
   closeLabel?: string
   closeOnBackdrop?: boolean
   maxWidth?: 'sm' | 'md' | 'lg'
+  placement?: SheetPlacement
 }
 
 const MAX_WIDTH_CLASSES: Record<NonNullable<Props['maxWidth']>, string> = {
@@ -19,10 +22,23 @@ const MAX_WIDTH_CLASSES: Record<NonNullable<Props['maxWidth']>, string> = {
   lg: 'md:max-w-2xl',
 }
 
+const BACKDROP_PLACEMENT_CLASSES: Record<SheetPlacement, string> = {
+  center: 'md:items-center md:justify-center md:p-6',
+  left: 'md:items-stretch md:justify-start md:p-4',
+  right: 'md:items-stretch md:justify-end md:p-4',
+}
+
+const PANEL_PLACEMENT_CLASSES: Record<SheetPlacement, string> = {
+  center: 'md:max-h-[90dvh]',
+  left: 'md:h-full md:max-h-full',
+  right: 'md:h-full md:max-h-full',
+}
+
 const props = withDefaults(defineProps<Props>(), {
   closeLabel: 'Закрыть окно',
   closeOnBackdrop: true,
   maxWidth: 'md',
+  placement: 'center',
 })
 
 const open = defineModel<boolean>('open', { default: false })
@@ -83,6 +99,8 @@ function onTouchEnd() {
 }
 
 const maxWidthClass = computed(() => MAX_WIDTH_CLASSES[props.maxWidth])
+const backdropPlacementClass = computed(() => BACKDROP_PLACEMENT_CLASSES[props.placement])
+const panelPlacementClass = computed(() => PANEL_PLACEMENT_CLASSES[props.placement])
 
 const dragStyle = computed(() => {
   if (isDesktop.value || dragOffsetY.value === 0) return undefined
@@ -108,10 +126,11 @@ function onBackdropClick() {
     <Transition name="yuzu-backdrop">
       <div
         v-if="open"
-        class="bg-text-primary/40 fixed inset-0 z-50 flex items-end justify-center backdrop-blur-[2px] md:items-center md:p-6"
+        class="bg-text-primary/40 fixed inset-0 z-50 flex items-end justify-center backdrop-blur-[2px]"
+        :class="backdropPlacementClass"
         @click.self="onBackdropClick"
       >
-        <Transition name="yuzu-sheet" appear>
+        <Transition :name="`yuzu-sheet-${placement}`" appear>
           <div
             v-if="open"
             ref="panelRef"
@@ -122,7 +141,7 @@ function onBackdropClick() {
             tabindex="-1"
             :style="dragStyle"
             class="border-border bg-surface shadow-sheet md:shadow-modal flex max-h-[90dvh] w-full flex-col overflow-hidden rounded-t-xl border focus:outline-none md:rounded-xl"
-            :class="maxWidthClass"
+            :class="[maxWidthClass, panelPlacementClass]"
           >
             <!-- Mobile grabber handle -->
             <div
@@ -201,35 +220,59 @@ function onBackdropClick() {
   opacity: 0;
 }
 
-.yuzu-sheet-enter-active {
+.yuzu-sheet-center-enter-active,
+.yuzu-sheet-left-enter-active,
+.yuzu-sheet-right-enter-active {
   transition:
     transform var(--modal-open-dur) var(--modal-ease),
     opacity var(--modal-open-dur) var(--modal-ease);
 }
-.yuzu-sheet-leave-active {
+.yuzu-sheet-center-leave-active,
+.yuzu-sheet-left-leave-active,
+.yuzu-sheet-right-leave-active {
   transition:
     transform var(--modal-close-dur) var(--modal-ease),
     opacity var(--modal-close-dur) var(--modal-ease);
 }
-.yuzu-sheet-enter-from,
-.yuzu-sheet-leave-to {
+.yuzu-sheet-center-enter-from,
+.yuzu-sheet-center-leave-to,
+.yuzu-sheet-left-enter-from,
+.yuzu-sheet-left-leave-to,
+.yuzu-sheet-right-enter-from,
+.yuzu-sheet-right-leave-to {
   opacity: 0;
   transform: translateY(100%);
 }
 
 @media (min-width: 768px) {
-  .yuzu-sheet-enter-from,
-  .yuzu-sheet-leave-to {
+  .yuzu-sheet-center-enter-from,
+  .yuzu-sheet-center-leave-to {
     opacity: 0;
     transform: translateY(8px) scale(0.96);
+  }
+
+  .yuzu-sheet-left-enter-from,
+  .yuzu-sheet-left-leave-to {
+    opacity: 0;
+    transform: translateX(-28px);
+  }
+
+  .yuzu-sheet-right-enter-from,
+  .yuzu-sheet-right-leave-to {
+    opacity: 0;
+    transform: translateX(28px);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .yuzu-backdrop-enter-active,
   .yuzu-backdrop-leave-active,
-  .yuzu-sheet-enter-active,
-  .yuzu-sheet-leave-active {
+  .yuzu-sheet-center-enter-active,
+  .yuzu-sheet-center-leave-active,
+  .yuzu-sheet-left-enter-active,
+  .yuzu-sheet-left-leave-active,
+  .yuzu-sheet-right-enter-active,
+  .yuzu-sheet-right-leave-active {
     transition: none !important;
   }
 }

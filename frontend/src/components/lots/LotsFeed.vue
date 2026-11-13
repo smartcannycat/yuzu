@@ -40,7 +40,7 @@ const emit = defineEmits<{
 
     <div
       v-else-if="isLoading && !hasLoadedOnce"
-      class="grid grid-cols-1 gap-4 md:grid-cols-2"
+      class="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-5"
       aria-label="Загрузка лотов"
     >
       <BaseCard v-for="n in 4" :key="n" padding="md" class="flex gap-4">
@@ -103,7 +103,7 @@ const emit = defineEmits<{
 
     <template v-else>
       <div
-        class="grid grid-cols-1 gap-4 transition-opacity duration-150 md:grid-cols-2"
+        class="grid grid-cols-1 gap-4 transition-opacity duration-150 md:grid-cols-2 md:gap-5"
         :class="isLoading ? 'opacity-65' : 'opacity-100'"
       >
         <LotCard

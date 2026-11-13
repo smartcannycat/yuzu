@@ -55,7 +55,38 @@ async function handleToggleAnomaly() {
   await lotsStore.fetchLots()
 }
 
+async function handlePreviewFilterSheet(draft: LotFilterDraft) {
+  let modelForDraft: string | undefined
+  if (lotsStore.selectedModel) {
+    if (!draft.make || draft.make === lotsStore.selectedMake) {
+      modelForDraft = lotsStore.selectedModel
+    } else if (
+      lotsStore.items.some(
+        (item) => item.model === lotsStore.selectedModel && item.make === draft.make,
+      )
+    ) {
+      modelForDraft = lotsStore.selectedModel
+    }
+  }
+
+  return lotsStore.fetchFilterPreview({
+    query: lotsStore.query.trim() || undefined,
+    make: draft.make || undefined,
+    model: modelForDraft,
+    verdict: draft.verdict || undefined,
+    has_anomaly: draft.onlyAnomalies ? true : undefined,
+  })
+}
+
 async function handleApplyFilterSheet(draft: LotFilterDraft) {
+  if (draft.make && draft.make !== lotsStore.selectedMake && lotsStore.selectedModel) {
+    const modelBelongsToMake = lotsStore.items.some(
+      (item) => item.model === lotsStore.selectedModel && item.make === draft.make,
+    )
+    if (!modelBelongsToMake) {
+      lotsStore.selectedModel = null
+    }
+  }
   lotsStore.selectedMake = draft.make
   lotsStore.selectedVerdict = draft.verdict
   lotsStore.onlyAnomalies = draft.onlyAnomalies
@@ -78,7 +109,7 @@ async function handleLogout(): Promise<void> {
 
 <template>
   <div
-    class="mx-auto flex min-h-dvh w-full max-w-[1200px] flex-col gap-5 px-4 pt-5 pb-24 sm:px-6 sm:pt-6 sm:pb-12"
+    class="mx-auto flex min-h-dvh w-full max-w-[1200px] flex-col px-4 pt-5 pb-24 sm:px-6 sm:pt-6 sm:pb-12"
   >
     <AppHeader
       :initials="authStore.initials"
@@ -98,6 +129,7 @@ async function handleLogout(): Promise<void> {
     </AppHeader>
 
     <LotsToolbar
+      class="mt-4 sm:mt-5"
       :query="lotsStore.query"
       :selected-model="lotsStore.selectedModel"
       :selected-verdict="lotsStore.selectedVerdict"
@@ -114,25 +146,27 @@ async function handleLogout(): Promise<void> {
       @reset-filters="handleResetAllFilters"
     />
 
-    <InProgressAccordion
-      :summary="lotsStore.inProgress"
-      @select-item="previewProcessingItem = $event"
-    />
+    <div class="mt-6 flex flex-1 flex-col gap-3 sm:mt-7 sm:gap-3.5">
+      <InProgressAccordion
+        :summary="lotsStore.inProgress"
+        @select-item="previewProcessingItem = $event"
+      />
 
-    <LotsFeed
-      :items="lotsStore.items"
-      :is-loading="lotsStore.isLoading"
-      :is-loading-more="lotsStore.isLoadingMore"
-      :has-loaded-once="lotsStore.hasLoadedOnce"
-      :has-more="lotsStore.hasMore"
-      :has-any-active-filter="lotsStore.hasAnyActiveFilter"
-      :error-message="lotsStore.errorMessage"
-      @select-lot="previewLot = $event"
-      @retry="lotsStore.fetchLots()"
-      @reset-filters="handleResetAllFilters"
-      @open-upload="isUploadPreviewOpen = true"
-      @load-more="lotsStore.loadMore()"
-    />
+      <LotsFeed
+        :items="lotsStore.items"
+        :is-loading="lotsStore.isLoading"
+        :is-loading-more="lotsStore.isLoadingMore"
+        :has-loaded-once="lotsStore.hasLoadedOnce"
+        :has-more="lotsStore.hasMore"
+        :has-any-active-filter="lotsStore.hasAnyActiveFilter"
+        :error-message="lotsStore.errorMessage"
+        @select-lot="previewLot = $event"
+        @retry="lotsStore.fetchLots()"
+        @reset-filters="handleResetAllFilters"
+        @open-upload="isUploadPreviewOpen = true"
+        @load-more="lotsStore.loadMore()"
+      />
+    </div>
 
     <button
       type="button"
@@ -152,6 +186,7 @@ async function handleLogout(): Promise<void> {
       :only-anomalies="lotsStore.onlyAnomalies"
       :sort-by="lotsStore.sortBy"
       :sort-order="lotsStore.sortOrder"
+      :preview-filters="handlePreviewFilterSheet"
       @apply="handleApplyFilterSheet"
       @reset="handleResetAllFilters"
     />

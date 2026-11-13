@@ -64,6 +64,7 @@ export const useLotsStore = defineStore('lots', () => {
 
   // Monotonic sequence guard ensures stale responses never overwrite newer filter results.
   let latestRequestId = 0
+  let latestPreviewRequestId = 0
 
   const activeFiltersCount = computed(() => {
     let count = 0
@@ -161,6 +162,25 @@ export const useLotsStore = defineStore('lots', () => {
     }
   }
 
+  async function fetchFilterPreview(
+    overrides: Partial<LotListQueryParams>,
+    client: ApiClient = apiClient,
+  ): Promise<AvailableFilters | null> {
+    const previewId = ++latestPreviewRequestId
+
+    try {
+      const response = await client.lots.list({
+        ...overrides,
+        page: 1,
+        page_size: 1,
+      })
+      if (previewId !== latestPreviewRequestId) return null
+      return response.available_filters
+    } catch {
+      return null
+    }
+  }
+
   function resetFilters(): void {
     query.value = ''
     selectedMake.value = null
@@ -173,6 +193,7 @@ export const useLotsStore = defineStore('lots', () => {
 
   function clear(): void {
     latestRequestId += 1
+    latestPreviewRequestId += 1
     items.value = []
     inProgress.value = createEmptyInProgress()
     pagination.value = createEmptyPagination()
@@ -205,6 +226,7 @@ export const useLotsStore = defineStore('lots', () => {
     hasMore,
     fetchLots,
     loadMore,
+    fetchFilterPreview,
     resetFilters,
     clear,
   }

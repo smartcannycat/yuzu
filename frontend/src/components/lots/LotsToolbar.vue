@@ -7,7 +7,8 @@ import {
   Search,
   SlidersHorizontal,
 } from '@lucide/vue'
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useResizeObserver } from '@vueuse/core'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
 
 import { BaseButton, BaseInput } from '@/components/ui'
 import type { AvailableFilters, TrafficLightColor } from '@/types/api'
@@ -36,7 +37,47 @@ const emit = defineEmits<{
 
 const searchDraft = ref(props.query)
 const isSearchFocused = ref(false)
+const modelsScrollerRef = useTemplateRef<HTMLDivElement>('modelsScrollerRef')
+const canScrollLeft = ref(false)
+const canScrollRight = ref(false)
 let searchTimer: number | null = null
+
+function updateScrollFade() {
+  const el = modelsScrollerRef.value
+  if (!el) {
+    canScrollLeft.value = false
+    canScrollRight.value = false
+    return
+  }
+  const maxScroll = el.scrollWidth - el.clientWidth
+  canScrollLeft.value = el.scrollLeft > 2
+  canScrollRight.value = maxScroll > 2 && el.scrollLeft < maxScroll - 2
+}
+
+useResizeObserver(modelsScrollerRef, updateScrollFade)
+
+onMounted(() => {
+  void nextTick(updateScrollFade)
+})
+
+watch(
+  () => props.availableFilters.models,
+  () => {
+    void nextTick(updateScrollFade)
+  },
+  { deep: true },
+)
+
+const modelsTotalCount = computed(() =>
+  props.availableFilters.models.reduce((sum, item) => sum + item.count, 0),
+)
+
+const verdictTotalCount = computed(
+  () =>
+    (props.availableFilters.counts_by_verdict.green ?? 0) +
+    (props.availableFilters.counts_by_verdict.yellow ?? 0) +
+    (props.availableFilters.counts_by_verdict.red ?? 0),
+)
 
 const isSearchExpanded = computed(
   () => isSearchFocused.value || searchDraft.value.trim().length > 0,
@@ -48,21 +89,21 @@ const VERDICT_PILLS = computed(() => [
     label: 'Можно брать',
     count: props.availableFilters.counts_by_verdict.green ?? 0,
     icon: CheckCircle2,
-    activeClass: 'bg-success-bg text-success border-success/25',
+    activeClass: 'bg-success-bg text-success shadow-segment',
   },
   {
     value: 'yellow' as const,
     label: 'Под вопросом',
     count: props.availableFilters.counts_by_verdict.yellow ?? 0,
     icon: AlertTriangle,
-    activeClass: 'bg-warning-bg text-warning border-warning/25',
+    activeClass: 'bg-warning-bg text-warning shadow-segment',
   },
   {
     value: 'red' as const,
     label: 'Высокий риск',
     count: props.availableFilters.counts_by_verdict.red ?? 0,
     icon: OctagonAlert,
-    activeClass: 'bg-danger-bg text-danger border-danger/25',
+    activeClass: 'bg-danger-bg text-danger shadow-segment',
   },
 ])
 
@@ -113,47 +154,59 @@ function handleResetClick() {
 </script>
 
 <template>
-  <section aria-label="Поиск и фильтры лотов" class="flex flex-col gap-3">
+  <section
+    aria-label="Поиск и фильтры лотов"
+    class="bg-surface border-border shadow-card flex flex-col gap-2.5 rounded-md border p-3 sm:p-3.5"
+  >
     <div class="flex flex-wrap items-center justify-between gap-2.5">
-      <div class="hidden items-center gap-1.5 lg:flex" role="group" aria-label="Быстрый светофор">
-        <button
-          type="button"
-          class="inline-flex h-10 cursor-pointer items-center gap-1.5 rounded-sm border px-3 text-[13px] font-medium transition-colors"
-          :class="
-            selectedVerdict === null
-              ? 'bg-text-primary border-text-primary text-surface'
-              : 'bg-surface text-text-primary border-border hover:bg-surface-hover'
-          "
-          @click="emit('toggleVerdict', null)"
+      <div class="hidden items-center gap-2 lg:flex">
+        <div
+          class="bg-surface-inset inline-flex h-10 items-center gap-1 rounded-sm p-1"
+          role="group"
+          aria-label="Быстрый светофор"
         >
-          <span>Все</span>
-          <span class="opacity-70">{{ availableFilters.total_lots_count }}</span>
-        </button>
+          <button
+            type="button"
+            class="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[6px] px-2.5 text-[13px] font-medium transition-all"
+            :class="
+              selectedVerdict === null
+                ? 'bg-surface text-text-primary shadow-segment'
+                : 'text-text-secondary hover:text-text-primary'
+            "
+            @click="emit('toggleVerdict', null)"
+          >
+            <span>Все</span>
+            <span class="opacity-65">{{ verdictTotalCount }}</span>
+          </button>
+
+          <button
+            v-for="pill in VERDICT_PILLS"
+            :key="pill.value"
+            type="button"
+            :disabled="pill.count === 0 && selectedVerdict !== pill.value"
+            class="inline-flex h-8 items-center gap-1.5 rounded-[6px] px-2.5 text-[13px] font-medium transition-all"
+            :class="
+              selectedVerdict === pill.value
+                ? ['cursor-pointer', pill.activeClass]
+                : pill.count === 0
+                  ? 'text-text-muted cursor-not-allowed opacity-55'
+                  : 'text-text-secondary hover:text-text-primary cursor-pointer'
+            "
+            @click="emit('toggleVerdict', pill.value)"
+          >
+            <component :is="pill.icon" :size="14" :stroke-width="2" />
+            <span>{{ pill.label }}</span>
+            <span class="opacity-75">{{ pill.count }}</span>
+          </button>
+        </div>
 
         <button
-          v-for="pill in VERDICT_PILLS"
-          :key="pill.value"
           type="button"
-          class="inline-flex h-10 cursor-pointer items-center gap-1.5 rounded-sm border px-3 text-[13px] font-medium transition-colors"
-          :class="
-            selectedVerdict === pill.value
-              ? pill.activeClass
-              : 'bg-surface text-text-secondary border-border hover:bg-surface-hover hover:text-text-primary'
-          "
-          @click="emit('toggleVerdict', pill.value)"
-        >
-          <component :is="pill.icon" :size="14" :stroke-width="2" />
-          <span>{{ pill.label }}</span>
-          <span class="opacity-75">{{ pill.count }}</span>
-        </button>
-
-        <button
-          type="button"
-          class="inline-flex h-10 cursor-pointer items-center gap-1.5 rounded-sm border px-3 text-[13px] font-medium transition-colors"
+          class="inline-flex h-10 cursor-pointer items-center gap-1.5 rounded-sm px-3 text-[13px] font-medium transition-colors"
           :class="
             onlyAnomalies
-              ? 'bg-danger-bg text-danger border-danger/25'
-              : 'bg-surface text-text-secondary border-border hover:bg-surface-hover hover:text-text-primary'
+              ? 'bg-danger-bg text-danger ring-danger/25 ring-1'
+              : 'bg-surface-inset text-text-secondary hover:bg-border/70 hover:text-text-primary'
           "
           :aria-pressed="onlyAnomalies"
           @click="emit('toggleAnomaly')"
@@ -163,17 +216,19 @@ function handleResetClick() {
         </button>
       </div>
 
-      <div class="flex flex-1 items-center justify-end gap-2.5 lg:flex-none">
+      <div class="flex flex-1 items-center justify-end gap-2 lg:flex-none">
         <div
           class="min-w-0 flex-1 transition-[width] duration-200 ease-out lg:flex-none"
-          :class="isSearchExpanded ? 'lg:w-76' : 'lg:w-48'"
+          :class="isSearchExpanded ? 'lg:w-80' : 'lg:w-64'"
         >
           <BaseInput
             v-model="searchDraft"
+            variant="inset"
+            size="md"
             type="search"
             inputmode="search"
             clearable
-            :placeholder="isSearchExpanded ? 'Марка, кузов, лот...' : 'Поиск...'"
+            placeholder="Марка, кузов, лот..."
             @focus="isSearchFocused = true"
             @blur="isSearchFocused = false"
           >
@@ -184,65 +239,76 @@ function handleResetClick() {
         </div>
 
         <div class="shrink-0 lg:hidden">
-          <BaseButton
-            variant="ghost"
-            size="md"
+          <button
+            type="button"
             aria-label="Открыть фильтры и сортировку"
-            class="bg-surface"
+            class="bg-surface-inset text-text-primary hover:bg-border active:bg-border-strong/60 focus-visible:outline-accent relative inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-sm text-[14px] font-medium whitespace-nowrap transition-[background-color,scale] duration-[var(--duration-quick)] ease-[var(--ease-out)] select-none focus-visible:outline-2 focus-visible:outline-offset-2 active:scale-[0.98] sm:w-auto sm:gap-2 sm:px-3.5"
             @click="emit('openFilters')"
           >
-            <template #icon-left>
-              <SlidersHorizontal :size="16" :stroke-width="2" />
-            </template>
+            <SlidersHorizontal :size="17" :stroke-width="2" class="shrink-0" aria-hidden="true" />
             <span class="hidden sm:inline">Фильтры</span>
             <span
               v-if="activeFiltersCount > 0"
-              class="bg-accent text-text-on-accent inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-semibold"
+              class="bg-accent text-text-on-accent absolute -top-1 -right-1 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-1 text-[10px] font-semibold sm:static sm:h-5 sm:min-w-5 sm:px-1.5 sm:text-[11px]"
             >
               {{ activeFiltersCount }}
             </span>
-          </BaseButton>
+          </button>
         </div>
       </div>
     </div>
 
-    <div class="flex items-center justify-between gap-3">
-      <div
-        v-if="availableFilters.models.length > 0"
-        class="-mx-4 flex flex-1 [scrollbar-width:none] items-center gap-2 overflow-x-auto px-4 pb-0.5 sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden"
-        role="group"
-        aria-label="Фильтр по модели"
-      >
-        <button
-          type="button"
-          class="inline-flex h-8 shrink-0 cursor-pointer items-center rounded-full border px-3 text-[13px] font-medium transition-colors"
-          :class="
-            selectedModel === null
-              ? 'bg-accent border-accent text-text-on-accent'
-              : 'bg-surface text-text-primary border-border hover:bg-surface-hover'
-          "
-          @click="emit('toggleModel', null)"
+    <div class="border-border flex items-center justify-between gap-3 border-t pt-2.5">
+      <div v-if="availableFilters.models.length > 0" class="relative min-w-0 flex-1">
+        <div
+          ref="modelsScrollerRef"
+          class="flex [scrollbar-width:none] items-center gap-1.5 overflow-x-auto [&::-webkit-scrollbar]:hidden"
+          role="group"
+          aria-label="Фильтр по модели"
+          @scroll.passive="updateScrollFade"
         >
-          Все модели ({{ availableFilters.total_lots_count }})
-        </button>
+          <button
+            type="button"
+            class="inline-flex h-8 shrink-0 cursor-pointer items-center rounded-full px-3 text-[13px] font-medium transition-colors"
+            :class="
+              selectedModel === null
+                ? 'bg-accent text-text-on-accent'
+                : 'bg-surface-inset text-text-primary hover:bg-border/70'
+            "
+            @click="emit('toggleModel', null)"
+          >
+            Все модели ({{ modelsTotalCount }})
+          </button>
 
-        <button
-          v-for="modelItem in availableFilters.models"
-          :key="modelItem.value"
-          type="button"
-          class="inline-flex h-8 shrink-0 cursor-pointer items-center rounded-full border px-3 text-[13px] font-medium transition-colors"
-          :class="
-            selectedModel === modelItem.value
-              ? 'bg-accent border-accent text-text-on-accent'
-              : 'bg-surface text-text-primary border-border hover:bg-surface-hover'
-          "
-          @click="emit('toggleModel', modelItem.value)"
-        >
-          {{ modelItem.value }} ({{ modelItem.count }})
-        </button>
+          <button
+            v-for="modelItem in availableFilters.models"
+            :key="modelItem.value"
+            type="button"
+            class="inline-flex h-8 shrink-0 cursor-pointer items-center rounded-full px-3 text-[13px] font-medium transition-colors"
+            :class="
+              selectedModel === modelItem.value
+                ? 'bg-accent text-text-on-accent'
+                : 'bg-surface-inset text-text-primary hover:bg-border/70'
+            "
+            @click="emit('toggleModel', modelItem.value)"
+          >
+            {{ modelItem.value }} ({{ modelItem.count }})
+          </button>
+        </div>
+
+        <span
+          aria-hidden="true"
+          class="from-surface via-surface/85 pointer-events-none absolute inset-y-0 left-0 w-7 bg-gradient-to-r to-transparent transition-opacity duration-150 sm:w-8"
+          :class="canScrollLeft ? 'opacity-100' : 'opacity-0'"
+        />
+        <span
+          aria-hidden="true"
+          class="from-surface via-surface/85 pointer-events-none absolute inset-y-0 right-0 w-7 bg-gradient-to-l to-transparent transition-opacity duration-150 sm:w-8"
+          :class="canScrollRight ? 'opacity-100' : 'opacity-0'"
+        />
       </div>
 
-      <div v-if="hasLoadedOnce" class="hidden shrink-0 items-center gap-2 lg:flex">
+      <div v-if="hasLoadedOnce" class="hidden shrink-0 items-center gap-1.5 lg:flex">
         <button
           v-if="hasAnyActiveFilter"
           type="button"
@@ -254,11 +320,10 @@ function handleResetClick() {
         </button>
 
         <BaseButton
-          variant="ghost"
+          variant="secondary"
           size="sm"
           pill
           aria-label="Открыть фильтры и сортировку"
-          class="bg-surface"
           @click="emit('openFilters')"
         >
           <template #icon-left>

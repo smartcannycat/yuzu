@@ -76,11 +76,11 @@ const specsLine = computed(() => {
     variant="surface"
     padding="none"
     interactive
-    class="group focus-within:ring-accent/40 h-full overflow-hidden focus-within:ring-2"
+    class="group h-full overflow-hidden"
   >
     <button
       type="button"
-      class="flex h-full w-full cursor-pointer flex-col justify-between text-left focus:outline-none"
+      class="flex h-full w-full cursor-pointer flex-col justify-between text-left outline-none focus:outline-none focus-visible:outline-none"
       @click="emit('select', lot)"
     >
       <div class="flex items-start gap-3.5 p-4 sm:gap-4 sm:p-4">

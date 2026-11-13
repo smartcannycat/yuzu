@@ -46,6 +46,10 @@ describe('useLotsStore', () => {
     expect(store.items).toHaveLength(1)
     expect(store.items[0]?.model).toBe('Corolla Touring')
 
+    const preview = await store.fetchFilterPreview({ make: 'Toyota' }, client)
+    expect(preview?.counts_by_verdict).toEqual({ green: 1, yellow: 0, red: 1 })
+    expect(store.items).toHaveLength(1)
+
     store.resetFilters()
     expect(store.activeFiltersCount).toBe(0)
     expect(store.hasAnyActiveFilter).toBe(false)

@@ -2,7 +2,7 @@
 import { ChevronDown, Clock, Loader2 } from '@lucide/vue'
 import { computed, ref, useId } from 'vue'
 
-import { BaseBadge, BaseCard, InsetListGroup, InsetListItem } from '@/components/ui'
+import { BaseBadge, InsetListGroup, InsetListItem } from '@/components/ui'
 import type { InProgressItemPreview, InProgressSummary, ItemProcessingStatus } from '@/types/api'
 import { formatCarCountRu, formatTaskStepRu } from '@/utils/formatters'
 
@@ -44,30 +44,28 @@ function toggleExpanded() {
 </script>
 
 <template>
-  <BaseCard
+  <section
     v-if="summary.total_processing_lots > 0"
-    as="section"
-    variant="surface"
-    padding="none"
-    class="overflow-hidden"
+    aria-label="Автомобили в обработке"
+    class="border-border bg-surface shadow-card overflow-hidden rounded-md border"
   >
     <button
       type="button"
-      class="hover:bg-surface-hover flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors"
-      :class="collapsible ? 'cursor-pointer' : 'cursor-default'"
+      class="flex w-full items-center justify-between gap-3 px-3.5 py-2.5 text-left transition-colors"
+      :class="collapsible ? 'hover:bg-surface-hover/60 cursor-pointer' : 'cursor-default'"
       :aria-expanded="expanded"
       :aria-controls="contentId"
       @click="toggleExpanded"
     >
       <div class="flex min-w-0 items-center gap-2.5">
         <span
-          class="bg-warning-bg text-warning flex h-8 w-8 shrink-0 items-center justify-center rounded-sm"
+          class="bg-warning-bg text-warning flex h-7 w-7 shrink-0 items-center justify-center rounded-sm"
         >
-          <Loader2 :size="16" :stroke-width="2" class="animate-spin" />
+          <Loader2 :size="15" :stroke-width="2" class="animate-spin" />
         </span>
 
         <div class="min-w-0">
-          <div class="text-text-primary text-[14px] leading-snug font-semibold">
+          <div class="text-text-primary text-[13px] leading-snug font-semibold">
             В обработке {{ formatCarCountRu(summary.total_processing_lots) }}
           </div>
           <div class="text-text-secondary truncate text-[12px] leading-snug">
@@ -78,7 +76,7 @@ function toggleExpanded() {
 
       <ChevronDown
         v-if="collapsible"
-        :size="18"
+        :size="17"
         class="text-text-tertiary shrink-0 transition-transform duration-200"
         :class="expanded ? 'rotate-180' : ''"
       />
@@ -112,5 +110,5 @@ function toggleExpanded() {
         </InsetListItem>
       </InsetListGroup>
     </div>
-  </BaseCard>
+  </section>
 </template>
