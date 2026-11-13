@@ -1,10 +1,10 @@
 """Infrastructure adapters for image loading, slicing, caching, and Gemini Vision."""
 
 from app.infrastructure.gemini_schemas import (
+    SYSTEM_PROMPT,
     AuctionExtractionSchema,
     DefectExtractionSchema,
     ExtractedRiskFlagsSchema,
-    SYSTEM_PROMPT,
     to_raw_extraction_entity,
 )
 from app.infrastructure.gemini_vision_client import AsyncGeminiVisionClient
@@ -18,6 +18,7 @@ from app.infrastructure.result_cache import (
 )
 
 __all__ = [
+    "SYSTEM_PROMPT",
     "AsyncGeminiVisionClient",
     "AsyncImageLoader",
     "AuctionExtractionSchema",
@@ -26,7 +27,6 @@ __all__ = [
     "GeminiKeyPool",
     "PillowImageCropper",
     "ResultCache",
-    "SYSTEM_PROMPT",
     "deserialize_parser_result",
     "serialize_parser_result",
     "to_raw_extraction_entity",

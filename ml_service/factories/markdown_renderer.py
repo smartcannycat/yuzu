@@ -54,7 +54,7 @@ def render_markdown(sheet: NormalizedSheetEntity) -> str:
         conf_label = ""
     lines.append(f"- **Канонический Frame ID:** `{sheet.frame_id}`{conf_label}")
 
-    reg_display = sheet.first_reg_date_str or sheet.first_reg_date or "[не указано]"
+    reg_display = sheet.first_reg_date_str or "[не указано]"
     lines.append(f"- **Дата первой регистрации:** {reg_display}")
     if sheet.color_ru or sheet.paint_code:
         color_parts = ", ".join(p for p in (sheet.color_ru, sheet.paint_code) if p)

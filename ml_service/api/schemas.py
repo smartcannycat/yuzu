@@ -1,8 +1,9 @@
 """Pydantic v2 HTTP schemas and explicit domain-to-API converters."""
 
 from typing import Literal
+from uuid import UUID
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 from app.domains.entities import (
     BatchItemStatusEntity,
@@ -17,22 +18,30 @@ from app.domains.enums import (
     BatchItemState,
     BatchStatus,
     BodyPanel,
+    DefectCode,
     DriveType,
     FrameIdConfidence,
     FuelType,
     OdometerStatus,
     ParseStatus,
+    TaskStep,
 )
 
 
-class ParseUrlRequest(BaseModel):
+class StrictBaseModel(BaseModel):
+    """Strict API model forbidding unexpected fields per contract rules."""
+
+    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+
+
+class ParseUrlRequest(StrictBaseModel):
     """Request body for parsing an auction sheet image by remote URL."""
 
     url: HttpUrl
     force_refresh: bool = False
 
 
-class HealthResponse(BaseModel):
+class HealthResponse(StrictBaseModel):
     """Service liveness and configuration summary."""
 
     status: Literal["ok"] = "ok"
@@ -41,17 +50,18 @@ class HealthResponse(BaseModel):
     reference_year: int
 
 
-class DefectResponse(BaseModel):
+class DefectResponse(StrictBaseModel):
     """Normalized body panel defect entry."""
 
     panel_id: BodyPanel
     panel_ru: str
-    defect_types: list[str]
+    defect_types: list[DefectCode]
     severity: int | None = None
+    description_ru: str
     raw_code: str
 
 
-class RiskFlagsResponse(BaseModel):
+class RiskFlagsResponse(StrictBaseModel):
     """Risk and stop-factor flags derived from sheet inspection notes and defects."""
 
     is_flooded: bool
@@ -69,12 +79,13 @@ class RiskFlagsResponse(BaseModel):
     repaired_grade_r_ra: bool
 
 
-class NormalizedSheetResponse(BaseModel):
+class NormalizedSheetResponse(StrictBaseModel):
     """Fully normalized auction sheet payload matching canonical Domain 1 schema."""
 
     lot_number: str
     auction_house: str | None = None
     auction_strictness_index: float | None = None
+    auction_branch: str | None = None
     make: str
     model: str
     trim: str | None = None
@@ -84,7 +95,6 @@ class NormalizedSheetResponse(BaseModel):
     frame_id_confidence: FrameIdConfidence
     first_reg_year: int | None = None
     first_reg_month: int | None = None
-    first_reg_date: str | None = None
     first_reg_date_str: str | None = None
     is_pass_corridor_3_5: bool | None = None
     engine_cc: int | None = None
@@ -93,6 +103,8 @@ class NormalizedSheetResponse(BaseModel):
     transmission: str
     drive_type: DriveType | None = None
     fuel_type: FuelType | None = None
+    right_hand_drive: bool | None = None
+    name_change_deadline: str | None = None
     color_ru: str | None = None
     paint_code: str | None = None
     overall_grade: str
@@ -104,12 +116,22 @@ class NormalizedSheetResponse(BaseModel):
     equipment_ru: list[str] = Field(default_factory=list)
     defects: list[DefectResponse] = Field(default_factory=list)
     risk_flags: RiskFlagsResponse
+    inspector_notes_raw: list[str] = Field(default_factory=list)
     inspector_notes_ru: list[str] = Field(default_factory=list)
     seller_comments_ru: list[str] = Field(default_factory=list)
     extra_ru: list[str] = Field(default_factory=list)
+    ocr_warnings: list[str] = Field(default_factory=list)
 
 
-class ParserMetaResponse(BaseModel):
+class ModelAttemptResponse(StrictBaseModel):
+    """Telemetry record for a single Gemini model invocation attempt."""
+
+    model: str
+    status: str
+    ms: int
+
+
+class ParserMetaResponse(StrictBaseModel):
     """Operational metadata about a sheet parsing execution."""
 
     processing_ms: int
@@ -117,9 +139,14 @@ class ParserMetaResponse(BaseModel):
     cached: bool
     model_used: str
     sha256: str
+    gatekeeper_model: str | None = None
+    gatekeeper_ms: int = 0
+    header_ms: int | None = None
+    extract_ms: int = 0
+    attempts: list[ModelAttemptResponse] = Field(default_factory=list)
 
 
-class ParserResponse(BaseModel):
+class ParserResponse(StrictBaseModel):
     """Unified response for single-sheet parsing endpoints."""
 
     status: ParseStatus
@@ -131,20 +158,24 @@ class ParserResponse(BaseModel):
     meta: ParserMetaResponse
 
 
-class BatchCreateResponse(BaseModel):
+class BatchCreateResponse(StrictBaseModel):
     """Immediate 202 Accepted response upon creating or extending a batch job."""
 
-    batch_id: str
-    total_count: int
+    batch_id: UUID
+    total_items: int
     status: BatchStatus
     created_at: str
+    poll_interval_ms: int = 1500
 
 
-class SheetSummaryProjection(BaseModel):
+class SheetSummaryProjection(StrictBaseModel):
     """Lightweight vehicle summary for batch polling UI cards."""
 
+    lot_number: str
     make: str
     model: str
+    year: int | None = None
+    engine_cc: int | None = None
     model_code: str
     frame_id: str
     overall_grade: str
@@ -154,31 +185,51 @@ class SheetSummaryProjection(BaseModel):
     is_pass_corridor_3_5: bool | None = None
 
 
-class BatchItemStatusResponse(BaseModel):
+class BatchItemStatusResponse(StrictBaseModel):
     """Per-file progress and parsed result inside a batch job."""
 
-    lot_id: str
+    lot_id: UUID | None = None
     file_index: int
     original_filename: str
     status: BatchItemState
-    current_step: str
-    progress_pct: int
+    current_step: TaskStep
+    progress_pct: int = Field(ge=0, le=100)
+    preview_title: str | None = None
     error_message: str | None = None
     summary: SheetSummaryProjection | None = None
     result: ParserResponse | None = None
 
 
-class BatchProgressResponse(BaseModel):
+class MascotResponse(StrictBaseModel):
+    """UI mascot status descriptor for batch progress display."""
+
+    mood: Literal["thinking", "happy", "confused", "warning"]
+    phrase_ru: str
+    badge_text: str
+
+
+class BatchProgressResponse(StrictBaseModel):
     """Aggregated status and per-item progress for batch polling."""
 
-    batch_id: str
+    batch_id: UUID
     created_at: str
     status: BatchStatus
-    total_count: int
+    total_items: int
     processed_count: int
     ready_count: int
     failed_count: int
+    mascot: MascotResponse
     items: list[BatchItemStatusResponse]
+
+
+class ProblemDetailsResponse(StrictBaseModel):
+    """RFC 7807 Problem Details error response schema."""
+
+    type: str = "about:blank"
+    title: str
+    status: int
+    detail: str
+    instance: str | None = None
 
 
 def _to_defect_response(defect: NormalizedDefectEntity) -> DefectResponse:
@@ -187,6 +238,7 @@ def _to_defect_response(defect: NormalizedDefectEntity) -> DefectResponse:
         panel_ru=defect.panel_ru,
         defect_types=list(defect.defect_types),
         severity=defect.severity,
+        description_ru=defect.description_ru,
         raw_code=defect.raw_code,
     )
 
@@ -214,6 +266,7 @@ def _to_sheet_response(sheet: NormalizedSheetEntity) -> NormalizedSheetResponse:
         lot_number=sheet.lot_number,
         auction_house=sheet.auction_house,
         auction_strictness_index=sheet.auction_strictness_index,
+        auction_branch=sheet.auction_branch,
         make=sheet.make,
         model=sheet.model,
         trim=sheet.trim,
@@ -223,7 +276,6 @@ def _to_sheet_response(sheet: NormalizedSheetEntity) -> NormalizedSheetResponse:
         frame_id_confidence=sheet.frame_id_confidence,
         first_reg_year=sheet.first_reg_year,
         first_reg_month=sheet.first_reg_month,
-        first_reg_date=sheet.first_reg_date,
         first_reg_date_str=sheet.first_reg_date_str,
         is_pass_corridor_3_5=sheet.is_pass_corridor_3_5,
         engine_cc=sheet.engine_cc,
@@ -232,6 +284,8 @@ def _to_sheet_response(sheet: NormalizedSheetEntity) -> NormalizedSheetResponse:
         transmission=sheet.transmission,
         drive_type=sheet.drive_type,
         fuel_type=sheet.fuel_type,
+        right_hand_drive=sheet.right_hand_drive,
+        name_change_deadline=sheet.name_change_deadline,
         color_ru=sheet.color_ru,
         paint_code=sheet.paint_code,
         overall_grade=sheet.overall_grade,
@@ -243,9 +297,11 @@ def _to_sheet_response(sheet: NormalizedSheetEntity) -> NormalizedSheetResponse:
         equipment_ru=list(sheet.equipment_ru),
         defects=[_to_defect_response(item) for item in sheet.defects],
         risk_flags=_to_risk_flags_response(sheet.risk_flags),
+        inspector_notes_raw=list(sheet.inspector_notes_raw),
         inspector_notes_ru=list(sheet.inspector_notes_ru),
         seller_comments_ru=list(sheet.seller_comments_ru),
         extra_ru=list(sheet.extra_ru),
+        ocr_warnings=list(sheet.ocr_warnings),
     )
 
 
@@ -256,6 +312,14 @@ def _to_meta_response(meta: ParserMetaEntity) -> ParserMetaResponse:
         cached=meta.cached,
         model_used=meta.model_used,
         sha256=meta.sha256,
+        gatekeeper_model=meta.gatekeeper_model,
+        gatekeeper_ms=meta.gatekeeper_ms,
+        header_ms=meta.header_ms,
+        extract_ms=meta.extract_ms,
+        attempts=[
+            ModelAttemptResponse(model=att.model, status=att.status, ms=att.ms)
+            for att in meta.attempts
+        ],
     )
 
 
@@ -276,8 +340,11 @@ def _to_summary_projection(sheet: NormalizedSheetEntity | None) -> SheetSummaryP
     if sheet is None:
         return None
     return SheetSummaryProjection(
+        lot_number=sheet.lot_number,
         make=sheet.make,
         model=sheet.model,
+        year=sheet.first_reg_year,
+        engine_cc=sheet.engine_cc,
         model_code=sheet.model_code,
         frame_id=sheet.frame_id,
         overall_grade=sheet.overall_grade,
@@ -292,37 +359,66 @@ def _to_batch_item_response(item: BatchItemStatusEntity) -> BatchItemStatusRespo
     summary = _to_summary_projection(item.result.sheet) if item.result is not None else None
     result_resp = to_parser_response(item.result) if item.result is not None else None
     return BatchItemStatusResponse(
-        lot_id=item.lot_id,
+        lot_id=UUID(item.lot_id) if item.lot_id else None,
         file_index=item.file_index,
         original_filename=item.original_filename,
         status=item.status,
         current_step=item.current_step,
         progress_pct=item.progress_pct,
+        preview_title=item.preview_title,
         error_message=item.error_message,
         summary=summary,
         result=result_resp,
     )
 
 
-def to_batch_create_response(batch: BatchJobEntity) -> BatchCreateResponse:
+def _build_mascot(batch: BatchJobEntity) -> MascotResponse:
+    if batch.status in {BatchStatus.QUEUED, BatchStatus.PROCESSING}:
+        return MascotResponse(
+            mood="thinking",
+            phrase_ru=f"Распознаем лоты… {batch.processed_count}/{batch.total_items}",
+            badge_text=f"{batch.processed_count}/{batch.total_items}",
+        )
+    if batch.rejected_count > 0:
+        return MascotResponse(
+            mood="warning",
+            phrase_ru="Обнаружены файлы, не являющиеся аукционными листами",
+            badge_text=f"Отклонено: {batch.rejected_count}",
+        )
+    if batch.failed_count > 0:
+        return MascotResponse(
+            mood="confused",
+            phrase_ru=f"Готово {batch.ready_count} из {batch.total_items}, ошибок: {batch.failed_count}",
+            badge_text=f"{batch.ready_count}/{batch.total_items}",
+        )
+    return MascotResponse(
+        mood="happy",
+        phrase_ru=f"Все лоты распознаны ({batch.ready_count}/{batch.total_items})",
+        badge_text=f"{batch.ready_count}/{batch.total_items}",
+    )
+
+
+def to_batch_create_response(batch: BatchJobEntity, poll_interval_ms: int = 1500) -> BatchCreateResponse:
     """Convert domain BatchJobEntity to compact 202 creation response."""
     return BatchCreateResponse(
-        batch_id=batch.batch_id,
-        total_count=batch.total_count,
+        batch_id=UUID(batch.batch_id),
+        total_items=batch.total_items,
         status=batch.status,
         created_at=batch.created_at,
+        poll_interval_ms=poll_interval_ms,
     )
 
 
 def to_batch_progress_response(batch: BatchJobEntity) -> BatchProgressResponse:
     """Convert domain BatchJobEntity to detailed polling response."""
     return BatchProgressResponse(
-        batch_id=batch.batch_id,
+        batch_id=UUID(batch.batch_id),
         created_at=batch.created_at,
         status=batch.status,
-        total_count=batch.total_count,
+        total_items=batch.total_items,
         processed_count=batch.processed_count,
         ready_count=batch.ready_count,
         failed_count=batch.failed_count,
+        mascot=_build_mascot(batch),
         items=[_to_batch_item_response(item) for item in batch.items],
     )

@@ -1,16 +1,18 @@
 import asyncio
 import base64
-from dataclasses import replace
 import logging
 import time
+from dataclasses import replace
 
+import httpx
 from google import genai
 from google.genai import types
 from google.genai.errors import ClientError, ServerError
-import httpx
 
 from app.domains.entities import (
+    FastHeaderPreviewEntity,
     GatekeeperDecisionEntity,
+    ModelAttemptEntity,
     RawExtractionEntity,
     SlicedSheetEntity,
 )
@@ -18,6 +20,7 @@ from app.domains.enums import LayoutComplexity
 from app.infrastructure.gemini_schemas import (
     SYSTEM_PROMPT,
     AuctionExtractionSchema,
+    FastHeaderPreviewSchema,
     to_raw_extraction_entity,
 )
 from app.infrastructure.key_pool import GeminiKeyPool
@@ -105,6 +108,9 @@ class AsyncGeminiVisionClient:
         model_cooldown_seconds: float = 120.0,
         key_cooldown_seconds: float = 30.0,
         thinking_level: str = "LOW",
+        request_deadline_seconds: float = 45.0,
+        hedge_delay_seconds: float = 8.0,
+        fast_header_timeout_seconds: float = 1.2,
     ) -> None:
         self.key_pool = key_pool
         self.decision_model = decision_model
@@ -116,6 +122,9 @@ class AsyncGeminiVisionClient:
         self.model_cooldown_seconds = model_cooldown_seconds
         self.key_cooldown_seconds = key_cooldown_seconds
         self.thinking_level = thinking_level
+        self.request_deadline_seconds = request_deadline_seconds
+        self.hedge_delay_seconds = hedge_delay_seconds
+        self.fast_header_timeout_seconds = fast_header_timeout_seconds
 
         chain = [flash_model, *(fallback_models or [])]
         seen: set[str] = set()
@@ -174,9 +183,14 @@ class AsyncGeminiVisionClient:
                 is_auction_sheet=True,
                 is_readable=True,
                 complexity=LayoutComplexity.COMPLEX_OR_HANDWRITTEN,
+                model_used=self.decision_model,
+                duration_ms=0,
+                warning=None,
             )
 
+        t0 = time.perf_counter()
         resolved_mime = mime_type or _detect_image_mime_type(full_png)
+        api_key = ""
         try:
             async with self.key_pool.semaphore:
                 api_key = self.key_pool.next_key()
@@ -230,18 +244,23 @@ class AsyncGeminiVisionClient:
                 is_sheet = response.answers["is_auction_sheet"].noul >= _IS_SHEET_THRESHOLD
                 is_readable = response.answers["is_readable"].noul >= _IS_READABLE_THRESHOLD
                 mode = response.answers["layout_complexity"].choice
-        except (ServerError, ClientError, TimeoutError, httpx.HTTPError) as exc:
-            if isinstance(exc, ClientError) and getattr(exc, "code", None) == 429:
+        except (ServerError, ClientError, TimeoutError, httpx.HTTPError, RuntimeError, AttributeError) as exc:
+            if api_key and isinstance(exc, ClientError) and getattr(exc, "code", None) == 429:
                 self.key_pool.mark_key_rate_limited(api_key, self.key_cooldown_seconds)
+            elapsed_ms = int((time.perf_counter() - t0) * 1000)
             if self.gatekeeper_fail_open:
-                logger.warning("Gatekeeper %s failed (%s); falling back to open mode.", self.decision_model, exc)
+                logger.warning("Gatekeeper %s unavailable (%s); falling back to open mode.", self.decision_model, exc)
                 return GatekeeperDecisionEntity(
                     is_auction_sheet=True,
                     is_readable=True,
                     complexity=LayoutComplexity.COMPLEX_OR_HANDWRITTEN,
+                    model_used=self.decision_model,
+                    duration_ms=elapsed_ms,
+                    warning=f"gatekeeper_unavailable:{exc.__class__.__name__}",
                 )
             raise
 
+        elapsed_ms = int((time.perf_counter() - t0) * 1000)
         complexity = (
             LayoutComplexity.CLEAN_DIGITAL
             if mode == LayoutComplexity.CLEAN_DIGITAL.value
@@ -251,7 +270,53 @@ class AsyncGeminiVisionClient:
             is_auction_sheet=is_sheet,
             is_readable=is_readable,
             complexity=complexity,
+            model_used=self.decision_model,
+            duration_ms=elapsed_ms,
+            warning=None,
         )
+
+    async def extract_fast_header(self, sliced: SlicedSheetEntity) -> FastHeaderPreviewEntity | None:
+        """Run non-blocking low-resolution header OCR with strict timeout (<= 1.2s by default)."""
+        t0 = time.perf_counter()
+        target_bytes = sliced.crops_png.get("top_left") or sliced.full_png
+        mime_type = sliced.mime_type or _detect_image_mime_type(target_bytes)
+        candidates = self._ordered_candidate_models()
+        model_name = candidates[0] if candidates else self.flash_model
+
+        async def _call_header() -> FastHeaderPreviewEntity:
+            async with self.key_pool.semaphore:
+                api_key = self.key_pool.next_key()
+                client = self._get_client(api_key)
+                contents = [
+                    "Быстро извлеки из шапки аукционного листа марку на латинице (make_en), модель на латинице (model_en) и номер лота (lot_number).",
+                    _image_part(target_bytes, types.PartMediaResolutionLevel.MEDIA_RESOLUTION_LOW, mime_type),
+                ]
+                config = types.GenerateContentConfig(
+                    thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL),
+                    response_mime_type="application/json",
+                    response_json_schema=FastHeaderPreviewSchema.model_json_schema(),
+                )
+                response = await asyncio.to_thread(
+                    client.models.generate_content,
+                    model=model_name,
+                    contents=contents,
+                    config=config,
+                )
+                if not response.text:
+                    raise ValueError("Empty fast header response.")
+                parsed = FastHeaderPreviewSchema.model_validate_json(response.text)
+                return FastHeaderPreviewEntity(
+                    make=parsed.make_en,
+                    model=parsed.model_en,
+                    lot_number=parsed.lot_number,
+                    duration_ms=int((time.perf_counter() - t0) * 1000),
+                )
+
+        try:
+            return await asyncio.wait_for(_call_header(), timeout=self.fast_header_timeout_seconds)
+        except (TimeoutError, ClientError, ServerError, RuntimeError, ValueError, OSError, httpx.HTTPError) as exc:
+            logger.debug("Fast header preview skipped (%s).", exc)
+            return None
 
     async def _call_model_generate(
         self,
@@ -281,85 +346,235 @@ class AsyncGeminiVisionClient:
         entity = to_raw_extraction_entity(parsed)
         return replace(entity, model_used=model_name)
 
+    async def _try_single_model(
+        self,
+        candidate_model: str,
+        contents: list[str | types.Part],
+        configured_level: types.ThinkingLevel,
+        attempts: list[ModelAttemptEntity],
+    ) -> RawExtractionEntity:
+        """Execute extraction on a single candidate model with key rotation and cooldown handling."""
+        active_level = configured_level
+        max_key_tries = max(1, min(self.key_pool.key_count, 3)) if self.key_pool.key_count > 1 else 1
+        last_exc: Exception | None = None
+
+        for key_attempt in range(max_key_tries):
+            t0 = time.perf_counter()
+            async with self.key_pool.semaphore:
+                api_key = self.key_pool.next_key()
+                try:
+                    entity = await self._call_model_generate(
+                        model_name=candidate_model,
+                        contents=contents,
+                        thinking_level=active_level,
+                        api_key=api_key,
+                    )
+                    attempts.append(
+                        ModelAttemptEntity(
+                            model=candidate_model,
+                            status="ok",
+                            ms=int((time.perf_counter() - t0) * 1000),
+                        )
+                    )
+                    return entity
+                except ClientError as exc:
+                    last_exc = exc
+                    status_code = getattr(exc, "code", None)
+                    if (
+                        status_code == 400
+                        and "Thinking level" in str(exc)
+                        and active_level != types.ThinkingLevel.LOW
+                    ):
+                        logger.warning(
+                            "Model %s rejected %s; downgrading ThinkingLevel to LOW.",
+                            candidate_model,
+                            active_level,
+                        )
+                        active_level = types.ThinkingLevel.LOW
+                        try:
+                            entity = await self._call_model_generate(
+                                model_name=candidate_model,
+                                contents=contents,
+                                thinking_level=active_level,
+                                api_key=api_key,
+                            )
+                            attempts.append(
+                                ModelAttemptEntity(
+                                    model=candidate_model,
+                                    status="ok",
+                                    ms=int((time.perf_counter() - t0) * 1000),
+                                )
+                            )
+                            return entity
+                        except (ServerError, ClientError, TimeoutError, httpx.HTTPError) as retry_exc:
+                            exc = retry_exc
+                            last_exc = retry_exc
+                            status_code = getattr(retry_exc, "code", None)
+
+                    attempt_ms = int((time.perf_counter() - t0) * 1000)
+                    if status_code == 429:
+                        attempts.append(ModelAttemptEntity(model=candidate_model, status="error_429", ms=attempt_ms))
+                        self.key_pool.mark_key_rate_limited(api_key, self.key_cooldown_seconds)
+                        logger.warning(
+                            "Model %s rate-limited key (429), attempt %s/%s.",
+                            candidate_model,
+                            key_attempt + 1,
+                            max_key_tries,
+                        )
+                        if key_attempt + 1 < max_key_tries:
+                            continue
+                        self._mark_model_cooldown(candidate_model, self.model_cooldown_seconds)
+                        break
+
+                    if status_code in (400, 404):
+                        attempts.append(ModelAttemptEntity(model=candidate_model, status=f"error_{status_code}", ms=attempt_ms))
+                        logger.warning("Model %s rejected request (%s); putting on cooldown.", candidate_model, exc)
+                        self._mark_model_cooldown(candidate_model, 300.0)
+                        break
+
+                    attempts.append(ModelAttemptEntity(model=candidate_model, status=f"error_{status_code or 'client'}", ms=attempt_ms))
+                    raise
+                except (ServerError, TimeoutError, httpx.TimeoutException, httpx.TransportError) as exc:
+                    last_exc = exc
+                    status_code = getattr(exc, "code", None)
+                    attempt_ms = int((time.perf_counter() - t0) * 1000)
+                    attempts.append(
+                        ModelAttemptEntity(
+                            model=candidate_model,
+                            status=f"error_{status_code}" if status_code else f"error_{exc.__class__.__name__}",
+                            ms=attempt_ms,
+                        )
+                    )
+                    logger.warning(
+                        "Model %s failed transiently (%s); switching to next fallback model.",
+                        candidate_model,
+                        exc,
+                    )
+                    self._mark_model_cooldown(candidate_model, self.model_cooldown_seconds)
+                    break
+
+        assert last_exc is not None
+        raise last_exc
+
     async def extract_sheet(
         self,
         sliced: SlicedSheetEntity,
         complexity: LayoutComplexity,
     ) -> RawExtractionEntity:
-        """Extract structured auction sheet data via Gemini Vision with automatic model failover."""
+        """Extract structured auction sheet data via Gemini Vision with deadline, hedging, and failover."""
         contents = _build_extraction_contents(sliced, complexity)
         configured_level = _resolve_thinking_level(self.thinking_level)
         candidates = self._ordered_candidate_models()
+        extract_t0 = time.perf_counter()
+        deadline = time.monotonic() + self.request_deadline_seconds
+        attempts: list[ModelAttemptEntity] = []
         last_error: Exception | None = None
 
-        for candidate_model in candidates:
-            active_level = configured_level
-            max_key_tries = max(1, min(self.key_pool.key_count, 3)) if self.key_pool.key_count > 1 else 1
-            for key_attempt in range(max_key_tries):
-                async with self.key_pool.semaphore:
-                    api_key = self.key_pool.next_key()
+        index = 0
+        while index < len(candidates):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                last_error = TimeoutError(f"Extraction deadline ({self.request_deadline_seconds}s) exceeded.")
+                break
+
+            primary_model = candidates[index]
+            # Hedge primary with next candidate model when hedge_delay_seconds elapses before completion.
+            if index + 1 < len(candidates) and remaining > self.hedge_delay_seconds:
+                hedge_model = candidates[index + 1]
+                primary_task = asyncio.create_task(
+                    self._try_single_model(primary_model, contents, configured_level, attempts)
+                )
+                done, _pending = await asyncio.wait({primary_task}, timeout=self.hedge_delay_seconds)
+                if primary_task in done:
                     try:
-                        return await self._call_model_generate(
-                            model_name=candidate_model,
-                            contents=contents,
-                            thinking_level=active_level,
-                            api_key=api_key,
+                        entity = primary_task.result()
+                        return replace(
+                            entity,
+                            extract_ms=int((time.perf_counter() - extract_t0) * 1000),
+                            attempts=list(attempts),
                         )
-                    except ClientError as exc:
+                    except (ClientError, ServerError, TimeoutError, httpx.HTTPError) as exc:
                         last_error = exc
-                        status_code = getattr(exc, "code", None)
-                        if (
-                            status_code == 400
-                            and "Thinking level" in str(exc)
-                            and active_level != types.ThinkingLevel.LOW
-                        ):
-                            logger.warning(
-                                "Model %s rejected %s; downgrading ThinkingLevel to LOW.",
-                                candidate_model,
-                                active_level,
-                            )
-                            active_level = types.ThinkingLevel.LOW
-                            try:
-                                return await self._call_model_generate(
-                                    model_name=candidate_model,
-                                    contents=contents,
-                                    thinking_level=active_level,
-                                    api_key=api_key,
+                        index += 1
+                        continue
+
+                hedge_task = asyncio.create_task(
+                    self._try_single_model(hedge_model, contents, configured_level, attempts)
+                )
+                active: set[asyncio.Task[RawExtractionEntity]] = {primary_task, hedge_task}
+                try:
+                    while active:
+                        rem = deadline - time.monotonic()
+                        if rem <= 0:
+                            last_error = TimeoutError(f"Extraction deadline ({self.request_deadline_seconds}s) exceeded.")
+                            break
+                        finished, active = await asyncio.wait(
+                            active,
+                            timeout=rem,
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        if not finished:
+                            last_error = TimeoutError(f"Extraction deadline ({self.request_deadline_seconds}s) exceeded.")
+                            break
+                        for task in finished:
+                            exc = task.exception()
+                            if exc is None:
+                                entity = task.result()
+                                for loser in active:
+                                    loser.cancel()
+                                if active:
+                                    await asyncio.gather(*active, return_exceptions=True)
+                                    attempts.append(
+                                        ModelAttemptEntity(
+                                            model=hedge_model if task is primary_task else primary_model,
+                                            status="hedged_cancelled",
+                                            ms=int((time.perf_counter() - extract_t0) * 1000),
+                                        )
+                                    )
+                                return replace(
+                                    entity,
+                                    extract_ms=int((time.perf_counter() - extract_t0) * 1000),
+                                    attempts=list(attempts),
                                 )
-                            except (ServerError, ClientError, TimeoutError, httpx.HTTPError) as retry_exc:
-                                exc = retry_exc
-                                last_error = retry_exc
-                                status_code = getattr(retry_exc, "code", None)
+                            if isinstance(exc, ClientError) and getattr(exc, "code", None) not in (400, 404, 429):
+                                for loser in active:
+                                    loser.cancel()
+                                if active:
+                                    await asyncio.gather(*active, return_exceptions=True)
+                                raise exc
+                            last_error = exc if isinstance(exc, Exception) else RuntimeError(str(exc))
+                finally:
+                    for leftover in active:
+                        leftover.cancel()
+                    if active:
+                        await asyncio.gather(*active, return_exceptions=True)
 
-                        if status_code == 429:
-                            self.key_pool.mark_key_rate_limited(api_key, self.key_cooldown_seconds)
-                            logger.warning(
-                                "Model %s rate-limited key (429), attempt %s/%s.",
-                                candidate_model,
-                                key_attempt + 1,
-                                max_key_tries,
-                            )
-                            if key_attempt + 1 < max_key_tries:
-                                continue
-                            self._mark_model_cooldown(candidate_model, self.model_cooldown_seconds)
-                            break
+                index += 2
+                continue
 
-                        if status_code in (400, 404):
-                            logger.warning("Model %s rejected request (%s); putting on cooldown.", candidate_model, exc)
-                            self._mark_model_cooldown(candidate_model, 300.0)
-                            break
+            try:
+                entity = await asyncio.wait_for(
+                    self._try_single_model(primary_model, contents, configured_level, attempts),
+                    timeout=remaining,
+                )
+                return replace(
+                    entity,
+                    extract_ms=int((time.perf_counter() - extract_t0) * 1000),
+                    attempts=list(attempts),
+                )
+            except TimeoutError as exc:
+                last_error = TimeoutError(f"Extraction deadline ({self.request_deadline_seconds}s) exceeded.")
+                self._mark_model_cooldown(primary_model, self.model_cooldown_seconds)
+                if deadline - time.monotonic() <= 0:
+                    raise last_error from exc
+            except (ClientError, ServerError, httpx.HTTPError) as exc:
+                if isinstance(exc, ClientError) and getattr(exc, "code", None) not in (400, 404, 429):
+                    raise
+                last_error = exc
+            index += 1
 
-                        raise
-                    except (ServerError, TimeoutError, httpx.TimeoutException, httpx.TransportError) as exc:
-                        last_error = exc
-                        logger.warning(
-                            "Model %s failed transiently (%s); switching to next fallback model.",
-                            candidate_model,
-                            exc,
-                        )
-                        self._mark_model_cooldown(candidate_model, self.model_cooldown_seconds)
-                        break
-
+        if isinstance(last_error, TimeoutError):
+            raise last_error
         raise RuntimeError(
             f"All Gemini models failed ({', '.join(self._model_chain)}). Last error: {last_error}"
         ) from last_error

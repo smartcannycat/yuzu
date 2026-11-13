@@ -4,13 +4,14 @@ import datetime
 import re
 import unicodedata
 
-from app.domains.enums import FrameIdConfidence
+from app.domains.enums import AuctionHouse, BodyPanel, DefectCode, FrameIdConfidence
 
 CHASSIS_RE = re.compile(r"^(?:[A-Z0-9]{2,7}-\d{4,8}|\d{6,8}|[A-HJ-NPR-Z0-9]{17})$")
 KATASHIKI_RE = re.compile(r"^(?:[A-Z0-9]{1,4}-)?[A-Z0-9]{2,8}(?:-[A-Z0-9]{1,5})?$")
 EMISSION_PREFIX_RE = re.compile(r"^[0-9A-Z]{1,4}-")
 CHASSIS_CANONICAL_RE = re.compile(r"^[A-Z0-9]{2,8}-\d{4,8}$")
-DEFECT_ITEM_RE = re.compile(r"^([A-Z]{1,2})(\d)?$")
+DEFECT_ITEM_RE = re.compile(r"^([A-Z]{1,2})([1-3])?$")
+_VALID_SINGLE_DEFECT_LETTERS = frozenset({"A", "U", "W", "S", "C", "P", "G"})
 
 KANJI_DIGITS: dict[str, int] = {
     "〇": 0,
@@ -26,21 +27,74 @@ KANJI_DIGITS: dict[str, int] = {
     "九": 9,
 }
 
-# Inspection strictness index (I_strict) for Japanese auto auctions.
-AUCTION_STRICTNESS: dict[str, float] = {
-    "TAA": 1.00,
-    "HONDA": 0.95,
-    "HAA": 0.95,
-    "CAA": 0.90,
-    "USS": 0.75,
-    "ORIX": 0.75,
-    "ARAI": 0.75,
-    "AUCNET": 0.70,
-    "JU": 0.60,
-    "MIRIVE": 0.55,
-    "KCAA": 0.55,
-    "LAA": 0.55,
-    "ZIP": 0.75,
+# Canonical inspection strictness index (I_strict) aligned with API contracts (Decision D1).
+AUCTION_STRICTNESS: dict[AuctionHouse, float] = {
+    AuctionHouse.TAA: 1.00,
+    AuctionHouse.HONDA: 0.90,
+    AuctionHouse.ORIX: 0.80,
+    AuctionHouse.USS: 0.75,
+    AuctionHouse.ZIP: 0.75,
+    AuctionHouse.CAA: 0.70,
+    AuctionHouse.MIRIVE: 0.70,
+    AuctionHouse.ARAI: 0.65,
+    AuctionHouse.AUCNET: 0.65,
+    AuctionHouse.LAA: 0.65,
+    AuctionHouse.JU: 0.60,
+    AuctionHouse.KCAA: 0.60,
+    AuctionHouse.OTHER: 0.65,
+}
+
+_AUCTION_PHRASE_ALIASES: tuple[tuple[str, AuctionHouse], ...] = (
+    ("トヨタオートオークション", AuctionHouse.TAA),
+    ("TOYOTA AUTO AUCTION", AuctionHouse.TAA),
+    ("TOYOTA AA", AuctionHouse.TAA),
+    ("中部オートオークション", AuctionHouse.CAA),
+    ("CHUBU AUTO AUCTION", AuctionHouse.CAA),
+    ("ホンダオートオークション", AuctionHouse.HONDA),
+    ("HONDA AUTO AUCTION", AuctionHouse.HONDA),
+    ("ホンダ", AuctionHouse.HONDA),
+    ("アライオートオークション", AuctionHouse.ARAI),
+    ("ARAI AUTO AUCTION", AuctionHouse.ARAI),
+    ("アライ", AuctionHouse.ARAI),
+    ("ユーエスエス", AuctionHouse.USS),
+    ("ジェイユー", AuctionHouse.JU),
+    ("オークネット", AuctionHouse.AUCNET),
+    ("オリックス", AuctionHouse.ORIX),
+    ("ミライブ", AuctionHouse.MIRIVE),
+    ("ジップ", AuctionHouse.ZIP),
+    ("ケーシーエーエー", AuctionHouse.KCAA),
+    ("エルエーエー", AuctionHouse.LAA),
+)
+
+_AUCTION_TOKEN_ALIASES: dict[str, AuctionHouse] = {
+    "TAA": AuctionHouse.TAA,
+    "USS": AuctionHouse.USS,
+    "CAA": AuctionHouse.CAA,
+    "HONDA": AuctionHouse.HONDA,
+    "HAA": AuctionHouse.HONDA,
+    "ARAI": AuctionHouse.ARAI,
+    "AUCNET": AuctionHouse.AUCNET,
+    "ORIX": AuctionHouse.ORIX,
+    "ZIP": AuctionHouse.ZIP,
+    "JU": AuctionHouse.JU,
+    "MIRIVE": AuctionHouse.MIRIVE,
+    "KCAA": AuctionHouse.KCAA,
+    "LAA": AuctionHouse.LAA,
+}
+
+_EMPTY_AUCTION_MARKERS = frozenset({"", "UNKNOWN", "NONE", "NULL", "N/A", "NA", "-"})
+
+_DEFECT_LABELS_RU: dict[str, str] = {
+    "A": "царапина",
+    "U": "вмятина",
+    "W": "ремонт/волна окраса",
+    "S": "ржавчина",
+    "C": "коррозия",
+    "P": "нарушение ЛКП",
+    "G": "скол стекла",
+    "XX": "замена детали",
+    "X": "требуется замена",
+    "R": "следы ремонта",
 }
 
 _ERA_OFFSETS: dict[str, int] = {
@@ -52,7 +106,7 @@ _ERA_OFFSETS: dict[str, int] = {
     "昭和": 1925,
 }
 _KANJI_NUM_RE = re.compile(r"[〇零一二三四五六七八九十]+")
-_ERA_DATE_RE = re.compile(r"(?<![A-Za-z])(R|令和|H|平成|S|昭和)\s*(\d{1,2})(?:\D+(\d{1,2}))?", re.I)
+_ERA_DATE_RE = re.compile(r"(?<![A-Za-z])(R|令和|H|平成|S|昭和)\s*(\d{1,2})(?:\D+(\d{1,2}))?", re.IGNORECASE)
 _MM_YYYY_RE = re.compile(r"\b(\d{1,2})[./](19\d{2}|20\d{2})\b")
 _GREGORIAN_DATE_RE = re.compile(r"(19\d{2}|20\d{2})(?:\D+(\d{1,2}))?")
 _BARE_DATE_RE = re.compile(r"^(\d{1,2})(?:\D+(\d{1,2}))?")
@@ -66,18 +120,33 @@ def clean_code(raw: str | None) -> str:
     return unicodedata.normalize("NFKC", raw).strip().replace(" ", "")
 
 
-def normalize_auction_house(raw: str | None) -> tuple[str | None, float | None]:
-    """Normalize an auction house name and return its strictness index."""
+def normalize_auction_house(
+    raw: str | None,
+    *,
+    default_strictness: float = AUCTION_STRICTNESS[AuctionHouse.OTHER],
+) -> tuple[str | None, float | None]:
+    """Normalize an auction house name by exact phrase/token aliases without substring traps."""
     if not raw:
         return None, None
-    cleaned = raw.strip()
-    if not cleaned:
+    normalized = unicodedata.normalize("NFKC", raw).strip()
+    upper_clean = normalized.upper()
+    if upper_clean in _EMPTY_AUCTION_MARKERS:
         return None, None
-    upper = cleaned.upper()
-    for key, strictness in AUCTION_STRICTNESS.items():
-        if key in upper:
-            return key, strictness
-    return cleaned, None
+
+    compact_jp = re.sub(r"\s+", "", normalized)
+    upper_spaced = re.sub(r"\s+", " ", upper_clean)
+    for phrase, house in _AUCTION_PHRASE_ALIASES:
+        phrase_upper = phrase.upper()
+        if phrase_upper in compact_jp.upper() or re.search(rf"(?<![A-Z0-9]){re.escape(phrase_upper)}(?![A-Z0-9])", upper_spaced):
+            return house.value, AUCTION_STRICTNESS[house]
+
+    tokens = re.findall(r"[A-Z0-9]+", upper_spaced)
+    for token in tokens:
+        matched_house = _AUCTION_TOKEN_ALIASES.get(token)
+        if matched_house is not None:
+            return matched_house.value, AUCTION_STRICTNESS[matched_house]
+
+    return AuctionHouse.OTHER.value, default_strictness
 
 
 def synthesize_frame_id(model_code: str, chassis_number: str) -> tuple[str, FrameIdConfidence]:
@@ -97,34 +166,65 @@ def synthesize_frame_id(model_code: str, chassis_number: str) -> tuple[str, Fram
     return c, FrameIdConfidence.RAW
 
 
-def split_defect_codes(raw_code: str) -> list[tuple[str, int | None]]:
-    """Split composite body diagram defect codes into (code, severity) pairs."""
-    norm = unicodedata.normalize("NFKC", raw_code).strip().upper()
+def parse_defect_codes_with_warnings(
+    raw_code: str,
+) -> tuple[list[tuple[DefectCode, int | None]], list[str]]:
+    """Parse composite defect code into validated (DefectCode, severity) pairs and warnings."""
+    norm = unicodedata.normalize("NFKC", raw_code).strip()
     parts = re.split(r"[/,\s]+", norm)
-    results: list[tuple[str, int | None]] = []
+    results: list[tuple[DefectCode, int | None]] = []
+    warnings: list[str] = []
 
     for part in parts:
-        p = part.strip()
-        if not p:
+        raw_part = part.strip()
+        if not raw_part:
             continue
-        if p in {"XX", "X"}:
-            results.append((p, None))
+        upper_part = raw_part.upper()
+
+        if upper_part in {"S小", "S(小)"}:
+            results.append((DefectCode.S, 1))
             continue
-        match = DEFECT_ITEM_RE.match(p)
+        if upper_part in {"C小", "C(小)"}:
+            results.append((DefectCode.C, 1))
+            continue
+        if upper_part in {"XX", "X", "R"}:
+            results.append((DefectCode(upper_part), None))
+            continue
+
+        match = DEFECT_ITEM_RE.match(upper_part)
         if not match:
-            results.append((p, None))
+            warnings.append(f"unknown_defect_code:{raw_part}")
             continue
 
         letters = match.group(1)
         severity = int(match.group(2)) if match.group(2) else None
-        # Paired single-letter defect codes like AU3 represent A3 and U3.
-        if len(letters) == 2 and letters not in {"XX", "FW"}:
-            results.append((letters[0], severity))
-            results.append((letters[1], severity))
+        if all(ch in _VALID_SINGLE_DEFECT_LETTERS for ch in letters):
+            for ch in letters:
+                results.append((DefectCode(ch), severity))
         else:
-            results.append((letters, severity))
+            warnings.append(f"unknown_defect_code:{raw_part}")
 
-    return results or [(norm, None)]
+    return results, warnings
+
+
+def split_defect_codes(raw_code: str) -> list[tuple[str, int | None]]:
+    """Split composite body diagram defect codes into validated (code, severity) pairs."""
+    parsed, _ = parse_defect_codes_with_warnings(raw_code)
+    return [(code.value, severity) for code, severity in parsed]
+
+
+def build_defect_description_ru(
+    panel_ru: str,
+    defect_code: DefectCode | str,
+    severity: int | None,
+) -> str:
+    """Build deterministic Russian human-readable description for a normalized defect."""
+    code_str = defect_code.value if isinstance(defect_code, DefectCode) else str(defect_code)
+    label = _DEFECT_LABELS_RU.get(code_str, code_str.lower())
+    panel = panel_ru.strip() or "Кузов"
+    if severity is not None:
+        return f"{panel} — {label}, степень {severity}"
+    return f"{panel} — {label}"
 
 
 def _replace_kanji_numbers(text: str) -> str:
@@ -251,3 +351,115 @@ def calculate_age_and_corridor(
     date_part = f"{reg_month:02d}.{reg_year}" if reg_month is not None else str(reg_year)
     formatted = f"{date_part} (Возраст {years} {_pluralize_years_ru(years)} {months} мес.)"
     return formatted, is_pass_corridor
+
+
+_PANEL_ZONE_KEYWORDS: tuple[tuple[str, BodyPanel, str], ...] = (
+    ("コアサポート", BodyPanel.OTHER, "Рамка радиатора (Core Support)"),
+    ("クロスメンバー", BodyPanel.OTHER, "Поперечина кузова (Crossmember)"),
+    ("インパネ", BodyPanel.OTHER, "Брызговик/внутреннее крыло"),
+    ("インサイドパネル", BodyPanel.OTHER, "Брызговик/внутреннее крыло"),
+    ("ピラー", BodyPanel.OTHER, "Стойка кузова"),
+    ("サイドメンバー", BodyPanel.OTHER, "Лонжерон"),
+    ("フレーム", BodyPanel.OTHER, "Рама / силовой лонжерон"),
+    ("フェンダー左前", BodyPanel.FRONT_LEFT_FENDER, "Переднее левое крыло"),
+    ("左Fフェンダー", BodyPanel.FRONT_LEFT_FENDER, "Переднее левое крыло"),
+    ("右Fフェンダー", BodyPanel.FRONT_RIGHT_FENDER, "Переднее правое крыло"),
+    ("左Fドア", BodyPanel.FRONT_LEFT_DOOR, "Передняя левая дверь"),
+    ("右Fドア", BodyPanel.FRONT_RIGHT_DOOR, "Передняя правая дверь"),
+    ("左Rドア", BodyPanel.REAR_LEFT_DOOR, "Задняя левая дверь"),
+    ("右Rドア", BodyPanel.REAR_RIGHT_DOOR, "Задняя правая дверь"),
+    ("Fバンパー", BodyPanel.FRONT_BUMPER, "Передний бампер"),
+    ("Rバンパー", BodyPanel.REAR_BUMPER, "Задний бампер"),
+    ("ボンネット", BodyPanel.HOOD, "Капот"),
+    ("ルーフ", BodyPanel.ROOF, "Крыша"),
+    ("トランク", BodyPanel.TAILGATE, "Крышка багажника / пятая дверь"),
+    ("バックドア", BodyPanel.TAILGATE, "Пятая дверь"),
+    ("フロントガラス", BodyPanel.WINDSHIELD, "Лобовое стекло"),
+)
+
+_REPAIR_ACTION_RE = re.compile(r"(XX|\bX\b|\bR\b|W\d?|交換|修理|鈑金|歪|曲|凹|修復|замен|ремонт|деформац)", re.IGNORECASE)
+_PILLAR_OR_FRAME_RE = re.compile(r"(ピラー|サイドメンバー|フレーム|クロスメンバー|修復歴|骨格|стойк|лонжерон)", re.IGNORECASE)
+_INSIDE_PANEL_ONLY_RE = re.compile(r"(インパネ|インサイドパネル)", re.IGNORECASE)
+_CORE_SUPPORT_RE = re.compile(r"(コアサポート|рамк[аи]\s+радиатора|телевизор)", re.IGNORECASE)
+_NO_ANOMALY_RE = re.compile(r"(異常なし|問題なし|исправн|в\s+норме)", re.IGNORECASE)
+
+
+def normalize_body_panel(
+    panel_id: BodyPanel,
+    panel_ru: str,
+    visual_location: str = "",
+) -> tuple[BodyPanel, str]:
+    """Ensure body panel maps cleanly into canonical 16 panels or BodyPanel.OTHER with Russian name."""
+    combined = f"{visual_location} {panel_ru}"
+    for keyword, mapped_panel, default_ru in _PANEL_ZONE_KEYWORDS:
+        if keyword in combined:
+            clean_ru = panel_ru.strip() or default_ru
+            if mapped_panel == BodyPanel.OTHER:
+                return BodyPanel.OTHER, clean_ru
+            return mapped_panel if panel_id == BodyPanel.OTHER else panel_id, clean_ru
+    return panel_id, (panel_ru.strip() or "Другая зона кузова")
+
+
+def normalize_transmission_ru(raw: str | None, ru: str | None) -> str:
+    """Normalize transmission codes/descriptions to canonical Russian labels."""
+    candidates = [
+        unicodedata.normalize("NFKC", raw or "").strip().upper(),
+        unicodedata.normalize("NFKC", ru or "").strip().upper(),
+    ]
+    joined = " ".join(c for c in candidates if c)
+    if not joined:
+        return "не указано"
+
+    if any(tok in joined for tok in ("CVT", "IAT", "ECVT", "無段", "ВАРИАТОР")):
+        return "вариатор (CVT)"
+    if any(tok in joined for tok in ("DCT", "DSG", "AMT", "РОБОТ", "デュアルクラッチ")):
+        return "робот"
+    if re.search(r"(?<![A-Z])(MT|[4567]MT|[456]F|F[456]|МКПП|МЕХАНИК)(?![A-Z])", joined):
+        return "МКПП"
+    if re.search(r"(?<![A-Z])(AT|FAT|SAT|DAT|CAT|[4-9]AT|АКПП|АВТОМАТ)(?![A-Z])", joined):
+        return "АКПП"
+    return (ru or "").strip() or (raw or "").strip() or "не указано"
+
+
+def clean_color_ru(color_ru: str | None, paint_code: str | None) -> str | None:
+    """Remove embedded paint codes from Russian color text."""
+    if not color_ru:
+        return None
+    cleaned = color_ru.strip()
+    if paint_code:
+        escaped = re.escape(paint_code.strip())
+        cleaned = re.sub(rf"\s*[\(\[]?\s*{escaped}\s*[\)\]]?", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*\([A-Z0-9]{2,5}\)\s*$", "", cleaned, flags=re.IGNORECASE)
+    cleaned = cleaned.strip(" ,-/")
+    return cleaned or None
+
+
+def derive_structural_risk_flags(
+    *,
+    llm_pillar_or_frame: bool,
+    llm_core_support: bool,
+    inspector_notes_raw: list[str],
+    inspector_notes_ru: list[str],
+    defect_texts: list[str],
+) -> tuple[bool, bool]:
+    """Deterministically refine structural risk flags based on Japanese notes and repair codes."""
+    all_raw = " | ".join(inspector_notes_raw)
+    all_text = " | ".join([*inspector_notes_raw, *inspector_notes_ru, *defect_texts])
+
+    has_pillar_keyword = bool(_PILLAR_OR_FRAME_RE.search(all_text))
+    has_inside_panel_only = bool(_INSIDE_PANEL_ONLY_RE.search(all_raw)) and not has_pillar_keyword
+
+    if has_pillar_keyword and not _NO_ANOMALY_RE.search(all_text):
+        pillar_or_frame = True
+    elif has_inside_panel_only:
+        pillar_or_frame = False
+    else:
+        pillar_or_frame = llm_pillar_or_frame and not _NO_ANOMALY_RE.search(all_raw)
+
+    core_lines = [line for line in [*inspector_notes_raw, *inspector_notes_ru, *defect_texts] if _CORE_SUPPORT_RE.search(line)]
+    if core_lines:
+        core_support = any(_REPAIR_ACTION_RE.search(line) and not _NO_ANOMALY_RE.search(line) for line in core_lines)
+    else:
+        core_support = False if _NO_ANOMALY_RE.search(all_raw) else llm_core_support
+
+    return pillar_or_frame, core_support

@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -33,6 +34,11 @@ class Settings(BaseSettings):
     gemini_model_cooldown_seconds: float = Field(default=120.0, ge=0.0, le=600.0)
     gemini_key_cooldown_seconds: float = Field(default=30.0, ge=0.0, le=600.0)
     gemini_thinking_level: str = Field(default="LOW")
+    gemini_request_deadline_seconds: float = Field(default=45.0, ge=5.0, le=300.0)
+    gemini_hedge_delay_seconds: float = Field(default=8.0, ge=0.5, le=120.0)
+    gemini_fast_header_timeout_seconds: float = Field(default=1.2, ge=0.1, le=10.0)
+    default_auction_strictness: float = Field(default=0.65, ge=0.0, le=1.0)
+    batch_poll_interval_ms: int = Field(default=1500, ge=100, le=60000)
 
     crop_format: str = Field(default="JPEG")
     crop_quality: int = Field(default=88, ge=50, le=100)

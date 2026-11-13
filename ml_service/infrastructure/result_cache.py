@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from app.domains.entities import (
+    ModelAttemptEntity,
     NormalizedDefectEntity,
     NormalizedSheetEntity,
     ParserMetaEntity,
@@ -15,6 +16,7 @@ from app.domains.entities import (
 )
 from app.domains.enums import (
     BodyPanel,
+    DefectCode,
     DriveType,
     FrameIdConfidence,
     FuelType,
@@ -50,9 +52,10 @@ def deserialize_parser_result(payload: dict[str, Any]) -> ParserResultEntity:
             NormalizedDefectEntity(
                 panel_id=BodyPanel(d["panel_id"]),
                 panel_ru=d["panel_ru"],
-                defect_types=list(d["defect_types"]),
+                defect_types=[DefectCode(code) for code in d["defect_types"]],
                 severity=d.get("severity"),
                 raw_code=d["raw_code"],
+                description_ru=d.get("description_ru", ""),
             )
             for d in sheet_raw.get("defects", [])
         ]
@@ -88,7 +91,6 @@ def deserialize_parser_result(payload: dict[str, Any]) -> ParserResultEntity:
             frame_id_confidence=FrameIdConfidence(sheet_raw["frame_id_confidence"]),
             first_reg_year=sheet_raw.get("first_reg_year"),
             first_reg_month=sheet_raw.get("first_reg_month"),
-            first_reg_date=sheet_raw.get("first_reg_date"),
             first_reg_date_str=sheet_raw.get("first_reg_date_str"),
             is_pass_corridor_3_5=bool(sheet_raw["is_pass_corridor_3_5"]),
             engine_cc=sheet_raw.get("engine_cc"),
@@ -111,6 +113,11 @@ def deserialize_parser_result(payload: dict[str, Any]) -> ParserResultEntity:
             inspector_notes_ru=list(sheet_raw.get("inspector_notes_ru", [])),
             seller_comments_ru=list(sheet_raw.get("seller_comments_ru", [])),
             extra_ru=list(sheet_raw.get("extra_ru", [])),
+            auction_branch=sheet_raw.get("auction_branch"),
+            right_hand_drive=sheet_raw.get("right_hand_drive"),
+            name_change_deadline=sheet_raw.get("name_change_deadline"),
+            inspector_notes_raw=list(sheet_raw.get("inspector_notes_raw", [])),
+            ocr_warnings=list(sheet_raw.get("ocr_warnings", [])),
         )
 
     meta_raw = payload["meta"]
@@ -120,6 +127,14 @@ def deserialize_parser_result(payload: dict[str, Any]) -> ParserResultEntity:
         cached=bool(meta_raw["cached"]),
         model_used=meta_raw["model_used"],
         sha256=meta_raw["sha256"],
+        gatekeeper_model=meta_raw.get("gatekeeper_model"),
+        gatekeeper_ms=int(meta_raw.get("gatekeeper_ms") or 0),
+        header_ms=int(meta_raw["header_ms"]) if meta_raw.get("header_ms") is not None else None,
+        extract_ms=int(meta_raw.get("extract_ms") or 0),
+        attempts=[
+            ModelAttemptEntity(model=str(a["model"]), status=str(a["status"]), ms=int(a["ms"]))
+            for a in meta_raw.get("attempts", [])
+        ],
     )
 
     return ParserResultEntity(

@@ -4,12 +4,14 @@ from app.domains.enums import (
     BatchItemState,
     BatchStatus,
     BodyPanel,
+    DefectCode,
     DriveType,
     FrameIdConfidence,
     FuelType,
     LayoutComplexity,
     OdometerStatus,
     ParseStatus,
+    TaskStep,
 )
 
 
@@ -41,10 +43,44 @@ class GatekeeperDecisionEntity:
     is_auction_sheet: bool
     is_readable: bool
     complexity: LayoutComplexity
+    model_used: str = "gemini-decision-1"
+    duration_ms: int = 0
+    warning: str | None = None
 
     @property
     def is_accepted(self) -> bool:
         return self.is_auction_sheet and self.is_readable
+
+
+@dataclass(slots=True, frozen=True)
+class FastHeaderPreviewEntity:
+    """Fast low-resolution header preview returned ahead of full extraction."""
+
+    make: str | None = None
+    model: str | None = None
+    lot_number: str | None = None
+    duration_ms: int = 0
+
+    @property
+    def preview_title(self) -> str | None:
+        base = " ".join(part.strip() for part in (self.make or "", self.model or "") if part and part.strip())
+        lot = (self.lot_number or "").strip()
+        if base and lot:
+            return f"{base} (лот {lot})"
+        if base:
+            return base
+        if lot:
+            return f"Лот {lot}"
+        return None
+
+
+@dataclass(slots=True, frozen=True)
+class ModelAttemptEntity:
+    """Telemetry record for a single Gemini model invocation attempt."""
+
+    model: str
+    status: str
+    ms: int
 
 
 @dataclass(slots=True, frozen=True)
@@ -134,12 +170,19 @@ class RawExtractionEntity:
     seller_comments_ru: list[str] = field(default_factory=list)
     extra_ru: list[str] = field(default_factory=list)
     unreadable_fields: list[str] = field(default_factory=list)
+    auction_branch: str | None = None
+    right_hand_drive: bool | None = None
+    name_change_deadline: str | None = None
+    ocr_warnings: list[str] = field(default_factory=list)
     model_used: str | None = None
+    extract_ms: int = 0
+    attempts: list[ModelAttemptEntity] = field(default_factory=list)
 
     def to_raw_dict(self) -> dict[str, object]:
         """Returns dictionary of raw anchor fields for audit and debugging."""
         return {
             "auction_house_raw": self.auction_house_raw,
+            "auction_branch": self.auction_branch,
             "lot_number_raw": self.lot_number_raw,
             "make_raw": self.make_raw,
             "model_raw": self.model_raw,
@@ -151,6 +194,8 @@ class RawExtractionEntity:
             "engine_cc_raw": self.engine_cc_raw,
             "transmission_raw": self.transmission_raw,
             "drive_type_raw": self.drive_type_raw,
+            "right_hand_drive": self.right_hand_drive,
+            "name_change_deadline": self.name_change_deadline,
             "color_raw": self.color_raw,
             "paint_code_raw": self.paint_code_raw,
             "shaken_raw": self.shaken_raw,
@@ -162,13 +207,14 @@ class RawExtractionEntity:
 
 @dataclass(slots=True, frozen=True)
 class NormalizedDefectEntity:
-    """Normalized body panel defect with split defect code and severity (1..3)."""
+    """Normalized body panel defect with validated defect codes, severity (1..3), and description."""
 
     panel_id: BodyPanel
     panel_ru: str
-    defect_types: list[str]
+    defect_types: list[DefectCode]
     severity: int | None
     raw_code: str
+    description_ru: str = ""
 
 
 @dataclass(slots=True, frozen=True)
@@ -206,7 +252,6 @@ class NormalizedSheetEntity:
     frame_id_confidence: FrameIdConfidence
     first_reg_year: int | None
     first_reg_month: int | None
-    first_reg_date: str | None
     first_reg_date_str: str | None
     is_pass_corridor_3_5: bool
     engine_cc: int | None
@@ -229,6 +274,11 @@ class NormalizedSheetEntity:
     inspector_notes_ru: list[str]
     seller_comments_ru: list[str]
     extra_ru: list[str]
+    auction_branch: str | None = None
+    right_hand_drive: bool | None = None
+    name_change_deadline: str | None = None
+    inspector_notes_raw: list[str] = field(default_factory=list)
+    ocr_warnings: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True, frozen=True)
@@ -240,6 +290,11 @@ class ParserMetaEntity:
     cached: bool
     model_used: str
     sha256: str
+    gatekeeper_model: str | None = None
+    gatekeeper_ms: int = 0
+    header_ms: int | None = None
+    extract_ms: int = 0
+    attempts: list[ModelAttemptEntity] = field(default_factory=list)
 
 
 @dataclass(slots=True, frozen=True)
@@ -255,16 +310,26 @@ class ParserResultEntity:
     meta: ParserMetaEntity
 
 
+@dataclass(slots=True, frozen=True)
+class MascotEntity:
+    """UI mascot status descriptor for batch polling."""
+
+    mood: str
+    phrase_ru: str
+    badge_text: str
+
+
 @dataclass(slots=True)
 class BatchItemStatusEntity:
     """Mutable state of a single sheet inside a batch processing queue."""
 
-    lot_id: str
+    lot_id: str | None
     file_index: int
     original_filename: str
     status: BatchItemState
-    current_step: str
+    current_step: TaskStep
     progress_pct: int
+    preview_title: str | None = None
     error_message: str | None = None
     result: ParserResultEntity | None = None
 
@@ -276,6 +341,10 @@ class BatchJobEntity:
     batch_id: str
     created_at: str
     items: list[BatchItemStatusEntity] = field(default_factory=list)
+
+    @property
+    def total_items(self) -> int:
+        return len(self.items)
 
     @property
     def total_count(self) -> int:
@@ -290,15 +359,27 @@ class BatchJobEntity:
         return sum(1 for item in self.items if item.status == BatchItemState.FAILED)
 
     @property
+    def rejected_count(self) -> int:
+        return sum(1 for item in self.items if item.status == BatchItemState.REJECTED_NOT_SHEET)
+
+    @property
     def processed_count(self) -> int:
-        return self.ready_count + self.failed_count
+        return self.ready_count + self.failed_count + self.rejected_count
 
     @property
     def status(self) -> BatchStatus:
         if not self.items:
             return BatchStatus.QUEUED
-        if self.processed_count < self.total_count:
+        if all(item.status == BatchItemState.QUEUED for item in self.items):
+            return BatchStatus.QUEUED
+        if self.processed_count < self.total_items:
             return BatchStatus.PROCESSING
-        if self.failed_count > 0:
+        if self.ready_count == 0 and (self.failed_count + self.rejected_count) > 0:
+            return BatchStatus.FAILED
+        if (self.failed_count + self.rejected_count) > 0:
             return BatchStatus.PARTIAL_FAILED
         return BatchStatus.COMPLETED
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.status in {BatchStatus.COMPLETED, BatchStatus.PARTIAL_FAILED, BatchStatus.FAILED}

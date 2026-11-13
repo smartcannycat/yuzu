@@ -1,9 +1,12 @@
 import asyncio
 from io import BytesIO
 
+import pillow_heif
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from app.domains.entities import SlicedSheetEntity
+
+pillow_heif.register_heif_opener()
 
 
 def trim_uniform_margins(

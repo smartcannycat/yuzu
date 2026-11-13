@@ -23,6 +23,50 @@ class BodyPanel(str, Enum):
     OTHER = "other"
 
 
+class AuctionHouse(str, Enum):
+    """Canonical auction house identifiers (Domain 1 + API contracts)."""
+
+    TAA = "TAA"
+    USS = "USS"
+    JU = "JU"
+    ARAI = "ARAI"
+    CAA = "CAA"
+    HONDA = "Honda"
+    AUCNET = "AUCNET"
+    MIRIVE = "MIRIVE"
+    ORIX = "ORIX"
+    ZIP = "ZIP"
+    KCAA = "KCAA"
+    LAA = "LAA"
+    OTHER = "OTHER"
+
+
+class DefectCode(str, Enum):
+    """Canonical Japanese auction sheet defect mark codes."""
+
+    A = "A"
+    U = "U"
+    W = "W"
+    S = "S"
+    C = "C"
+    XX = "XX"
+    X = "X"
+    P = "P"
+    G = "G"
+    R = "R"
+
+
+class TaskStep(str, Enum):
+    """Canonical batch item processing step names."""
+
+    QUEUED = "queued"
+    GATEKEEPER = "gatekeeper"
+    FAST_HEADER_OCR = "fast_header_ocr"
+    GEMINI_OCR = "gemini_ocr"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class OdometerStatus(str, Enum):
     """Odometer authenticity status based on Japanese auction sheet marks."""
 
@@ -79,6 +123,7 @@ class BatchStatus(str, Enum):
     PROCESSING = "processing"
     COMPLETED = "completed"
     PARTIAL_FAILED = "partial_failed"
+    FAILED = "failed"
 
 
 class BatchItemState(str, Enum):
@@ -88,3 +133,4 @@ class BatchItemState(str, Enum):
     PROCESSING = "processing"
     READY = "ready"
     FAILED = "failed"
+    REJECTED_NOT_SHEET = "rejected_not_sheet"

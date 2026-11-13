@@ -1,8 +1,13 @@
-"""Thin FastAPI controllers for single-sheet parsing, batch jobs, and health checks."""
+"""Thin FastAPI controllers for single-sheet parsing, batch jobs, and RFC 7807 errors."""
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from google.genai.errors import APIError
+from http import HTTPStatus
+
 import httpx
+from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from google.genai.errors import APIError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.dependencies import (
     get_batch_service_dep,
@@ -16,16 +21,64 @@ from app.api.schemas import (
     HealthResponse,
     ParserResponse,
     ParseUrlRequest,
+    ProblemDetailsResponse,
     to_batch_create_response,
     to_batch_progress_response,
     to_parser_response,
 )
 from app.config import Settings
 from app.infrastructure.key_pool import GeminiKeyPool
-from app.services.batch_parser_service import BatchParserService
+from app.services.batch_parser_service import BatchConflictError, BatchParserService
 from app.services.sheet_parser_service import SheetParserService
 
 router = APIRouter()
+
+
+def _problem_response(
+    *,
+    status_code: int,
+    detail: str,
+    instance: str,
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
+    try:
+        title = HTTPStatus(status_code).phrase
+    except ValueError:
+        title = "HTTP Error"
+    payload = ProblemDetailsResponse(
+        type=f"https://httpstatuses.com/{status_code}",
+        title=title,
+        status=status_code,
+        detail=detail,
+        instance=instance,
+    )
+    return JSONResponse(
+        status_code=status_code,
+        content=payload.model_dump(),
+        media_type="application/problem+json",
+        headers=headers,
+    )
+
+
+def register_exception_handlers(app_instance: FastAPI) -> None:
+    """Register RFC 7807 Problem Details handlers on a FastAPI application instance."""
+
+    @app_instance.exception_handler(StarletteHTTPException)
+    async def _http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+        return _problem_response(
+            status_code=exc.status_code,
+            detail=str(exc.detail),
+            instance=str(request.url.path),
+            headers=getattr(exc, "headers", None),
+        )
+
+    @app_instance.exception_handler(RequestValidationError)
+    async def _validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+        return _problem_response(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc.errors()),
+            instance=str(request.url.path),
+        )
 
 
 @router.get("/health", response_model=HealthResponse, tags=["health"])
@@ -105,6 +158,7 @@ async def create_batch(
     files: list[UploadFile] = File(...),
     force_refresh: bool = Query(default=False),
     batch_service: BatchParserService = Depends(get_batch_service_dep),
+    settings: Settings = Depends(get_settings_dep),
 ) -> BatchCreateResponse:
     """Create an asynchronous batch parsing job for 1..10 auction sheet files."""
     items = [
@@ -115,7 +169,7 @@ async def create_batch(
         batch = await batch_service.create_batch(items, force_refresh=force_refresh)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    return to_batch_create_response(batch)
+    return to_batch_create_response(batch, poll_interval_ms=settings.batch_poll_interval_ms)
 
 
 @router.get(
@@ -145,8 +199,9 @@ async def add_batch_items(
     files: list[UploadFile] = File(...),
     force_refresh: bool = Query(default=False),
     batch_service: BatchParserService = Depends(get_batch_service_dep),
+    settings: Settings = Depends(get_settings_dep),
 ) -> BatchCreateResponse:
-    """Append additional auction sheet files to an existing batch job."""
+    """Append additional auction sheet files to an existing active batch job."""
     items = [
         (await upload.read(), upload.filename or f"sheet_{index}.png")
         for index, upload in enumerate(files)
@@ -155,6 +210,8 @@ async def add_batch_items(
         batch = await batch_service.add_items(batch_id, items, force_refresh=force_refresh)
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Batch not found.") from exc
+    except BatchConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    return to_batch_create_response(batch)
+    return to_batch_create_response(batch, poll_interval_ms=settings.batch_poll_interval_ms)

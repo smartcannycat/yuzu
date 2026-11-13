@@ -1,13 +1,12 @@
 """FastAPI application factory, DI wiring, CORS configuration, and lifespan hooks."""
 
 from contextlib import asynccontextmanager
-from pathlib import Path
 
+import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import httpx
 
-from app.api.router import router
+from app.api.router import register_exception_handlers, router
 from app.config import Settings, get_settings
 from app.factories.sheet_factory import SheetFactory
 from app.infrastructure.gemini_vision_client import AsyncGeminiVisionClient
@@ -55,8 +54,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             model_cooldown_seconds=resolved_settings.gemini_model_cooldown_seconds,
             key_cooldown_seconds=resolved_settings.gemini_key_cooldown_seconds,
             thinking_level=resolved_settings.gemini_thinking_level,
+            request_deadline_seconds=resolved_settings.gemini_request_deadline_seconds,
+            hedge_delay_seconds=resolved_settings.gemini_hedge_delay_seconds,
+            fast_header_timeout_seconds=resolved_settings.gemini_fast_header_timeout_seconds,
         )
-        factory = SheetFactory(reference_year=resolved_settings.reference_year)
+        factory = SheetFactory(
+            reference_year=resolved_settings.reference_year,
+            default_auction_strictness=resolved_settings.default_auction_strictness,
+        )
         cache = ResultCache(cache_dir=resolved_settings.cache_dir)
 
         parser_service = SheetParserService(
@@ -66,7 +71,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             factory=factory,
             cache=cache,
         )
-        batch_service = BatchParserService(parser_service=parser_service)
+        batch_service = BatchParserService(
+            parser_service=parser_service,
+            image_loader=image_loader,
+        )
 
         app_instance.state.settings = resolved_settings
         app_instance.state.key_pool = key_pool
@@ -91,6 +99,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    register_exception_handlers(app_instance)
     app_instance.include_router(router)
     return app_instance
 

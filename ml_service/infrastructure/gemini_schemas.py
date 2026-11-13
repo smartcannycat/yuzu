@@ -15,6 +15,14 @@ from app.domains.enums import (
 )
 
 
+class FastHeaderPreviewSchema(BaseModel):
+    """Lightweight top-header preview extracted rapidly for batch progress UI."""
+
+    make_en: str | None = None
+    model_en: str | None = None
+    lot_number: str | None = None
+
+
 class DefectExtractionSchema(BaseModel):
     """Structured defect mark extracted from the vehicle body diagram."""
 
@@ -76,7 +84,19 @@ class AuctionExtractionSchema(BaseModel):
     # 2. Типизированные и переведённые поля (строго с листа, без каталожных догадок)
     auction_house: str | None = Field(
         default=None,
-        description="Нормализованное название аукционного дома латиницей: USS, TAA, CAA, JU, ARAI, Honda, Mirive, KCAA, Aucnet",
+        description="Нормализованное название аукционного дома латиницей: USS, TAA, CAA, JU, ARAI, Honda, MIRIVE, KCAA, Aucnet, ORIX, ZIP, LAA",
+    )
+    auction_branch: str | None = Field(
+        default=None,
+        description="Филиал аукциона (например Tokyo, Nagoya, Kyushu), если прямо указан в шапке бланка",
+    )
+    right_hand_drive: bool | None = Field(
+        default=None,
+        description="True для правого руля (右ハンドル), False для левого (左ハンドル), null если не указано",
+    )
+    name_change_deadline: str | None = Field(
+        default=None,
+        description="Срок перерегистрации 名変 / 名義変更期限 (например 3/30), если указан на листе",
     )
     make_en: str = Field(description="Марка авто на латинице, например Honda")
     model_en: str = Field(description="Модель авто на латинице, например Vezel")
@@ -113,9 +133,9 @@ SYSTEM_PROMPT = """
 1. БЕЗ домыслов: извлекай ТОЛЬКО то, что прямо написано или отмечено на листе. Название аукционной системы (USS, TAA, CAA, JU, Honda, ARAI и др.) считывай строго из шапки/логотипа бланка (не додумывай филиал по номеру лота). Если привод (2WD/4WD) не обведён — ставь null. Не угадывай оттенок цвета по коду краски (パール = перламутр).
 2. В *_ru полях и extra_ru — БЕЗ кандзи, каны и транслита (пиши 'скол', без '(тобиси)').
 3. Стоп-факторы безопасности: внимательно проверяй заметки инспектора на маркеры затопления (冠水, 水没), сработавших подушек безопасности (エアバッグ), града (ひょう害, 雹), деформации стоек (ピラー) и сквозной коррозии (腐食).
-4. Схема дефектов: смотри сверху по ходу движения (перед вверху → левый борт слева, правый справа; не зеркаль стороны!). Передняя дверь — ближе к переднему колесу, задняя — к заднему. Чек-лист лобового стекла (FW) переноси в inspector_notes_ru и risk_flags.windshield_damage, а не в defects.
-5. Коды дефектов: извлекай в точности как написано, включая составные коды (A2/W1, AU3, U2), замену (XX) и деформацию под замену (X).
-6. Отдельно проверяй вертикальный текст по краям листа и глубину протектора шин в мм у колёс (добавляй в extra_ru).
+4. Схема дефектов: позиции зон бери ТОЛЬКО по схеме кузова (смотри сверху по ходу движения: перед вверху → левый борт слева, правый справа; не зеркаль стороны!). Передняя дверь — ближе к переднему колесу, задняя — к заднему. Чек-лист лобового стекла (FW) переноси в inspector_notes_ru и risk_flags.windshield_damage, а не в defects. Текстовые заметки инспектора оставляй в inspector_notes_raw/inspector_notes_ru.
+5. Коды дефектов: извлекай в точности как написано, включая составные коды (A2/W1, AU3, U2), ремонт (R), замену (XX) и деформацию под замену (X).
+6. Отдельно проверяй вертикальный текст по краям листа, глубину протектора шин в мм у колёс (добавляй в extra_ru), расположение руля (右ハンドル/左ハンドル -> right_hand_drive), филиал аукциона (auction_branch) и срок перерегистрации (名変 -> name_change_deadline).
 7. Если поле обрезано или неразборчиво — не угадывай, добавь его имя в unreadable_fields.
 """.strip()
 
@@ -188,4 +208,7 @@ def to_raw_extraction_entity(schema: AuctionExtractionSchema) -> RawExtractionEn
         seller_comments_ru=list(schema.seller_comments_ru),
         extra_ru=list(schema.extra_ru),
         unreadable_fields=list(schema.unreadable_fields),
+        auction_branch=schema.auction_branch,
+        right_hand_drive=schema.right_hand_drive,
+        name_change_deadline=schema.name_change_deadline,
     )
