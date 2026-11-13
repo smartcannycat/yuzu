@@ -98,9 +98,11 @@ export const useLotsStore = defineStore('lots', () => {
     }
   }
 
-  async function fetchLots(client: ApiClient = apiClient): Promise<void> {
+  async function runFetchLots(silent: boolean, client: ApiClient): Promise<void> {
     const requestId = ++latestRequestId
-    isLoading.value = true
+    if (!silent) {
+      isLoading.value = true
+    }
     errorMessage.value = null
 
     try {
@@ -114,17 +116,27 @@ export const useLotsStore = defineStore('lots', () => {
       hasLoadedOnce.value = true
     } catch (error: unknown) {
       if (requestId !== latestRequestId) return
-      errorMessage.value =
-        error instanceof ApiError
-          ? error.detail
-          : error instanceof Error
-            ? error.message
-            : 'Не удалось загрузить список лотов.'
+      if (!silent) {
+        errorMessage.value =
+          error instanceof ApiError
+            ? error.detail
+            : error instanceof Error
+              ? error.message
+              : 'Не удалось загрузить список лотов.'
+      }
     } finally {
-      if (requestId === latestRequestId) {
+      if (requestId === latestRequestId && !silent) {
         isLoading.value = false
       }
     }
+  }
+
+  async function fetchLots(client: ApiClient = apiClient): Promise<void> {
+    return runFetchLots(false, client)
+  }
+
+  async function refreshLotsSilently(client: ApiClient = apiClient): Promise<void> {
+    return runFetchLots(true, client)
   }
 
   async function loadMore(client: ApiClient = apiClient): Promise<void> {
@@ -225,6 +237,7 @@ export const useLotsStore = defineStore('lots', () => {
     hasAnyActiveFilter,
     hasMore,
     fetchLots,
+    refreshLotsSilently,
     loadMore,
     fetchFilterPreview,
     resetFilters,

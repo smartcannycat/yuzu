@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { Plus } from '@lucide/vue'
-import { onMounted, ref } from 'vue'
+import { useMediaQuery } from '@vueuse/core'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { AppHeader, ProfileSheet } from '@/components/layout'
 import {
+  BatchUploadSheet,
   InProgressAccordion,
   LotFilterSheet,
   LotPreviewSheets,
@@ -14,24 +16,104 @@ import {
 } from '@/components/lots'
 import { BaseButton } from '@/components/ui'
 import { useAuthStore } from '@/stores/auth'
+import { useBatchesStore } from '@/stores/batches'
 import { useLotsStore } from '@/stores/lots'
 import type { InProgressItemPreview, LotSummary, TrafficLightColor } from '@/types/api'
+
+const HOME_IN_PROGRESS_POLL_MS = 2000
 
 const router = useRouter()
 const authStore = useAuthStore()
 const lotsStore = useLotsStore()
+const batchesStore = useBatchesStore()
+const isDesktop = useMediaQuery('(min-width: 768px)')
 
 const isProfileOpen = ref(false)
 const isFiltersOpen = ref(false)
-const isUploadPreviewOpen = ref(false)
+const isUploadOpen = ref(false)
+const isInProgressOpen = ref(false)
 const previewLot = ref<LotSummary | null>(null)
-const previewProcessingItem = ref<InProgressItemPreview | null>(null)
 
-onMounted(() => {
+let backgroundPollTimerId: number | null = null
+let backgroundPollEpoch = 0
+
+function stopBackgroundSync(): void {
+  backgroundPollEpoch += 1
+  if (backgroundPollTimerId !== null && typeof window !== 'undefined') {
+    window.clearTimeout(backgroundPollTimerId)
+    backgroundPollTimerId = null
+  }
+}
+
+function scheduleBackgroundSync(): void {
+  stopBackgroundSync()
+  if (lotsStore.inProgress.total_processing_lots <= 0 || typeof window === 'undefined') {
+    return
+  }
+
+  const epoch = backgroundPollEpoch
+  backgroundPollTimerId = window.setTimeout(async () => {
+    if (epoch !== backgroundPollEpoch) return
+    await lotsStore.refreshLotsSilently()
+    if (epoch !== backgroundPollEpoch) return
+    if (lotsStore.inProgress.total_processing_lots > 0) {
+      scheduleBackgroundSync()
+    }
+  }, HOME_IN_PROGRESS_POLL_MS)
+}
+
+watch(
+  () => lotsStore.inProgress.total_processing_lots,
+  (count) => {
+    if (count > 0) {
+      if (backgroundPollTimerId === null) {
+        scheduleBackgroundSync()
+      }
+    } else {
+      stopBackgroundSync()
+    }
+  },
+)
+
+onMounted(async () => {
   if (!lotsStore.hasLoadedOnce) {
-    void lotsStore.fetchLots()
+    await lotsStore.fetchLots()
+  }
+  if (lotsStore.inProgress.total_processing_lots > 0) {
+    scheduleBackgroundSync()
   }
 })
+
+onBeforeUnmount(() => {
+  stopBackgroundSync()
+})
+
+function openUploadSheet(): void {
+  batchesStore.clearErrors()
+  isUploadOpen.value = true
+}
+
+async function handleUploadSubmit(files: File[]): Promise<void> {
+  const created = await batchesStore.createBatch(files)
+  isUploadOpen.value = false
+
+  if (isDesktop.value) {
+    isInProgressOpen.value = true
+    scheduleBackgroundSync()
+  } else {
+    await router.push({
+      name: 'batch-progress',
+      params: { batchId: created.batch_id },
+    })
+  }
+}
+
+function handleSelectInProgressItem(item: InProgressItemPreview): void {
+  void router.push({
+    name: 'batch-progress',
+    params: { batchId: item.batch_id },
+  })
+}
 
 async function handleSearch(query: string) {
   lotsStore.query = query
@@ -102,6 +184,7 @@ async function handleResetAllFilters() {
 
 async function handleLogout(): Promise<void> {
   isProfileOpen.value = false
+  stopBackgroundSync()
   await authStore.logout()
   await router.replace({ name: 'auth' })
 }
@@ -118,7 +201,7 @@ async function handleLogout(): Promise<void> {
     >
       <template #actions>
         <div class="hidden sm:block">
-          <BaseButton variant="primary" size="md" pill @click="isUploadPreviewOpen = true">
+          <BaseButton variant="primary" size="md" pill @click="openUploadSheet">
             <template #icon-left>
               <Plus :size="17" :stroke-width="2.2" />
             </template>
@@ -148,8 +231,9 @@ async function handleLogout(): Promise<void> {
 
     <div class="mt-6 flex flex-1 flex-col gap-3 sm:mt-7 sm:gap-3.5">
       <InProgressAccordion
+        v-model:open="isInProgressOpen"
         :summary="lotsStore.inProgress"
-        @select-item="previewProcessingItem = $event"
+        @select-item="handleSelectInProgressItem"
       />
 
       <LotsFeed
@@ -163,7 +247,7 @@ async function handleLogout(): Promise<void> {
         @select-lot="previewLot = $event"
         @retry="lotsStore.fetchLots()"
         @reset-filters="handleResetAllFilters"
-        @open-upload="isUploadPreviewOpen = true"
+        @open-upload="openUploadSheet"
         @load-more="lotsStore.loadMore()"
       />
     </div>
@@ -172,7 +256,7 @@ async function handleLogout(): Promise<void> {
       type="button"
       aria-label="Загрузить аукционные листы"
       class="bg-accent text-text-on-accent hover:bg-accent-hover focus-visible:outline-accent fixed right-4 bottom-5 z-30 inline-flex h-12 cursor-pointer items-center gap-2 rounded-full px-5 text-[15px] font-semibold shadow-lg transition-transform duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 active:scale-95 sm:hidden"
-      @click="isUploadPreviewOpen = true"
+      @click="openUploadSheet"
     >
       <Plus :size="18" :stroke-width="2.2" />
       <span>Загрузить</span>
@@ -191,11 +275,15 @@ async function handleLogout(): Promise<void> {
       @reset="handleResetAllFilters"
     />
 
-    <LotPreviewSheets
-      v-model:upload-open="isUploadPreviewOpen"
-      v-model:lot="previewLot"
-      v-model:processing-item="previewProcessingItem"
+    <BatchUploadSheet
+      v-model:open="isUploadOpen"
+      mode="create"
+      :is-submitting="batchesStore.isUploading"
+      :server-error="batchesStore.uploadError"
+      @submit="handleUploadSubmit"
     />
+
+    <LotPreviewSheets v-model:lot="previewLot" />
 
     <ProfileSheet
       v-model:open="isProfileOpen"

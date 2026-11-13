@@ -17,6 +17,10 @@ export type AuctionHouse =
 
 export type ItemProcessingStatus = 'queued' | 'processing' | 'ready' | 'failed'
 
+export type BatchStatus = 'queued' | 'processing' | 'completed' | 'partial_failed' | 'failed'
+
+export type MascotMood = 'sleeping' | 'thinking' | 'happy' | 'confused' | 'warning'
+
 export type TaskStep =
   | 'gatekeeper'
   | 'fast_header_ocr'
@@ -106,4 +110,40 @@ export interface LotListResponse {
   in_progress: InProgressSummary
   pagination: PaginationMeta
   available_filters: AvailableFilters
+}
+
+export interface MascotState {
+  mood: MascotMood
+  phrase_ru: string
+  badge_text: string
+}
+
+export interface BatchCreateResponse {
+  batch_id: string
+  total_items: number
+  status: BatchStatus
+  created_at: string
+  poll_interval_ms: number
+}
+
+export interface BatchItemStatus {
+  lot_id: string | null
+  file_index: number
+  original_filename: string
+  preview_title: string | null
+  status: ItemProcessingStatus
+  current_step: TaskStep
+  error_message: string | null
+  summary: LotSummary | null
+}
+
+export interface BatchProgressResponse {
+  batch_id: string
+  status: BatchStatus
+  mascot: MascotState
+  total_count: number
+  processed_count: number
+  ready_count: number
+  failed_count: number
+  items: BatchItemStatus[]
 }

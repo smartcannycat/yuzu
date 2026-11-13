@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ChevronDown, Clock, Loader2 } from '@lucide/vue'
-import { computed, ref, useId } from 'vue'
+import { ChevronDown, ChevronRight, Clock, Loader2 } from '@lucide/vue'
+import { computed, useId } from 'vue'
 
-import { BaseBadge, InsetListGroup, InsetListItem } from '@/components/ui'
+import { BaseBadge } from '@/components/ui'
 import type { InProgressItemPreview, InProgressSummary, ItemProcessingStatus } from '@/types/api'
 import { formatCarCountRu, formatTaskStepRu } from '@/utils/formatters'
 
@@ -17,11 +17,15 @@ const props = withDefaults(defineProps<Props>(), {
   collapsible: true,
 })
 
+const isOpen = defineModel<boolean>('open', { default: false })
+if (props.defaultOpen && !isOpen.value) {
+  isOpen.value = true
+}
+
 const emit = defineEmits<{
   selectItem: [item: InProgressItemPreview]
 }>()
 
-const isOpen = ref(props.defaultOpen)
 const uid = useId()
 const contentId = `in-progress-panel-${uid}`
 
@@ -87,28 +91,51 @@ function toggleExpanded() {
       :id="contentId"
       class="border-border bg-surface-inset/50 border-t px-3 py-2.5"
     >
-      <InsetListGroup>
-        <InsetListItem
+      <ul class="grid grid-cols-1 gap-2" :class="summary.items.length > 1 ? 'md:grid-cols-2' : ''">
+        <li
           v-for="(item, index) in summary.items"
           :key="`${item.batch_id}-${item.lot_id ?? index}`"
-          :title="item.display_title"
-          :subtitle="formatTaskStepRu(item.current_step)"
-          :squircle-color="STATUS_META[item.status].squircleColor"
-          interactive
-          chevron
-          @click="emit('selectItem', item)"
+          class="min-w-0"
         >
-          <template #icon>
-            <Clock :size="15" :stroke-width="1.9" />
-          </template>
+          <button
+            type="button"
+            class="border-border bg-surface hover:border-border-strong hover:bg-surface-hover/60 active:bg-surface-inset/70 focus-visible:outline-accent flex w-full min-w-0 cursor-pointer items-center justify-between gap-2.5 rounded-sm border px-3 py-2 text-left transition-colors duration-[var(--duration-quick)] ease-[var(--ease-out)] focus-visible:outline-2 focus-visible:outline-offset-[-2px]"
+            @click="emit('selectItem', item)"
+          >
+            <div class="flex min-w-0 flex-1 items-center gap-2.5">
+              <div
+                class="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] text-white"
+                :style="{ backgroundColor: STATUS_META[item.status].squircleColor }"
+                aria-hidden="true"
+              >
+                <Loader2
+                  v-if="item.status === 'processing'"
+                  :size="14"
+                  :stroke-width="2"
+                  class="animate-spin"
+                />
+                <Clock v-else :size="14" :stroke-width="1.9" />
+              </div>
 
-          <template #trailing>
-            <BaseBadge :variant="STATUS_META[item.status].variant" size="sm">
-              {{ STATUS_META[item.status].label }}
-            </BaseBadge>
-          </template>
-        </InsetListItem>
-      </InsetListGroup>
+              <div class="min-w-0 flex-1">
+                <div class="text-text-primary truncate text-[14px] leading-snug font-medium">
+                  {{ item.display_title }}
+                </div>
+                <div class="text-text-secondary truncate text-[12px] leading-snug">
+                  {{ formatTaskStepRu(item.current_step) }}
+                </div>
+              </div>
+            </div>
+
+            <div class="flex shrink-0 items-center gap-1.5">
+              <BaseBadge :variant="STATUS_META[item.status].variant" size="sm">
+                {{ STATUS_META[item.status].label }}
+              </BaseBadge>
+              <ChevronRight :size="15" :stroke-width="2" class="text-text-muted shrink-0" />
+            </div>
+          </button>
+        </li>
+      </ul>
     </div>
   </section>
 </template>
