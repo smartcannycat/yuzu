@@ -220,8 +220,8 @@ const POSES: Record<CapyState, PoseRecord> = {
     lidFlat: 0,
     lidRightExtra: 0,
     sadTilt: 0,
-    lookX: -2,
-    lookY: 4,
+    lookX: 0,
+    lookY: 3.5,
     mouthOpen: 0.65,
     frown: 0,
     sheet: 1,
@@ -415,6 +415,31 @@ const EAR_TWITCH: KeyFrame[] = [
   [5600, 0],
 ]
 
+// Horizontal reading saccades: glide left-to-right along a line, hold, quick carriage return
+const READ_X: KeyFrame[] = [
+  [0, -2.8],
+  [850, 2.0],
+  [1020, 2.0],
+  [1180, -2.8, 'out'],
+  [2050, 2.0],
+  [2220, 2.0],
+  [2380, -2.8, 'out'],
+  [3200, 2.4],
+  [3420, 2.4],
+  [3600, -2.8, 'out'],
+]
+
+// Vertical line steps: stays steady on each line while reading horizontally, steps down on return
+const READ_Y: KeyFrame[] = [
+  [0, -1.2],
+  [1020, -1.2],
+  [1180, 0.4, 'out'],
+  [2220, 0.4],
+  [2380, 1.8, 'out'],
+  [3420, 1.8],
+  [3600, -1.2, 'out'],
+]
+
 const uid = `yuzu-capy-${Math.random().toString(36).slice(2, 8)}`
 const ch = createChannels(POSES[activeState.value])
 
@@ -582,8 +607,9 @@ const p = computed(() => {
   const awakeWeight = clamp01(1 - wS - wG)
   const open = clamp01(c('eyeOpen') * mix(1, blink, awakeWeight))
 
-  const scanLookX = wT * (3.2 * wave(t, 1600) * (1 - 0.5 * thinkZoom))
-  const scanLookY = wT * (2.2 * wave(t, 3200, 0.25))
+  const readT = loop(t, 3600) * 3600
+  const scanLookX = wT * track(readT, READ_X)
+  const scanLookY = wT * track(readT, READ_Y)
   const lookX = c('lookX') + scanLookX + redShake * 0.45
   const lookY = c('lookY') + scanLookY
 
