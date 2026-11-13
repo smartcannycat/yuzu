@@ -8,7 +8,8 @@ import vueDevTools from 'vite-plugin-vue-devtools'
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const proxyTarget = env.DEV_PROXY_TARGET || 'http://127.0.0.1:8000'
+  const proxyTarget =
+    process.env.DEV_PROXY_TARGET || env.DEV_PROXY_TARGET || 'http://127.0.0.1:8000'
 
   return {
     plugins: [vue(), vueDevTools(), tailwindcss()],
@@ -21,7 +22,7 @@ export default defineConfig(({ mode }) => {
       proxy: {
         '/api': {
           target: proxyTarget,
-          changeOrigin: true,
+          changeOrigin: !proxyTarget.includes('host.docker.internal'),
         },
       },
     },
