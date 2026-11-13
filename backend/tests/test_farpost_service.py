@@ -6,17 +6,21 @@ from datetime import timedelta
 from unittest.mock import Mock
 
 import pytest
+from django.db import IntegrityError, connection
 from django.utils import timezone
 
-from apps.core.enums import ExternalCacheSource, FuelType, WorkType
+from apps.core.enums import ExternalCacheSource, FuelType, ItemProcessingStatus, WorkType
 from apps.core.models import ExternalCache
+from apps.lots import pipeline
 from apps.lots.integrations.farpost.client import FarpostFetchError, PartCriteria, PartOffer
 from apps.lots.integrations.farpost.service import (
     _cache_key,
     estimate_repair,
+    save_repair_estimate,
     search_cached,
 )
-from apps.lots.models import Lot, LotDefect
+from apps.lots.models import Batch, BatchItem, Lot, LotDefect, ServiceWorkItem
+from apps.lots.queries import _build_farpost_out
 
 CRITERIA = PartCriteria(
     "Toyota", "Corolla", "NRE210", "front_left_door", "дверь", "левая", "передняя", "070"
@@ -182,3 +186,64 @@ def test_cached_fallback_does_not_claim_stock_or_color(lot):
     assert result.parts[0].is_statistical_fallback
     assert not result.has_color_matched_parts
     assert result.total_works_rub == 12500
+
+
+@pytest.mark.django_db
+def test_save_idempotence_and_api_contract(lot):
+    defect(lot, "X")
+    for _ in range(2):
+        summary = save_repair_estimate(lot, client=source())
+    assert summary.parts.count() == 1
+    assert summary.service_works.count() == 2
+    payload = _build_farpost_out(summary).model_dump()
+    assert "https://" not in str(payload) and "farpost_url" not in str(payload)
+    assert (
+        payload["grand_total_repair_rub"]
+        == payload["total_parts_from_rub"] + payload["total_works_rub"]
+    )
+    assert "уже включена" not in payload["included_in_turnkey_hint_ru"]
+
+
+@pytest.mark.django_db
+def test_failed_write_rolls_back_previous_summary(lot, monkeypatch):
+    defect(lot, "X")
+    summary = save_repair_estimate(lot, client=source())
+
+    def fail(*args, **kwargs):
+        raise IntegrityError("forced write failure")
+
+    monkeypatch.setattr(ServiceWorkItem.objects, "bulk_create", fail)
+    with pytest.raises(IntegrityError):
+        save_repair_estimate(lot, client=source())
+    summary.refresh_from_db()
+    assert summary.parts.count() == 1 and summary.service_works.count() == 2
+    assert summary.grand_total_repair_rub == 20500
+
+
+@pytest.mark.django_db(transaction=True)
+def test_http_is_outside_write_transaction(lot):
+    defect(lot, "X")
+    client = source()
+
+    def search(*args, **kwargs):
+        assert not connection.in_atomic_block
+        return [OFFER]
+
+    client.search.side_effect = search
+    save_repair_estimate(lot, client=client)
+
+
+@pytest.mark.django_db
+def test_pipeline_persists_fallback_without_failing_batch(lot, monkeypatch):
+    defect(lot, "X")
+    batch = Batch.objects.create(user=lot.user)
+    item = BatchItem.objects.create(
+        batch=batch, lot=lot, file_index=0, original_filename="sheet.jpg"
+    )
+    monkeypatch.setattr(
+        "apps.lots.integrations.farpost.service.FarpostClient", lambda **_kw: source(error=True)
+    )
+    assert pipeline._step_farpost_parts(item)
+    assert lot.farpost_repair.parts.get().is_statistical_fallback
+    item.refresh_from_db()
+    assert item.status != ItemProcessingStatus.FAILED
