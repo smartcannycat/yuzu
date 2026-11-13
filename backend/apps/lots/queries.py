@@ -1,16 +1,18 @@
 import math
 import uuid
 
-from django.db.models import CharField, Count, F, Value
+from django.db.models import CharField, Count, F, Q, Value
 from django.db.models.functions import Coalesce, Concat
 
 from apps.core.enums import (
     BatchStatus,
     ItemProcessingStatus,
+    LotLifecycleFilter,
     TrafficLightColor,
 )
 from apps.core.exceptions import NotFoundProblemError
 from apps.lots import schemas
+from apps.lots.lifecycle import archive_expired_lots_for_user
 from apps.lots.models import (
     Batch,
     BatchItem,
@@ -85,6 +87,11 @@ def _build_lot_summary(lot: Lot) -> schemas.LotSummary:
         has_anomaly=lot.has_anomaly,
         anomaly_text=lot.anomaly_text,
         thumbnail_url=_build_thumbnail_url(lot),
+        auction_date=lot.auction_date,
+        is_archived=lot.is_archived,
+        archived_at=lot.archived_at,
+        archived_reason=lot.archived_reason,
+        expires_at=lot.expires_at,
         created_at=lot.created_at,
     )
 
@@ -148,12 +155,14 @@ def _facet_counts(qs, field: str) -> list[schemas.FilterCountItem]:
 
 def _build_available_filters(
     *,
+    archived_lots_count: int,
     make_facet_qs,
     model_facet_qs,
     verdict_facet_qs,
 ) -> schemas.AvailableFilters:
     return schemas.AvailableFilters(
         total_lots_count=make_facet_qs.count(),
+        archived_lots_count=archived_lots_count,
         makes=_facet_counts(make_facet_qs, "make"),
         models=_facet_counts(model_facet_qs, "model"),
         counts_by_verdict={
@@ -187,6 +196,7 @@ def _build_in_progress(user: User) -> schemas.InProgressSummary:
             batch__status__in=_ACTIVE_BATCH_STATUSES,
             status__in=_PROCESSING_ITEM_STATUSES,
         )
+        .filter(Q(lot__isnull=True) | Q(lot__deleted_at__isnull=True))
         .select_related("batch")
         .order_by("-batch__created_at", "file_index"),
     )
@@ -205,13 +215,26 @@ def get_lots_list(
     model: str | None = None,
     verdict: TrafficLightColor | None = None,
     has_anomaly: bool | None = None,
+    lifecycle: LotLifecycleFilter = LotLifecycleFilter.ACTIVE,
     page: int = _DEFAULT_PAGE,
     page_size: int = _DEFAULT_PAGE_SIZE,
     sort_by: str = "created_at",
     sort_order: str = "desc",
 ) -> schemas.LotListResponse:
     """Return a paginated, filtered, and faceted lot feed for the user."""
-    base_qs = Lot.objects.filter(user=user, completed_at__isnull=False)
+    archive_expired_lots_for_user(user)
+    non_deleted_qs = Lot.objects.filter(
+        user=user,
+        completed_at__isnull=False,
+        deleted_at__isnull=True,
+    )
+    archived_lots_count = non_deleted_qs.filter(is_archived=True).count()
+    if lifecycle == LotLifecycleFilter.ACTIVE:
+        base_qs = non_deleted_qs.filter(is_archived=False)
+    elif lifecycle == LotLifecycleFilter.ARCHIVED:
+        base_qs = non_deleted_qs.filter(is_archived=True)
+    else:
+        base_qs = non_deleted_qs
     searched = _apply_search(base_qs, query)
     if has_anomaly is not None:
         searched = searched.filter(has_anomaly=has_anomaly)
@@ -244,6 +267,7 @@ def get_lots_list(
             total_pages=total_pages,
         ),
         available_filters=_build_available_filters(
+            archived_lots_count=archived_lots_count,
             make_facet_qs=make_facet_qs,
             model_facet_qs=model_facet_qs,
             verdict_facet_qs=verdict_facet_qs,
@@ -272,6 +296,7 @@ def _build_normalized_sheet(lot: Lot) -> schemas.NormalizedSheet:
         lot_number=lot.lot_number,
         auction_house=lot.auction_house,
         auction_branch=lot.auction_branch,
+        auction_date=lot.auction_date,
         auction_strictness_index=lot.auction_strictness_index,
         make=lot.make,
         model=lot.model,
@@ -409,6 +434,10 @@ def _build_lot_detail(lot: Lot) -> schemas.LotDetailResponse:
         lot_id=lot.id,
         created_at=lot.created_at,
         updated_at=lot.updated_at,
+        is_archived=lot.is_archived,
+        archived_at=lot.archived_at,
+        archived_reason=lot.archived_reason,
+        expires_at=lot.expires_at,
         passport=_build_normalized_sheet(lot),
         verdict=schemas.TrafficLightVerdict.model_validate(lot.verdict_detail),
         market=schemas.MarketComparisonInfo.model_validate(lot.market_info),
@@ -421,11 +450,17 @@ def _build_lot_detail(lot: Lot) -> schemas.LotDetailResponse:
 
 def get_lot_detail(user: User, lot_id: uuid.UUID) -> schemas.LotDetailResponse:
     """Fetch and serialize the full specification for a completed user lot."""
+    archive_expired_lots_for_user(user)
     try:
         lot = (
             Lot.objects.select_related(*_DETAIL_RELATED_FIELDS)
             .prefetch_related(*_DETAIL_PREFETCH_FIELDS)
-            .get(id=lot_id, user=user, completed_at__isnull=False)
+            .get(
+                id=lot_id,
+                user=user,
+                completed_at__isnull=False,
+                deleted_at__isnull=True,
+            )
         )
     except Lot.DoesNotExist as exc:
         raise NotFoundProblemError(

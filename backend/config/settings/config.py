@@ -2,7 +2,7 @@ import json
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -53,6 +53,8 @@ class AppSettings(BaseSettings):
     ML_SERVICE_TIMEOUT_SEC: float = 30.0
     CBRF_API_URL: str = "https://www.cbr-xml-daily.ru/daily_json.js"
     HTTP_CLIENT_TIMEOUT_SEC: float = 10.0
+    FARPOST_TIMEOUT_SEC: float = Field(default=5.0, gt=0, allow_inf_nan=False)
+    FARPOST_BUDGET_SEC: float = Field(default=20.0, gt=0, allow_inf_nan=False)
 
     @field_validator("ALLOWED_HOSTS", "CORS_ALLOWED_ORIGINS")
     @classmethod
