@@ -1,0 +1,16 @@
+# Lefthook pre-commit hook configuration
+# Docs: https://github.com/evilmartians/lefthook
+
+pre-commit:
+  parallel: true
+  commands:
+    ruff-check:
+      root: "backend/"
+      glob: "*.py"
+      run: uv run ruff check --fix {staged_files}
+      stage_fixed: true
+    ruff-format:
+      root: "backend/"
+      glob: "*.py"
+      run: uv run ruff format {staged_files}
+      stage_fixed: true

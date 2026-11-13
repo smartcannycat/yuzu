@@ -1,0 +1,80 @@
+[project]
+name = "yuzu-backend"
+version = "0.1.0"
+description = "Yuzu (AuctionCalc) REST API backend built with Django Ninja Extra, Granian, and Ruff"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "django>=6.1.3",
+    "django-cors-headers>=4.9.0",
+    "django-ninja>=1.7.3",
+    "django-ninja-extra>=0.31.7",
+    "django-ninja-jwt>=5.4.5",
+    "granian[reload]>=2.8.7",
+    "psycopg[binary]>=3.3.8",
+    "pydantic-settings>=2.16.2",
+    "pydantic[email]>=2.14.3",
+]
+
+[dependency-groups]
+dev = [
+    "lefthook>=2.2.2",
+    "pytest>=9.2.0",
+    "pytest-django>=4.14.0",
+    "ruff>=0.17.4",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["config", "apps", "tests"]
+force-exclude = true
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+    "*/migrations/*",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "ARG",    # flake8-unused-arguments
+    "SIM",    # flake8-simplify
+    "TCH",    # flake8-type-checking
+    "PTH",    # flake8-use-pathlib
+    "RUF",    # Ruff-specific rules
+]
+ignore = [
+    "B008",   # Do not perform function calls in argument defaults
+    "RUF001", # Allow Cyrillic characters in localized user-facing strings
+    "RUF012", # Mutable class attributes should be annotated with typing.ClassVar
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ARG001", "ARG002"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["config", "apps"]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings.base"
+pythonpath = ["."]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+addopts = "-v --strict-markers"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
