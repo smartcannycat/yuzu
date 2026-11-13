@@ -1,17 +1,22 @@
 import { delay } from '@/api/mock/helpers'
+import { buildMockLotDetail, recalculateMockLotDetail } from '@/api/mock/lotDetails'
 import { createMockLotsWorkspace } from '@/api/mock/lotsBatches'
 import { MOCK_IN_PROGRESS_SUMMARY, SEEDED_MOCK_LOTS } from '@/api/mock/lotsSeed'
 import type { LotsApi } from '@/api/types'
-import type {
-  AvailableFilters,
-  BatchCreateResponse,
-  BatchProgressResponse,
-  FilterCountItem,
-  InProgressSummary,
-  LotListQueryParams,
-  LotListResponse,
-  LotSummary,
-  TrafficLightColor,
+import {
+  ApiError,
+  type AvailableFilters,
+  type BatchCreateResponse,
+  type BatchProgressResponse,
+  type FilterCountItem,
+  type InProgressSummary,
+  type LotDetailResponse,
+  type LotListQueryParams,
+  type LotListResponse,
+  type LotSummary,
+  type RecalculateRequest,
+  type RecalculateResponse,
+  type TrafficLightColor,
 } from '@/types/api'
 
 type FilterFacet = 'make' | 'model' | 'verdict'
@@ -184,12 +189,44 @@ export function queryMockLots(
 
 export function createMockLotsApi(defaultDelay: number, persistState = false): LotsApi {
   const workspace = createMockLotsWorkspace({ persistState })
+  const detailCache = new Map<string, LotDetailResponse>()
+
+  function resolveLotDetail(lotId: string): LotDetailResponse {
+    const cached = detailCache.get(lotId)
+    if (cached) return cached
+
+    const snapshot = workspace.getFeedSnapshot()
+    const summary = snapshot.lots.find((item) => item.lot_id === lotId)
+    if (!summary) {
+      throw new ApiError({
+        type: 'about:blank',
+        title: 'Not Found',
+        status: 404,
+        detail: 'Лот не найден.',
+      })
+    }
+
+    const detail = buildMockLotDetail(summary)
+    detailCache.set(lotId, detail)
+    return detail
+  }
 
   return {
     async list(params?: LotListQueryParams): Promise<LotListResponse> {
       await delay(Math.min(defaultDelay, 160))
       const snapshot = workspace.getFeedSnapshot()
       return queryMockLots(params, snapshot.lots, snapshot.inProgress)
+    },
+
+    async getDetail(lotId: string): Promise<LotDetailResponse> {
+      await delay(Math.min(defaultDelay, 160))
+      return resolveLotDetail(lotId)
+    },
+
+    async recalculate(lotId: string, payload: RecalculateRequest): Promise<RecalculateResponse> {
+      await delay(Math.min(defaultDelay, 120))
+      const base = resolveLotDetail(lotId)
+      return recalculateMockLotDetail(base, payload)
     },
 
     async createBatch(files: readonly File[]): Promise<BatchCreateResponse> {

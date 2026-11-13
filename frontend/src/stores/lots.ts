@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, toRaw } from 'vue'
 
 import { apiClient } from '@/api'
 import type { ApiClient } from '@/api/types'
@@ -7,11 +7,14 @@ import {
   ApiError,
   type AvailableFilters,
   type InProgressSummary,
+  type LotDetailResponse,
   type LotListQueryParams,
   type LotSortBy,
   type LotSortOrder,
   type LotSummary,
   type PaginationMeta,
+  type RecalculateRequest,
+  type RecalculateResponse,
   type TrafficLightColor,
 } from '@/types/api'
 
@@ -62,11 +65,36 @@ export const useLotsStore = defineStore('lots', () => {
   const hasLoadedOnce = ref(false)
   const errorMessage = ref<string | null>(null)
 
+  const baselineLotDetailsById = ref<Record<string, LotDetailResponse>>({})
+  const currentLotDetail = ref<LotDetailResponse | null>(null)
+  const isLoadingDetail = ref(false)
+  const detailError = ref<string | null>(null)
+  const detailErrorStatus = ref<number | null>(null)
+  const isRecalculating = ref(false)
+  const recalculateError = ref<string | null>(null)
+
   // Monotonic sequence guard ensures stale responses never overwrite newer filter results.
   let latestRequestId = 0
   let activeLoadingId = 0
   let activeLoadingMoreId = 0
   let latestPreviewRequestId = 0
+  let latestDetailRequestId = 0
+  let latestRecalcRequestId = 0
+
+  const isSimulationModified = computed(() => {
+    const current = currentLotDetail.value
+    if (!current) return false
+    const baseline = baselineLotDetailsById.value[current.lot_id]
+    if (!baseline) return false
+
+    return (
+      current.economics.wise_cost_ladder.car_bid_jpy !==
+        baseline.economics.wise_cost_ladder.car_bid_jpy ||
+      current.economics.customs.is_commercial_util !==
+        baseline.economics.customs.is_commercial_util ||
+      current.economics.is_repairs_included !== baseline.economics.is_repairs_included
+    )
+  })
 
   const activeFiltersCount = computed(() => {
     let count = 0
@@ -197,6 +225,102 @@ export const useLotsStore = defineStore('lots', () => {
     }
   }
 
+  async function fetchLotDetail(
+    lotId: string,
+    client: ApiClient = apiClient,
+  ): Promise<LotDetailResponse | null> {
+    const requestId = ++latestDetailRequestId
+    latestRecalcRequestId += 1
+    isRecalculating.value = false
+    isLoadingDetail.value = true
+    detailError.value = null
+    detailErrorStatus.value = null
+    recalculateError.value = null
+
+    if (currentLotDetail.value?.lot_id !== lotId) {
+      currentLotDetail.value = null
+    }
+
+    try {
+      const response = await client.lots.getDetail(lotId)
+      if (requestId !== latestDetailRequestId) return null
+
+      baselineLotDetailsById.value[lotId] = structuredClone(toRaw(response))
+      currentLotDetail.value = response
+      return response
+    } catch (error: unknown) {
+      if (requestId !== latestDetailRequestId) return null
+      detailErrorStatus.value = error instanceof ApiError ? error.status : 0
+      detailError.value =
+        error instanceof ApiError
+          ? error.detail
+          : error instanceof Error
+            ? error.message
+            : 'Не удалось загрузить спецификацию лота.'
+      return null
+    } finally {
+      if (requestId === latestDetailRequestId) {
+        isLoadingDetail.value = false
+      }
+    }
+  }
+
+  async function recalculateLot(
+    lotId: string,
+    payload: RecalculateRequest,
+    client: ApiClient = apiClient,
+  ): Promise<RecalculateResponse | null> {
+    const requestId = ++latestRecalcRequestId
+    isRecalculating.value = true
+    recalculateError.value = null
+
+    try {
+      const response = await client.lots.recalculate(lotId, payload)
+      if (requestId !== latestRecalcRequestId || currentLotDetail.value?.lot_id !== lotId) {
+        return null
+      }
+
+      currentLotDetail.value = {
+        ...currentLotDetail.value,
+        updated_at: response.recalculated_at,
+        verdict: response.verdict,
+        economics: {
+          ...currentLotDetail.value.economics,
+          is_repairs_included: response.include_repairs,
+          customs: response.customs,
+          wise_cost_ladder: response.wise_cost_ladder,
+        },
+      }
+
+      return response
+    } catch (error: unknown) {
+      if (requestId !== latestRecalcRequestId || currentLotDetail.value?.lot_id !== lotId) {
+        return null
+      }
+      recalculateError.value =
+        error instanceof ApiError
+          ? error.detail
+          : error instanceof Error
+            ? error.message
+            : 'Не удалось пересчитать экономику лота.'
+      return null
+    } finally {
+      if (requestId === latestRecalcRequestId) {
+        isRecalculating.value = false
+      }
+    }
+  }
+
+  function resetLotSimulation(lotId: string): void {
+    latestRecalcRequestId += 1
+    isRecalculating.value = false
+    recalculateError.value = null
+    const baseline = baselineLotDetailsById.value[lotId]
+    if (baseline) {
+      currentLotDetail.value = structuredClone(toRaw(baseline))
+    }
+  }
+
   function resetFilters(): void {
     query.value = ''
     selectedMake.value = null
@@ -212,6 +336,8 @@ export const useLotsStore = defineStore('lots', () => {
     activeLoadingId += 1
     activeLoadingMoreId += 1
     latestPreviewRequestId += 1
+    latestDetailRequestId += 1
+    latestRecalcRequestId += 1
     items.value = []
     inProgress.value = createEmptyInProgress()
     pagination.value = createEmptyPagination()
@@ -220,6 +346,13 @@ export const useLotsStore = defineStore('lots', () => {
     isLoadingMore.value = false
     hasLoadedOnce.value = false
     errorMessage.value = null
+    baselineLotDetailsById.value = {}
+    currentLotDetail.value = null
+    isLoadingDetail.value = false
+    detailError.value = null
+    detailErrorStatus.value = null
+    isRecalculating.value = false
+    recalculateError.value = null
     resetFilters()
   }
 
@@ -239,6 +372,13 @@ export const useLotsStore = defineStore('lots', () => {
     isLoadingMore,
     hasLoadedOnce,
     errorMessage,
+    currentLotDetail,
+    isLoadingDetail,
+    detailError,
+    detailErrorStatus,
+    isRecalculating,
+    recalculateError,
+    isSimulationModified,
     activeFiltersCount,
     hasAnyActiveFilter,
     hasMore,
@@ -246,6 +386,9 @@ export const useLotsStore = defineStore('lots', () => {
     refreshLotsSilently,
     loadMore,
     fetchFilterPreview,
+    fetchLotDetail,
+    recalculateLot,
+    resetLotSimulation,
     resetFilters,
     clear,
   }

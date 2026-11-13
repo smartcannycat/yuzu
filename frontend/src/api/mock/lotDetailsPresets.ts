@@ -1,0 +1,682 @@
+import type {
+  AnomalyAlert,
+  BodyPanel,
+  DamagedPartItem,
+  FuelType,
+  NormalizedDefect,
+  PastAuctionRecord,
+  RiskFlags,
+  ServiceWorkItem,
+} from '@/types/api'
+
+export interface PresetDetailConfig {
+  trim: string | null
+  modelCode: string
+  auctionBranch: string
+  strictness: number
+  powerHp: number
+  fuelType: FuelType
+  driveType: '2WD' | '4WD'
+  transmission: string
+  colorRu: string
+  paintCode: string
+  exteriorGrade: string
+  interiorGrade: string
+  shakenUntil: string | null
+  recyclingYen: number
+  equipment: string[]
+  defects: NormalizedDefect[]
+  parts: DamagedPartItem[]
+  serviceWorks: ServiceWorkItem[]
+  bodySummaryRu: string
+  interiorSummaryRu: string
+  reasoningBullets: string[]
+  inspectorNotesRu: string[]
+  inspectorNotesRaw: string[]
+  sellerCommentsRu: string[]
+  ocrWarnings: string[]
+  analogsCount: number
+  anomalies: AnomalyAlert[]
+  history: PastAuctionRecord[]
+  hasCriticalAnomaly: boolean
+  isCommercialUtilDefault?: boolean
+  riskFlagsOverride?: Partial<RiskFlags>
+}
+
+export const PANEL_LABELS_RU: Record<BodyPanel, string> = {
+  front_bumper: 'Передний бампер',
+  rear_bumper: 'Задний бампер',
+  hood: 'Капот',
+  roof: 'Крыша',
+  tailgate: 'Пятая дверь / крышка багажника',
+  front_left_fender: 'Переднее левое крыло',
+  front_right_fender: 'Переднее правое крыло',
+  front_left_door: 'Передняя левая дверь',
+  front_right_door: 'Передняя правая дверь',
+  rear_left_door: 'Задняя левая дверь',
+  rear_right_door: 'Задняя правая дверь',
+  rear_left_quarter: 'Заднее левое крыло',
+  rear_right_quarter: 'Заднее правое крыло',
+  left_sill: 'Левый порог',
+  right_sill: 'Правый порог',
+  windshield: 'Лобовое стекло',
+}
+
+export const PRESET_CONFIGS: Record<string, PresetDetailConfig> = {
+  '892b4e10-3a2c-411f-a801-019283746501': {
+    trim: 'W×B Hybrid',
+    modelCode: '6AA-ZWE211W',
+    auctionBranch: 'TAA Chubu',
+    strictness: 1.0,
+    powerHp: 122,
+    fuelType: 'hybrid',
+    driveType: '2WD',
+    transmission: 'Вариатор (e-CVT)',
+    colorRu: 'Белый перламутр',
+    paintCode: '070',
+    exteriorGrade: 'B',
+    interiorGrade: 'B',
+    shakenUntil: '10.2027',
+    recyclingYen: 10940,
+    equipment: [
+      'Toyota Safety Sense',
+      'LED-оптика',
+      'Двухзонный климат-контроль',
+      'Камера заднего вида',
+      'Подогрев сидений',
+      'Литые диски R17',
+    ],
+    defects: [
+      {
+        panel_id: 'front_left_door',
+        panel_ru: PANEL_LABELS_RU.front_left_door,
+        defect_types: ['XX'],
+        severity: null,
+        raw_code: 'XX',
+        description_ru: 'Передняя левая дверь — менялась в Японии (болтовая навесная деталь)',
+      },
+      {
+        panel_id: 'front_bumper',
+        panel_ru: PANEL_LABELS_RU.front_bumper,
+        defect_types: ['A'],
+        severity: 2,
+        raw_code: 'A2',
+        description_ru: 'Передний бампер — потёртость нижней губы слева (~15 см)',
+      },
+      {
+        panel_id: 'rear_right_quarter',
+        panel_ru: PANEL_LABELS_RU.rear_right_quarter,
+        defect_types: ['U'],
+        severity: 1,
+        raw_code: 'U1',
+        description_ru: 'Заднее правое крыло — мелкая вмятина без повреждения ЛКП (PDR)',
+      },
+    ],
+    parts: [
+      {
+        panel_id: 'front_left_door',
+        defect_code: 'XX',
+        part_name_ru: 'Передняя левая дверь (контрактная, код краски 070)',
+        subtitle_ru: 'В наличии во Владивостоке · в заводской цвет без перекраса',
+        price_from_rub: 18000,
+        in_stock_vladivostok: true,
+        is_statistical_fallback: false,
+      },
+    ],
+    serviceWorks: [
+      {
+        work_type: 'mount_dismount',
+        label_ru: 'Регулировка зазоров и проверка навески двери',
+        amount_rub: 4000,
+        zero_cost_reason_ru: null,
+      },
+      {
+        work_type: 'paint',
+        label_ru: 'Окрас детали',
+        amount_rub: 0,
+        zero_cost_reason_ru: 'не требуется (деталь найдена в цвет 070)',
+      },
+      {
+        work_type: 'pdr_and_polish',
+        label_ru: 'Локальная полировка бампера и PDR заднего крыла',
+        amount_rub: 9000,
+        zero_cost_reason_ru: null,
+      },
+    ],
+    bodySummaryRu: 'Замена передней левой двери без захода на стойки, косметика A2/U1',
+    interiorSummaryRu: 'Салон B — чистый, без посторонних запахов, лёгкий износ руля',
+    reasoningBullets: [
+      'Аукционный дом высшей строгости TAA Chubu (индекс строгости 1.00)',
+      'Пробег 62 000 км подтверждён первичной регистрацией и сервисной историей',
+      'Дверь подобрана в заводской цвет 070 во Владивостоке без дорогостоящей покраски',
+      'Мощность 122 л.с. укладывается в порог 160 л.с. (льготный утильсбор 5 200 ₽)',
+    ],
+    inspectorNotesRu: [
+      'Передняя левая дверь заменена в Японии (навесная деталь, петли и стойка без ремонта)',
+      'Мелкие царапины по нижней кромке переднего бампера',
+      'Салон чистый, потолок и обшивка дверей без прожогов',
+      'Сервисная книжка и два смарт-ключа в комплекте',
+    ],
+    inspectorNotesRaw: [
+      '左Fドア交換跡あり（ピラー異常なし）',
+      'Fバンパー下部スリキズ',
+      '室内キレイ・スマートキー2本',
+    ],
+    sellerCommentsRu: ['Один владелец в Японии', 'Обслуживание у дилера Toyota'],
+    ocrWarnings: [],
+    analogsCount: 14,
+    anomalies: [],
+    history: [
+      {
+        auction_date: '24.05.2026',
+        auction_house: 'TAA Chubu',
+        auction_strictness: 1.0,
+        lot_number: '3142',
+        overall_grade: '4',
+        mileage_km: 62000,
+        defects_summary: 'XX лев. передн. дверь, A2 передн. бампер',
+        closing_price_jpy: 1240000,
+        sheet_archive_url: null,
+      },
+    ],
+    hasCriticalAnomaly: false,
+    riskFlagsOverride: { panel_replaced_xx: true },
+  },
+  '892b4e10-3a2c-411f-a801-019283746502': {
+    trim: 'e:HEV Z',
+    modelCode: '6AA-RV5',
+    auctionBranch: 'USS Tokyo',
+    strictness: 0.78,
+    powerHp: 131,
+    fuelType: 'hybrid',
+    driveType: '2WD',
+    transmission: 'Редуктор e:HEV',
+    colorRu: 'Серый металлик',
+    paintCode: 'NH883P',
+    exteriorGrade: 'A',
+    interiorGrade: 'A',
+    shakenUntil: '08.2027',
+    recyclingYen: 11400,
+    equipment: [
+      'Honda Sensing',
+      'Адаптивный круиз-контроль',
+      'Электропривод багажника',
+      'Беспроводная зарядка',
+      'Подогрев руля и сидений',
+    ],
+    defects: [
+      {
+        panel_id: 'rear_bumper',
+        panel_ru: PANEL_LABELS_RU.rear_bumper,
+        defect_types: ['A'],
+        severity: 1,
+        raw_code: 'A1',
+        description_ru: 'Задний бампер — незаметная микроцарапина у порога погрузки',
+      },
+    ],
+    parts: [],
+    serviceWorks: [
+      {
+        work_type: 'pdr_and_polish',
+        label_ru: 'Лёгкая предпродажная полировка заднего бампера',
+        amount_rub: 4500,
+        zero_cost_reason_ru: null,
+      },
+    ],
+    bodySummaryRu: 'Практически идеальный кузов оценки A — только мелкий скол A1 на бампере',
+    interiorSummaryRu: 'Салон A — без потёртостей, состояние близкое к новому авто',
+    reasoningBullets: [
+      'Высокий общий балл 4.5 и оценки кузова/салона A/A',
+      'Проходной возраст 3–5 лет с минимальной пошлиной по объёму 1 496 см³',
+      'Мощность 131 л.с. сохраняет льготный утильсбор 5 200 ₽',
+    ],
+    inspectorNotesRu: [
+      'На кузове только незначительные следы эксплуатации (A1)',
+      'Электроника и гибридная батарея без ошибок по диагностике',
+    ],
+    inspectorNotesRaw: ['外装極上 A1のみ', 'HVシステム正常'],
+    sellerCommentsRu: ['Гаражное хранение', 'Зимняя резина в багажнике не прилагается'],
+    ocrWarnings: [],
+    analogsCount: 19,
+    anomalies: [],
+    history: [
+      {
+        auction_date: '18.05.2026',
+        auction_house: 'USS Tokyo',
+        auction_strictness: 0.78,
+        lot_number: '8412',
+        overall_grade: '4.5',
+        mileage_km: 38000,
+        defects_summary: 'A1 задний бампер',
+        closing_price_jpy: 1640000,
+        sheet_archive_url: null,
+      },
+    ],
+    hasCriticalAnomaly: false,
+  },
+  '892b4e10-3a2c-411f-a801-019283746503': {
+    trim: 'X e-Power',
+    modelCode: '6AA-E13',
+    auctionBranch: 'CAA Chubu',
+    strictness: 0.85,
+    powerHp: 116,
+    fuelType: 'hybrid',
+    driveType: '2WD',
+    transmission: 'Редуктор e-Power',
+    colorRu: 'Чёрный металлик',
+    paintCode: 'KH3',
+    exteriorGrade: 'C',
+    interiorGrade: 'B',
+    shakenUntil: '03.2027',
+    recyclingYen: 9850,
+    equipment: [
+      'ProPILOT',
+      'Камеры кругового обзора 360°',
+      'Климат-контроль',
+      'Бесключевой доступ',
+    ],
+    defects: [
+      {
+        panel_id: 'tailgate',
+        panel_ru: PANEL_LABELS_RU.tailgate,
+        defect_types: ['W'],
+        severity: 2,
+        raw_code: 'W2',
+        description_ru: 'Пятая дверь — вторичный окрас с заметным переходом лака (W2)',
+      },
+      {
+        panel_id: 'rear_bumper',
+        panel_ru: PANEL_LABELS_RU.rear_bumper,
+        defect_types: ['XX'],
+        severity: null,
+        raw_code: 'XX',
+        description_ru: 'Задний бампер — заменялся ранее (незначительный люфт крепления справа)',
+      },
+      {
+        panel_id: 'front_right_door',
+        panel_ru: PANEL_LABELS_RU.front_right_door,
+        defect_types: ['U'],
+        severity: 2,
+        raw_code: 'U2',
+        description_ru: 'Передняя правая дверь — вмятина размером ~6 см по ребру жёсткости',
+      },
+    ],
+    parts: [
+      {
+        panel_id: 'rear_bumper',
+        defect_code: 'XX',
+        part_name_ru: 'Кронштейн и ревизия заднего бампера (KH3)',
+        subtitle_ru: 'Контрактный узел в цвет во Владивостоке',
+        price_from_rub: 12000,
+        in_stock_vladivostok: true,
+        is_statistical_fallback: false,
+      },
+    ],
+    serviceWorks: [
+      {
+        work_type: 'paint',
+        label_ru: 'Локальная полировка и перепыл пятой двери W2',
+        amount_rub: 14000,
+        zero_cost_reason_ru: null,
+      },
+      {
+        work_type: 'bodywork',
+        label_ru: 'Вытяжка вмятины на правой двери + регулировка бампера',
+        amount_rub: 11000,
+        zero_cost_reason_ru: null,
+      },
+    ],
+    bodySummaryRu: 'Вторичный окрас пятой двери W2 и замена заднего бампера, силовая цела',
+    interiorSummaryRu: 'Салон B — аккуратный, незначительные следы на пластике багажника',
+    reasoningBullets: [
+      'Требуется проверка зазоров крышки багажника и качества окраса W2',
+      'Чистая экономическая выгода невысока (+75 000 ₽) — критично не переплачивать на ставке',
+    ],
+    inspectorNotesRu: [
+      'Пятая дверь имеет следы вторичного окраса (W2)',
+      'Задний бампер заменён, панель пола багажника без деформаций',
+      'Мелкая вмятина U2 на передней правой двери',
+    ],
+    inspectorNotesRaw: ['バックドア塗装跡 W2', 'Rバンパー交換', '右Fドア U2'],
+    sellerCommentsRu: ['Недавно пройдено ТО в Японии'],
+    ocrWarnings: [],
+    analogsCount: 11,
+    anomalies: [
+      {
+        type: 'unreported_defects',
+        severity: 'warning',
+        title_ru: 'Следы косметического ремонта сзади (W2 / XX)',
+        message_ru:
+          'На предыдущих торгах в 2025 г. задний бампер имел притёртость A3; перед перевыставлением бампер заменили и подкрасили пятую дверь.',
+        diff_details: {
+          archived_val: 'Бампер A3, дверь целая',
+          current_val: 'Бампер XX, дверь W2',
+        },
+      },
+    ],
+    history: [
+      {
+        auction_date: '09.11.2025',
+        auction_house: 'USS Nagoya',
+        auction_strictness: 0.78,
+        lot_number: '1408',
+        overall_grade: '3.5',
+        mileage_km: 79200,
+        defects_summary: 'A3 задний бампер, U2 правая дверь',
+        closing_price_jpy: 860000,
+        sheet_archive_url: null,
+      },
+    ],
+    hasCriticalAnomaly: false,
+    riskFlagsOverride: { panel_replaced_xx: true },
+  },
+  '892b4e10-3a2c-411f-a801-019283746504': {
+    trim: 'Hybrid Z Leather',
+    modelCode: '6AA-AXUH80',
+    auctionBranch: 'JU Aichi',
+    strictness: 0.6,
+    powerHp: 178,
+    fuelType: 'hybrid',
+    driveType: '2WD',
+    transmission: 'Вариатор (e-CVT)',
+    colorRu: 'Чёрный',
+    paintCode: '202',
+    exteriorGrade: 'D',
+    interiorGrade: 'C',
+    shakenUntil: null,
+    recyclingYen: 13200,
+    equipment: [
+      'Кожаный салон',
+      'Акустика JBL',
+      'Память водительского сиденья',
+      'Вентиляция передних кресел',
+    ],
+    defects: [
+      {
+        panel_id: 'rear_left_quarter',
+        panel_ru: PANEL_LABELS_RU.rear_left_quarter,
+        defect_types: ['XX'],
+        severity: null,
+        raw_code: 'XX',
+        description_ru:
+          'Заднее левое крыло — вырезка и вварка четверти, швы в нише багажника (оценка R)',
+      },
+      {
+        panel_id: 'left_sill',
+        panel_ru: PANEL_LABELS_RU.left_sill,
+        defect_types: ['W', 'U'],
+        severity: 3,
+        raw_code: 'W3/U3',
+        description_ru: 'Левый порог — тяжёлая рихтовка и толстый слой шпатлёвки',
+      },
+      {
+        panel_id: 'windshield',
+        panel_ru: PANEL_LABELS_RU.windshield,
+        defect_types: ['A'],
+        severity: 2,
+        raw_code: 'G',
+        description_ru: 'Лобовое стекло — скол/трещина со стороны пассажира (риск для СБКТС)',
+      },
+    ],
+    parts: [
+      {
+        panel_id: 'windshield',
+        defect_code: 'G',
+        part_name_ru: 'Лобовое стекло с обогревом зоны щёток',
+        subtitle_ru: 'Необходимо для прохождения лаборатории СБКТС',
+        price_from_rub: 29000,
+        in_stock_vladivostok: true,
+        is_statistical_fallback: false,
+      },
+      {
+        panel_id: 'rear_left_quarter',
+        defect_code: 'XX',
+        part_name_ru: 'Герметизация и антикор швов задней арки/багажника',
+        subtitle_ru: 'Статистическая оценка кузовного участка',
+        price_from_rub: 19000,
+        in_stock_vladivostok: false,
+        is_statistical_fallback: true,
+      },
+    ],
+    serviceWorks: [
+      {
+        work_type: 'bodywork',
+        label_ru: 'Стапельная проверка геометрии и обработка левого порога',
+        amount_rub: 38000,
+        zero_cost_reason_ru: null,
+      },
+      {
+        work_type: 'paint',
+        label_ru: 'Перекрас левого порога и заднего крыла',
+        amount_rub: 24000,
+        zero_cost_reason_ru: null,
+      },
+    ],
+    bodySummaryRu: 'Критично: оценка R, вварка заднего левого крыла и следы сварки в багажнике',
+    interiorSummaryRu: 'Салон C — потёртость боковины водительского сиденья, царапины пластика',
+    reasoningBullets: [
+      'Безусловный стоп-фактор: восстановление силовой структуры (задняя стойка / ниша багажника)',
+      'Аукционный кросс-аудит выявил расхождение пробега относительно архивных торгов',
+      'Объём 2 487 см³ и мощность 178 л.с. — риск санкций METI и повышенный утильсбор',
+      'Отрицательная экономика (-110 000 ₽) даже до учёта скрытых кузовных рисков',
+    ],
+    inspectorNotesRu: [
+      'Следы ремонта и сварки в левой задней стойке и нише запасного колеса (оценка R)',
+      'Коррозийный налёт на элементах задней подвески',
+      'Треснувшее лобовое стекло (требуется замена перед СБКТС)',
+    ],
+    inspectorNotesRaw: ['左Rピラー修理跡・トランクフロア歪み', 'Fガラスヒビ', '下廻りサビ'],
+    sellerCommentsRu: ['Продаётся как есть (現状販売)'],
+    ocrWarnings: ['На листе JU применена сокращённая запись номера кузова'],
+    analogsCount: 9,
+    anomalies: [
+      {
+        type: 'odometer_rollback',
+        severity: 'critical',
+        title_ru: 'Подозрение на скрученный пробег (-34 000 км)',
+        message_ru:
+          'На архивных торгах TAA Kinki 12.01.2026 зафиксирован пробег 132 000 км. На текущем аукционе JU заявлено 98 000 км.',
+        diff_details: {
+          archived_val: '132 000 км',
+          current_val: '98 000 км',
+          delta_km: -34000,
+        },
+      },
+      {
+        type: 'concealed_salvage_r',
+        severity: 'critical',
+        title_ru: 'Сложный силовой ремонт в прошлом',
+        message_ru:
+          'На строгой площадке TAA зафиксированы деформация задней стойки и складка пола багажника. При переносе на JU часть комментариев сокращена.',
+        diff_details: {
+          archived_grade: 'R (TAA Kinki)',
+          current_grade: 'R (JU Aichi)',
+        },
+      },
+    ],
+    history: [
+      {
+        auction_date: '12.01.2026',
+        auction_house: 'TAA Kinki',
+        auction_strictness: 1.0,
+        lot_number: '9102',
+        overall_grade: 'R',
+        mileage_km: 132000,
+        defects_summary: 'XX задн. лев. крыло, деформация стойки и пола багажника',
+        closing_price_jpy: 1920000,
+        sheet_archive_url: null,
+      },
+      {
+        auction_date: '04.04.2026',
+        auction_house: 'JU Aichi',
+        auction_strictness: 0.6,
+        lot_number: '5519',
+        overall_grade: 'R',
+        mileage_km: 98000,
+        defects_summary: 'Следы ремонта сзади слева, скол G лобового',
+        closing_price_jpy: null,
+        sheet_archive_url: null,
+      },
+    ],
+    hasCriticalAnomaly: true,
+    isCommercialUtilDefault: false,
+    riskFlagsOverride: {
+      pillar_or_frame_repair: true,
+      repaired_grade_r_ra: true,
+      odometer_issue: true,
+      windshield_damage: true,
+      underbody_rust: true,
+      panel_replaced_xx: true,
+    },
+  },
+  '892b4e10-3a2c-411f-a801-019283746505': {
+    trim: 'GT-H EX',
+    modelCode: '4BA-VN5',
+    auctionBranch: 'USS Sapporo',
+    strictness: 0.78,
+    powerHp: 177,
+    fuelType: 'gasoline',
+    driveType: '4WD',
+    transmission: 'Lineartronic CVT',
+    colorRu: 'Синий металлик',
+    paintCode: 'K7X',
+    exteriorGrade: 'B',
+    interiorGrade: 'B',
+    shakenUntil: '11.2026',
+    recyclingYen: 12100,
+    equipment: [
+      'EyeSight X',
+      'Постоянный полный привод',
+      'Цифровая приборная панель 12.3"',
+      'Светодиодные фары',
+    ],
+    defects: [
+      {
+        panel_id: 'hood',
+        panel_ru: PANEL_LABELS_RU.hood,
+        defect_types: ['A'],
+        severity: 1,
+        raw_code: 'A1',
+        description_ru: 'Капот — несколько мелких сколов от гравия',
+      },
+      {
+        panel_id: 'right_sill',
+        panel_ru: PANEL_LABELS_RU.right_sill,
+        defect_types: ['S'],
+        severity: 1,
+        raw_code: 'S1',
+        description_ru: 'Правый порог — лёгкий поверхностный налёт ржавчины снизу (S1)',
+      },
+    ],
+    parts: [],
+    serviceWorks: [
+      {
+        work_type: 'bodywork',
+        label_ru: 'Антикоррозийная обработка днища и порогов во Владивостоке',
+        amount_rub: 15000,
+        zero_cost_reason_ru: null,
+      },
+    ],
+    bodySummaryRu: 'Ровный кузов 4 балла, отмечен только лёгкий налёт S1 по днищу (Хоккайдо)',
+    interiorSummaryRu: 'Салон B — аккуратный, без посторонних запахов',
+    reasoningBullets: [
+      'Мощность 177 л.с. (> 160 л.с.) — требуется закладывать повышенный утильсбор',
+      'Маржа к рынку РФ (+90 000 ₽) небольшая — покупка оправдана только при снижении ставки',
+    ],
+    inspectorNotesRu: [
+      'Лёгкая поверхностная ржавчина по днищу и правому порогу (S1)',
+      'Система EyeSight и полный привод работают исправно',
+    ],
+    inspectorNotesRaw: ['下廻り軽度サビ S1', 'アイサイト正常'],
+    sellerCommentsRu: ['Один владелец', 'Электронная сервисная книга'],
+    ocrWarnings: [],
+    analogsCount: 7,
+    anomalies: [],
+    history: [
+      {
+        auction_date: '29.05.2026',
+        auction_house: 'USS Sapporo',
+        auction_strictness: 0.78,
+        lot_number: '1045',
+        overall_grade: '4',
+        mileage_km: 51000,
+        defects_summary: 'S1 днище/порог, A1 капот',
+        closing_price_jpy: 1710000,
+        sheet_archive_url: null,
+      },
+    ],
+    hasCriticalAnomaly: false,
+    riskFlagsOverride: { underbody_rust: true },
+  },
+  '892b4e10-3a2c-411f-a801-019283746506': {
+    trim: 'XD L Package',
+    modelCode: '3DA-KF2P',
+    auctionBranch: 'ARAI Bayside',
+    strictness: 0.88,
+    powerHp: 190,
+    fuelType: 'diesel',
+    driveType: '4WD',
+    transmission: '6-ступ. АКПП',
+    colorRu: 'Красный Soul Red',
+    paintCode: '46V',
+    exteriorGrade: 'A',
+    interiorGrade: 'B',
+    shakenUntil: '07.2027',
+    recyclingYen: 13650,
+    equipment: [
+      'i-Activsense',
+      'Проекционный дисплей HUD',
+      'Акустика Bose',
+      'Кожа Nappa',
+      'Круговой обзор 360°',
+    ],
+    defects: [
+      {
+        panel_id: 'front_right_fender',
+        panel_ru: PANEL_LABELS_RU.front_right_fender,
+        defect_types: ['A'],
+        severity: 1,
+        raw_code: 'A1',
+        description_ru: 'Переднее правое крыло — едва заметная поверхностная риска',
+      },
+    ],
+    parts: [],
+    serviceWorks: [
+      {
+        work_type: 'pdr_and_polish',
+        label_ru: 'Детейлинг-полировка кузова',
+        amount_rub: 8000,
+        zero_cost_reason_ru: null,
+      },
+    ],
+    bodySummaryRu: 'Отличное состояние 4.5 балла, кузов без окрасов и замен (A/B)',
+    interiorSummaryRu: 'Салон B — чистая кожа Nappa, ухоженная передняя панель',
+    reasoningBullets: [
+      'Двигатель 2 188 см³ попадает под экспортные ограничения METI — нужен транзитный маршрут через третьи страны',
+      'Выгода +250 000 ₽ к рынку РФ сохраняется даже с учётом логистики',
+    ],
+    inspectorNotesRu: [
+      'Кузов в заводском окрасе, отмечена одна микроцарапина A1',
+      'Требуется согласование транзитной логистики из-за объёма 2.2 л (METI)',
+    ],
+    inspectorNotesRaw: ['外装良好 A1のみ', '機関良好'],
+    sellerCommentsRu: ['Полный комплект ключей', 'Не курили в салоне'],
+    ocrWarnings: [],
+    analogsCount: 12,
+    anomalies: [],
+    history: [
+      {
+        auction_date: '28.05.2026',
+        auction_house: 'ARAI Bayside',
+        auction_strictness: 0.88,
+        lot_number: '6721',
+        overall_grade: '4.5',
+        mileage_km: 44000,
+        defects_summary: 'A1 переднее правое крыло',
+        closing_price_jpy: 1850000,
+        sheet_archive_url: null,
+      },
+    ],
+    hasCriticalAnomaly: false,
+  },
+}

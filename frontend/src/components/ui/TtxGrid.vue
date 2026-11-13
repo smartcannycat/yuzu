@@ -20,7 +20,7 @@ withDefaults(defineProps<Props>(), {
     class="bg-surface-inset grid gap-x-5 gap-y-3.5 rounded-sm p-4"
     :class="
       columns === 3
-        ? 'grid-cols-1 min-[360px]:grid-cols-2 md:grid-cols-3'
+        ? 'grid-cols-1 min-[360px]:grid-cols-2 md:grid-cols-3 print:grid-cols-3'
         : 'grid-cols-1 min-[360px]:grid-cols-2'
     "
   >

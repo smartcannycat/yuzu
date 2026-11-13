@@ -4,6 +4,7 @@ import {
   cleanVerdictText,
   formatCarCountRu,
   formatEngineLiters,
+  formatJpy,
   formatMileageKm,
   formatRub,
   formatSheetCountRu,
@@ -18,6 +19,11 @@ describe('formatters', () => {
     expect(formatRub(280000, { signed: true })).toMatch(/^\+280\s000 ₽$/)
     expect(formatRub(-95000, { signed: true })).toMatch(/^-95\s000 ₽$/)
     expect(formatRub(0, { signed: true })).toBe('0 ₽')
+  })
+
+  it('formats yen amounts and falls back on non-finite numbers', () => {
+    expect(formatJpy(1450000)).toMatch(/^1\s450\s000 ¥$/)
+    expect(formatJpy(Number.NaN)).toBe('—')
   })
 
   it('formats mileage and handles null values gracefully', () => {

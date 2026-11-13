@@ -19,6 +19,7 @@ import {
   formatShortDateRu,
   formatVerdictLabelRu,
 } from '@/utils/formatters'
+import { sanitizeImageUrl } from '@/utils/url'
 
 interface Props {
   lot: LotSummary
@@ -51,7 +52,8 @@ const VERDICT_BADGE_MAP: Record<
 const verdictMeta = computed(() => VERDICT_BADGE_MAP[props.lot.verdict])
 const verdictLabel = computed(() => formatVerdictLabelRu(props.lot.verdict))
 const cleanedHeadline = computed(() => cleanVerdictText(props.lot.verdict_headline))
-const hasThumbnail = computed(() => Boolean(props.lot.thumbnail_url) && !imageError.value)
+const safeThumbnailUrl = computed(() => sanitizeImageUrl(props.lot.thumbnail_url))
+const hasThumbnail = computed(() => Boolean(safeThumbnailUrl.value) && !imageError.value)
 
 const benefitClass = computed(() => {
   if (props.lot.net_benefit_rub > 0) return 'text-success'
@@ -89,7 +91,7 @@ const specsLine = computed(() => {
         >
           <img
             v-if="hasThumbnail"
-            :src="lot.thumbnail_url!"
+            :src="safeThumbnailUrl"
             :alt="`Аукционный лист ${lot.make} ${lot.model} #${lot.lot_number}`"
             class="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
             loading="lazy"

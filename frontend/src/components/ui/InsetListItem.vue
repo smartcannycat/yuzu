@@ -3,6 +3,8 @@ import { ChevronRight } from '@lucide/vue'
 import { computed, useSlots } from 'vue'
 import { RouterLink, type RouteLocationRaw } from 'vue-router'
 
+import { sanitizeNavigationHref } from '@/utils/url'
+
 interface Props {
   title: string
   subtitle?: string
@@ -27,20 +29,26 @@ const emit = defineEmits<{
 
 const slots = useSlots()
 const hasIcon = computed(() => Boolean(slots.icon))
+const safeHref = computed(() => sanitizeNavigationHref(props.href))
 const isInteractive = computed(
-  () => !props.disabled && (props.interactive || Boolean(props.to) || Boolean(props.href)),
+  () => !props.disabled && (props.interactive || Boolean(props.to) || Boolean(safeHref.value)),
 )
 
 const tagName = computed(() => {
   if (props.to && !props.disabled) return RouterLink
-  if (props.href && !props.disabled) return 'a'
+  if (safeHref.value && !props.disabled) return 'a'
   if (props.interactive) return 'button'
   return 'div'
 })
 
 const linkAttrs = computed(() => {
   if (props.to && !props.disabled) return { to: props.to }
-  if (props.href && !props.disabled) return { href: props.href }
+  if (safeHref.value && !props.disabled) {
+    const isExternal = /^https?:\/\//i.test(safeHref.value)
+    return isExternal
+      ? { href: safeHref.value, target: '_blank', rel: 'noopener noreferrer' }
+      : { href: safeHref.value }
+  }
   if (props.interactive) return { type: 'button' as const, disabled: props.disabled }
   return {}
 })
