@@ -1,6 +1,7 @@
+import time
 from dataclasses import dataclass, field
 
-from app.domains.enums import (
+from ml_service.domains.enums import (
     BatchItemState,
     BatchStatus,
     BodyPanel,
@@ -66,11 +67,11 @@ class FastHeaderPreviewEntity:
         base = " ".join(part.strip() for part in (self.make or "", self.model or "") if part and part.strip())
         lot = (self.lot_number or "").strip()
         if base and lot:
-            return f"{base} (лот {lot})"
+            return f"{base} #{lot}"
         if base:
             return base
         if lot:
-            return f"Лот {lot}"
+            return f"#{lot}"
         return None
 
 
@@ -310,15 +311,6 @@ class ParserResultEntity:
     meta: ParserMetaEntity
 
 
-@dataclass(slots=True, frozen=True)
-class MascotEntity:
-    """UI mascot status descriptor for batch polling."""
-
-    mood: str
-    phrase_ru: str
-    badge_text: str
-
-
 @dataclass(slots=True)
 class BatchItemStatusEntity:
     """Mutable state of a single sheet inside a batch processing queue."""
@@ -341,6 +333,7 @@ class BatchJobEntity:
     batch_id: str
     created_at: str
     items: list[BatchItemStatusEntity] = field(default_factory=list)
+    created_monotonic: float = field(default_factory=time.monotonic)
 
     @property
     def total_items(self) -> int:

@@ -1,7 +1,7 @@
 """Factories layer: deterministic normalization, markdown rendering, and sheet assembly."""
 
-from app.factories.markdown_renderer import render_markdown
-from app.factories.normalizers import (
+from ml_service.factories.markdown_renderer import render_markdown
+from ml_service.factories.normalizers import (
     AUCTION_STRICTNESS,
     CHASSIS_CANONICAL_RE,
     CHASSIS_RE,
@@ -16,7 +16,7 @@ from app.factories.normalizers import (
     split_defect_codes,
     synthesize_frame_id,
 )
-from app.factories.sheet_factory import SheetFactory
+from ml_service.factories.sheet_factory import SheetFactory
 
 __all__ = [
     "AUCTION_STRICTNESS",

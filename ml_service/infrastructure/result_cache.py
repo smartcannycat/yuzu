@@ -1,12 +1,12 @@
 import asyncio
 import json
 import re
-from dataclasses import asdict, replace
+from dataclasses import asdict, fields, replace
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from app.domains.entities import (
+from ml_service.domains.entities import (
     ModelAttemptEntity,
     NormalizedDefectEntity,
     NormalizedSheetEntity,
@@ -14,7 +14,7 @@ from app.domains.entities import (
     ParserResultEntity,
     RiskFlagsEntity,
 )
-from app.domains.enums import (
+from ml_service.domains.enums import (
     BodyPanel,
     DefectCode,
     DriveType,
@@ -59,49 +59,37 @@ def deserialize_parser_result(payload: dict[str, Any]) -> ParserResultEntity:
             )
             for d in sheet_raw.get("defects", [])
         ]
-        rf_raw = sheet_raw["risk_flags"]
+        rf_raw = sheet_raw.get("risk_flags") or {}
         risk_flags = RiskFlagsEntity(
-            is_flooded=bool(rf_raw["is_flooded"]),
-            airbag_deployed=bool(rf_raw["airbag_deployed"]),
-            hail_damage=bool(rf_raw["hail_damage"]),
-            underbody_rust=bool(rf_raw["underbody_rust"]),
-            underbody_corrosion=bool(rf_raw["underbody_corrosion"]),
-            core_support_repair=bool(rf_raw["core_support_repair"]),
-            pillar_or_frame_repair=bool(rf_raw["pillar_or_frame_repair"]),
-            panel_replaced_xx=bool(rf_raw["panel_replaced_xx"]),
-            panel_needs_replacement_x=bool(rf_raw["panel_needs_replacement_x"]),
-            odometer_issue=bool(rf_raw["odometer_issue"]),
-            color_changed=bool(rf_raw["color_changed"]),
-            windshield_damage=bool(rf_raw["windshield_damage"]),
-            repaired_grade_r_ra=bool(rf_raw["repaired_grade_r_ra"]),
+            **{f.name: bool(rf_raw.get(f.name, False)) for f in fields(RiskFlagsEntity)}
         )
         drive_raw = sheet_raw.get("drive_type")
         fuel_raw = sheet_raw.get("fuel_type")
 
         sheet = NormalizedSheetEntity(
-            lot_number=sheet_raw["lot_number"],
+            lot_number=str(sheet_raw.get("lot_number", "UNKNOWN")),
             auction_house=sheet_raw.get("auction_house"),
             auction_strictness_index=sheet_raw.get("auction_strictness_index"),
-            make=sheet_raw["make"],
-            model=sheet_raw["model"],
+            make=str(sheet_raw.get("make", "")),
+            model=str(sheet_raw.get("model", "")),
             trim=sheet_raw.get("trim"),
-            model_code=sheet_raw["model_code"],
-            chassis_number=sheet_raw["chassis_number"],
-            frame_id=sheet_raw["frame_id"],
-            frame_id_confidence=FrameIdConfidence(sheet_raw["frame_id_confidence"]),
+            model_code=str(sheet_raw.get("model_code", "")),
+            chassis_number=str(sheet_raw.get("chassis_number", "")),
+            frame_id=str(sheet_raw.get("frame_id", "")),
+            frame_id_confidence=FrameIdConfidence(sheet_raw.get("frame_id_confidence", FrameIdConfidence.RAW)),
             first_reg_year=sheet_raw.get("first_reg_year"),
             first_reg_month=sheet_raw.get("first_reg_month"),
             first_reg_date_str=sheet_raw.get("first_reg_date_str"),
-            is_pass_corridor_3_5=bool(sheet_raw["is_pass_corridor_3_5"]),
+            is_pass_corridor_3_5=sheet_raw.get("is_pass_corridor_3_5"),
             engine_cc=sheet_raw.get("engine_cc"),
             mileage_km=sheet_raw.get("mileage_km"),
-            odometer_status=OdometerStatus(sheet_raw["odometer_status"]),
-            transmission=sheet_raw["transmission"],
+            odometer_status=OdometerStatus(sheet_raw.get("odometer_status", OdometerStatus.UNKNOWN)),
+            transmission=str(sheet_raw.get("transmission", "UNKNOWN")),
             drive_type=DriveType(drive_raw) if drive_raw is not None else None,
             fuel_type=FuelType(fuel_raw) if fuel_raw is not None else None,
             color_ru=sheet_raw.get("color_ru"),
             paint_code=sheet_raw.get("paint_code"),
-            overall_grade=sheet_raw["overall_grade"],
+            overall_grade=str(sheet_raw.get("overall_grade", "")),
             exterior_grade=sheet_raw.get("exterior_grade"),
             interior_grade=sheet_raw.get("interior_grade"),
             shaken_until=sheet_raw.get("shaken_until"),
@@ -120,13 +108,13 @@ def deserialize_parser_result(payload: dict[str, Any]) -> ParserResultEntity:
             ocr_warnings=list(sheet_raw.get("ocr_warnings", [])),
         )
 
-    meta_raw = payload["meta"]
+    meta_raw = payload.get("meta") or {}
     meta = ParserMetaEntity(
-        processing_ms=int(meta_raw["processing_ms"]),
-        mode_used=meta_raw["mode_used"],
-        cached=bool(meta_raw["cached"]),
-        model_used=meta_raw["model_used"],
-        sha256=meta_raw["sha256"],
+        processing_ms=int(meta_raw.get("processing_ms") or 0),
+        mode_used=str(meta_raw.get("mode_used", "unknown")),
+        cached=bool(meta_raw.get("cached", False)),
+        model_used=str(meta_raw.get("model_used", "")),
+        sha256=str(meta_raw.get("sha256", "")),
         gatekeeper_model=meta_raw.get("gatekeeper_model"),
         gatekeeper_ms=int(meta_raw.get("gatekeeper_ms") or 0),
         header_ms=int(meta_raw["header_ms"]) if meta_raw.get("header_ms") is not None else None,

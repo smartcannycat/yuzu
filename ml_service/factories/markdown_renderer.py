@@ -1,7 +1,7 @@
 """Markdown passport renderer for normalized auction sheets."""
 
-from app.domains.entities import NormalizedSheetEntity
-from app.domains.enums import FrameIdConfidence, OdometerStatus
+from ml_service.domains.entities import NormalizedSheetEntity
+from ml_service.domains.enums import FrameIdConfidence, OdometerStatus
 
 _ODOMETER_LABELS: dict[OdometerStatus, str] = {
     OdometerStatus.CONFIRMED: "подтверждён",

@@ -1,12 +1,12 @@
 import asyncio
 from io import BytesIO
 
-import pillow_heif
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from app.domains.entities import SlicedSheetEntity
+from ml_service.domains.entities import SlicedSheetEntity
+from ml_service.infrastructure.image_formats import CROP_FORMAT_TO_MIME, ensure_heif_registered
 
-pillow_heif.register_heif_opener()
+ensure_heif_registered()
 
 
 def trim_uniform_margins(
@@ -45,13 +45,6 @@ def normalize_size(img: Image.Image, min_px: int = 1200, max_px: int = 1800) -> 
     return img
 
 
-_MIME_BY_FORMAT: dict[str, str] = {
-    "PNG": "image/png",
-    "JPEG": "image/jpeg",
-    "WEBP": "image/webp",
-}
-
-
 def _encode_rgb_image(img: Image.Image, image_format: str = "PNG", quality: int = 88) -> bytes:
     """Encode an RGB Pillow image into PNG, JPEG, or WEBP bytes in memory."""
     buf = BytesIO()
@@ -84,13 +77,13 @@ class PillowImageCropper:
         normalized_fmt = image_format.strip().upper()
         if normalized_fmt == "JPG":
             normalized_fmt = "JPEG"
-        if normalized_fmt not in _MIME_BY_FORMAT:
+        if normalized_fmt not in CROP_FORMAT_TO_MIME:
             raise ValueError(f"Unsupported crop image format: {image_format}")
         self.min_px = min_px
         self.max_px = max_px
         self.image_format = normalized_fmt
         self.quality = quality
-        self.mime_type = _MIME_BY_FORMAT[normalized_fmt]
+        self.mime_type = CROP_FORMAT_TO_MIME[normalized_fmt]
 
     async def slice_image_bytes(self, data: bytes, overlap: float = 0.20) -> SlicedSheetEntity:
         """Prepare normalized full sheet and 4 overlapping 60%x60% quadrants."""

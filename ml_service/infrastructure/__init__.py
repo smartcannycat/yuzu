@@ -1,17 +1,17 @@
 """Infrastructure adapters for image loading, slicing, caching, and Gemini Vision."""
 
-from app.infrastructure.gemini_schemas import (
+from ml_service.infrastructure.gemini_schemas import (
     SYSTEM_PROMPT,
     AuctionExtractionSchema,
     DefectExtractionSchema,
     ExtractedRiskFlagsSchema,
     to_raw_extraction_entity,
 )
-from app.infrastructure.gemini_vision_client import AsyncGeminiVisionClient
-from app.infrastructure.image_cropper import PillowImageCropper
-from app.infrastructure.image_loader import AsyncImageLoader
-from app.infrastructure.key_pool import GeminiKeyPool
-from app.infrastructure.result_cache import (
+from ml_service.infrastructure.gemini_vision_client import AsyncGeminiVisionClient
+from ml_service.infrastructure.image_cropper import PillowImageCropper
+from ml_service.infrastructure.image_loader import AsyncImageLoader
+from ml_service.infrastructure.key_pool import GeminiKeyPool
+from ml_service.infrastructure.result_cache import (
     ResultCache,
     deserialize_parser_result,
     serialize_parser_result,

@@ -6,16 +6,16 @@ import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.router import register_exception_handlers, router
-from app.config import Settings, get_settings
-from app.factories.sheet_factory import SheetFactory
-from app.infrastructure.gemini_vision_client import AsyncGeminiVisionClient
-from app.infrastructure.image_cropper import PillowImageCropper
-from app.infrastructure.image_loader import AsyncImageLoader
-from app.infrastructure.key_pool import GeminiKeyPool
-from app.infrastructure.result_cache import ResultCache
-from app.services.batch_parser_service import BatchParserService
-from app.services.sheet_parser_service import SheetParserService
+from ml_service.api.router import register_exception_handlers, router
+from ml_service.config import Settings, get_settings
+from ml_service.factories.sheet_factory import SheetFactory
+from ml_service.infrastructure.gemini_vision_client import AsyncGeminiVisionClient
+from ml_service.infrastructure.image_cropper import PillowImageCropper
+from ml_service.infrastructure.image_loader import AsyncImageLoader
+from ml_service.infrastructure.key_pool import GeminiKeyPool
+from ml_service.infrastructure.result_cache import ResultCache
+from ml_service.services.batch_parser_service import BatchParserService
+from ml_service.services.sheet_parser_service import SheetParserService
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -26,7 +26,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app_instance: FastAPI):
         http_client = httpx.AsyncClient(
             timeout=resolved_settings.http_timeout_seconds,
-            follow_redirects=True,
+            follow_redirects=False,
         )
         key_pool = GeminiKeyPool(
             api_keys=resolved_settings.gemini_api_keys,
@@ -57,9 +57,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             request_deadline_seconds=resolved_settings.gemini_request_deadline_seconds,
             hedge_delay_seconds=resolved_settings.gemini_hedge_delay_seconds,
             fast_header_timeout_seconds=resolved_settings.gemini_fast_header_timeout_seconds,
+            gatekeeper_sheet_threshold=resolved_settings.gemini_gatekeeper_sheet_threshold,
+            gatekeeper_readable_threshold=resolved_settings.gemini_gatekeeper_readable_threshold,
+            client_error_cooldown_seconds=resolved_settings.gemini_client_error_cooldown_seconds,
+            max_key_tries=resolved_settings.gemini_max_key_tries,
         )
         factory = SheetFactory(
             reference_year=resolved_settings.reference_year,
+            reference_month=resolved_settings.reference_month,
             default_auction_strictness=resolved_settings.default_auction_strictness,
         )
         cache = ResultCache(cache_dir=resolved_settings.cache_dir)
@@ -73,7 +78,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         batch_service = BatchParserService(
             parser_service=parser_service,
+            max_items_per_batch=resolved_settings.batch_max_items,
+            max_concurrency=resolved_settings.batch_max_concurrency,
             image_loader=image_loader,
+            ttl_seconds=resolved_settings.batch_ttl_seconds,
+            max_batches=resolved_settings.batch_max_stored_batches,
         )
 
         app_instance.state.settings = resolved_settings

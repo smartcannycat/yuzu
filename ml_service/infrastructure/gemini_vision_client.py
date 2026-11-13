@@ -9,26 +9,24 @@ from google import genai
 from google.genai import types
 from google.genai.errors import ClientError, ServerError
 
-from app.domains.entities import (
+from ml_service.domains.entities import (
     FastHeaderPreviewEntity,
     GatekeeperDecisionEntity,
     ModelAttemptEntity,
     RawExtractionEntity,
     SlicedSheetEntity,
 )
-from app.domains.enums import LayoutComplexity
-from app.infrastructure.gemini_schemas import (
+from ml_service.domains.enums import LayoutComplexity
+from ml_service.infrastructure.gemini_schemas import (
     SYSTEM_PROMPT,
     AuctionExtractionSchema,
     FastHeaderPreviewSchema,
     to_raw_extraction_entity,
 )
-from app.infrastructure.key_pool import GeminiKeyPool
+from ml_service.infrastructure.image_formats import detect_mime_from_magic_bytes
+from ml_service.infrastructure.key_pool import GeminiKeyPool
 
 logger = logging.getLogger(__name__)
-
-_IS_SHEET_THRESHOLD = 0.60
-_IS_READABLE_THRESHOLD = 0.50
 
 _THINKING_LEVELS: dict[str, types.ThinkingLevel] = {
     "MINIMAL": types.ThinkingLevel.MINIMAL,
@@ -36,15 +34,6 @@ _THINKING_LEVELS: dict[str, types.ThinkingLevel] = {
     "MEDIUM": types.ThinkingLevel.MEDIUM,
     "HIGH": types.ThinkingLevel.HIGH,
 }
-
-
-def _detect_image_mime_type(data: bytes) -> str:
-    """Detect image MIME type from magic bytes with PNG fallback."""
-    if data.startswith(b"\xff\xd8\xff"):
-        return "image/jpeg"
-    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-        return "image/webp"
-    return "image/png"
 
 
 def _resolve_thinking_level(level_name: str) -> types.ThinkingLevel:
@@ -69,7 +58,7 @@ def _build_extraction_contents(
     complexity: LayoutComplexity,
 ) -> list[str | types.Part]:
     """Assemble prompt text and per-part image payloads based on sheet complexity."""
-    mime_type = sliced.mime_type or _detect_image_mime_type(sliced.full_png)
+    mime_type = sliced.mime_type or detect_mime_from_magic_bytes(sliced.full_png)
     if complexity == LayoutComplexity.CLEAN_DIGITAL:
         return [
             "Лист аукциона:",
@@ -111,6 +100,10 @@ class AsyncGeminiVisionClient:
         request_deadline_seconds: float = 45.0,
         hedge_delay_seconds: float = 8.0,
         fast_header_timeout_seconds: float = 1.2,
+        gatekeeper_sheet_threshold: float = 0.60,
+        gatekeeper_readable_threshold: float = 0.50,
+        client_error_cooldown_seconds: float = 300.0,
+        max_key_tries: int = 3,
     ) -> None:
         self.key_pool = key_pool
         self.decision_model = decision_model
@@ -125,6 +118,10 @@ class AsyncGeminiVisionClient:
         self.request_deadline_seconds = request_deadline_seconds
         self.hedge_delay_seconds = hedge_delay_seconds
         self.fast_header_timeout_seconds = fast_header_timeout_seconds
+        self.gatekeeper_sheet_threshold = gatekeeper_sheet_threshold
+        self.gatekeeper_readable_threshold = gatekeeper_readable_threshold
+        self.client_error_cooldown_seconds = client_error_cooldown_seconds
+        self.max_key_tries = max_key_tries
 
         chain = [flash_model, *(fallback_models or [])]
         seen: set[str] = set()
@@ -189,7 +186,7 @@ class AsyncGeminiVisionClient:
             )
 
         t0 = time.perf_counter()
-        resolved_mime = mime_type or _detect_image_mime_type(full_png)
+        resolved_mime = mime_type or detect_mime_from_magic_bytes(full_png)
         api_key = ""
         try:
             async with self.key_pool.semaphore:
@@ -241,8 +238,8 @@ class AsyncGeminiVisionClient:
                         },
                     },
                 )
-                is_sheet = response.answers["is_auction_sheet"].noul >= _IS_SHEET_THRESHOLD
-                is_readable = response.answers["is_readable"].noul >= _IS_READABLE_THRESHOLD
+                is_sheet = response.answers["is_auction_sheet"].noul >= self.gatekeeper_sheet_threshold
+                is_readable = response.answers["is_readable"].noul >= self.gatekeeper_readable_threshold
                 mode = response.answers["layout_complexity"].choice
         except (ServerError, ClientError, TimeoutError, httpx.HTTPError, RuntimeError, AttributeError) as exc:
             if api_key and isinstance(exc, ClientError) and getattr(exc, "code", None) == 429:
@@ -279,7 +276,7 @@ class AsyncGeminiVisionClient:
         """Run non-blocking low-resolution header OCR with strict timeout (<= 1.2s by default)."""
         t0 = time.perf_counter()
         target_bytes = sliced.crops_png.get("top_left") or sliced.full_png
-        mime_type = sliced.mime_type or _detect_image_mime_type(target_bytes)
+        mime_type = sliced.mime_type or detect_mime_from_magic_bytes(target_bytes)
         candidates = self._ordered_candidate_models()
         model_name = candidates[0] if candidates else self.flash_model
 
@@ -355,7 +352,9 @@ class AsyncGeminiVisionClient:
     ) -> RawExtractionEntity:
         """Execute extraction on a single candidate model with key rotation and cooldown handling."""
         active_level = configured_level
-        max_key_tries = max(1, min(self.key_pool.key_count, 3)) if self.key_pool.key_count > 1 else 1
+        max_key_tries = (
+            max(1, min(self.key_pool.key_count, self.max_key_tries)) if self.key_pool.key_count > 1 else 1
+        )
         last_exc: Exception | None = None
 
         for key_attempt in range(max_key_tries):
@@ -429,7 +428,7 @@ class AsyncGeminiVisionClient:
                     if status_code in (400, 404):
                         attempts.append(ModelAttemptEntity(model=candidate_model, status=f"error_{status_code}", ms=attempt_ms))
                         logger.warning("Model %s rejected request (%s); putting on cooldown.", candidate_model, exc)
-                        self._mark_model_cooldown(candidate_model, 300.0)
+                        self._mark_model_cooldown(candidate_model, self.client_error_cooldown_seconds)
                         break
 
                     attempts.append(ModelAttemptEntity(model=candidate_model, status=f"error_{status_code or 'client'}", ms=attempt_ms))
