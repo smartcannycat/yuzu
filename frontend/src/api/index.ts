@@ -17,4 +17,4 @@ export function setUnauthorizedHandler(handler: (() => void) | null): void {
 }
 
 export { DEMO_ACCOUNT_CREDENTIALS, tokenStorage }
-export type { ApiClient, AuthApi } from '@/api/types'
+export type { ApiClient, AuthApi, LotsApi } from '@/api/types'

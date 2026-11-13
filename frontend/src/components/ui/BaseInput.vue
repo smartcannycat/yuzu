@@ -9,6 +9,8 @@ interface Props {
   error?: string
   placeholder?: string
   type?: 'text' | 'email' | 'password' | 'number' | 'search' | 'tel'
+  variant?: 'surface' | 'inset'
+  size?: 'md' | 'lg'
   disabled?: boolean
   readonly?: boolean
   required?: boolean
@@ -21,6 +23,8 @@ interface Props {
 
 const props = withDefaults(defineProps<Props>(), {
   type: 'text',
+  variant: 'surface',
+  size: 'lg',
   disabled: false,
   readonly: false,
   required: false,
@@ -95,13 +99,16 @@ function handleClear() {
         :aria-describedby="describedBy"
         @blur="emit('blur', $event)"
         @focus="emit('focus', $event)"
-        class="text-text-primary placeholder:text-text-muted disabled:bg-canvas disabled:text-text-muted h-11 w-full rounded-sm border text-[16px] leading-6 transition-[border-color,box-shadow,background-color] duration-[var(--duration-quick)] ease-[var(--ease-smooth-out)] focus:outline-none disabled:cursor-not-allowed"
+        class="text-text-primary placeholder:text-text-muted disabled:bg-canvas disabled:text-text-muted w-full rounded-sm border leading-6 transition-[border-color,box-shadow,background-color] duration-[var(--duration-quick)] ease-[var(--ease-smooth-out)] focus:outline-none disabled:cursor-not-allowed"
         :class="[
+          size === 'md' ? 'h-10 text-[16px] sm:text-[14px]' : 'h-11 text-[16px]',
           hasPrefix ? 'pl-10' : 'pl-3.5',
           hasSuffix ? 'pr-11' : 'pr-3.5',
           hasError
             ? 'border-danger focus:border-danger focus:ring-danger/15 bg-[#FFFBFB] focus:ring-3'
-            : 'border-border bg-surface focus:border-border-focus focus:ring-accent/15 focus:ring-3',
+            : variant === 'inset'
+              ? 'bg-surface-inset focus:bg-surface focus:border-border-focus focus:ring-accent/15 border-transparent focus:ring-3'
+              : 'border-border bg-surface focus:border-border-focus focus:ring-accent/15 focus:ring-3',
         ]"
       />
 
@@ -110,7 +117,8 @@ function handleClear() {
           v-if="showClear"
           type="button"
           :aria-label="clearLabel"
-          class="group/clear focus-visible:outline-accent flex h-11 w-11 cursor-pointer items-center justify-center rounded-sm focus-visible:outline-2 focus-visible:outline-offset-[-4px]"
+          class="group/clear focus-visible:outline-accent flex cursor-pointer items-center justify-center rounded-sm focus-visible:outline-2 focus-visible:outline-offset-[-4px]"
+          :class="size === 'md' ? 'h-10 w-10' : 'h-11 w-11'"
           @click="handleClear"
         >
           <span

@@ -16,7 +16,7 @@ app.use(router)
 
 setUnauthorizedHandler(() => {
   const authStore = useAuthStore(pinia)
-  authStore.logout()
+  void authStore.logout({ revokeRemote: false })
   const current = router.currentRoute.value
   if (current.meta.requiresAuth) {
     void router.replace({

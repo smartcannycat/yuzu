@@ -13,14 +13,18 @@ export const PASSWORD_MIN_LENGTH = 8
 export const PASSWORD_MAX_LENGTH = 128
 export const NAME_MAX_LENGTH = 100
 
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+export const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+export function isValidEmailFormat(rawValue: string): boolean {
+  return EMAIL_PATTERN.test(rawValue.trim())
+}
 
 export function validateEmail(rawValue: string): string | undefined {
   const email = rawValue.trim()
   if (!email) {
     return 'Введите email'
   }
-  if (!EMAIL_PATTERN.test(email)) {
+  if (!isValidEmailFormat(email)) {
     return 'Укажите корректный email'
   }
   return undefined

@@ -291,4 +291,78 @@ describe('httpClient (ofetch)', () => {
     expect(apiError.title).toBe('Ошибка валидации параметров')
     expect(apiError.getFieldError('password')).toBe('Минимум 8 символов')
   })
+
+  it('requests lots feed with cleaned query parameters and auth header', async () => {
+    tokenStorage.setFromAuthResponse({
+      access_token: 'access-lots',
+      refresh_token: 'refresh-lots',
+      token_type: 'bearer',
+      expires_in_sec: 3600,
+      user: sampleUser,
+    })
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = extractUrl(input)
+      expect(url).toContain('/api/v1/lots?')
+      expect(url).toContain('query=Corolla')
+      expect(url).toContain('verdict=green')
+      expect(url).toContain('has_anomaly=true')
+      expect(url).not.toContain('make=')
+      expect(extractAuthHeader(input, init)).toBe('Bearer access-lots')
+
+      return jsonResponse({
+        items: [],
+        in_progress: {
+          active_batches_count: 0,
+          total_processing_lots: 0,
+          items: [],
+        },
+        pagination: {
+          total_items: 0,
+          page: 1,
+          page_size: 20,
+          total_pages: 0,
+        },
+        available_filters: {
+          total_lots_count: 0,
+          makes: [],
+          models: [],
+          counts_by_verdict: {},
+        },
+      })
+    })
+
+    const client = createHttpApiClient({ fetch: fetchMock })
+    const result = await client.lots.list({
+      query: '  Corolla ',
+      make: '   ',
+      verdict: 'green',
+      has_anomaly: true,
+    })
+
+    expect(result.items).toEqual([])
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('calls POST /auth/logout with bearer token and refresh_token body', async () => {
+    tokenStorage.setFromAuthResponse({
+      access_token: 'access-logout',
+      refresh_token: 'refresh-logout',
+      token_type: 'bearer',
+      expires_in_sec: 3600,
+      user: sampleUser,
+    })
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(extractUrl(input)).toBe('/api/v1/auth/logout')
+      expect(init?.method).toBe('POST')
+      expect(extractAuthHeader(input, init)).toBe('Bearer access-logout')
+      expect(init?.body).toBe(JSON.stringify({ refresh_token: 'refresh-logout' }))
+      return new Response(null, { status: 204 })
+    })
+
+    const client = createHttpApiClient({ fetch: fetchMock })
+    await client.auth.logout({ refresh_token: 'refresh-logout' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
 })

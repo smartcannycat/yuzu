@@ -12,6 +12,7 @@ interface Props {
   disabled?: boolean
   loading?: boolean
   block?: boolean
+  pill?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -21,6 +22,7 @@ const props = withDefaults(defineProps<Props>(), {
   disabled: false,
   loading: false,
   block: false,
+  pill: false,
 })
 
 const VARIANT_CLASSES: Record<ButtonVariant, string> = {
@@ -68,6 +70,7 @@ const iconSize = computed(() => ICON_SIZES[props.size])
     :class="[
       variantClasses,
       sizeClasses,
+      pill ? 'rounded-full!' : '',
       block ? 'w-full' : '',
       isDisabled
         ? loading
