@@ -1359,6 +1359,14 @@ def append_batch_items(
             current_step=TaskStep.GATEKEEPER,
         )
         item.original_file.save(upload.name, upload, save=True)
+    if batch.status == BatchStatus.PARTIAL_FAILED:
+        batch.status = BatchStatus.QUEUED
+        batch.save(update_fields=["status", "updated_at"])
+        transaction.on_commit(
+            lambda: threading.Thread(
+                target=run_batch_pipeline, args=(batch.id,), daemon=True
+            ).start()
+        )
     return get_batch_progress(user, batch_id)
 
 
@@ -1660,7 +1668,17 @@ def run_batch_pipeline(batch_id: uuid.UUID) -> None:
                 break
     except Exception:
         logger.exception("Batch pipeline failed for %s", batch_id)
-        Batch.objects.filter(id=batch_id).update(status=BatchStatus.FAILED)
+        with transaction.atomic():
+            batch = Batch.objects.select_for_update().get(id=batch_id)
+            batch.items.filter(
+                status__in=(ItemProcessingStatus.QUEUED, ItemProcessingStatus.PROCESSING)
+            ).update(
+                status=ItemProcessingStatus.FAILED,
+                current_step=TaskStep.FAILED,
+                error_message="Не удалось обработать аукционный лист",
+                updated_at=timezone.now(),
+            )
+            _finalize_batch_locked(batch)
     finally:
         connection.close()
 

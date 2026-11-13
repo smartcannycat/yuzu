@@ -1,5 +1,4 @@
 from typing import Literal
-from uuid import UUID
 
 from django.http import HttpRequest
 from ninja import Query, Status, UploadedFile
@@ -88,12 +87,13 @@ class LotController(ControllerBase):
             200: BatchProgressResponse,
             401: ProblemDetail,
             404: ProblemDetail,
+            422: ProblemDetail,
         },
     )
     def get_batch_progress(
         self,
         request: HttpRequest,
-        batch_id: UUID,
+        batch_id: UUID4,
     ) -> BatchProgressResponse:
         user = self._require_user(request)
         return services.get_batch_progress(user, batch_id)
@@ -112,7 +112,7 @@ class LotController(ControllerBase):
     def append_batch_items(
         self,
         request: HttpRequest,
-        batch_id: UUID,
+        batch_id: UUID4,
         files: list[UploadedFile],
     ) -> Status[BatchProgressResponse]:
         user = self._require_user(request)
