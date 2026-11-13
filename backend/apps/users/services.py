@@ -7,6 +7,7 @@ from ninja_jwt.settings import api_settings as jwt_settings
 from ninja_jwt.tokens import RefreshToken
 
 from apps.core.exceptions import ConflictProblemError, UnauthorizedProblemError
+from apps.lots.services import seed_starter_lots
 from apps.users.models import User, UserManager
 from apps.users.schemas import (
     AuthTokensResponse,
@@ -42,6 +43,7 @@ def issue_auth_tokens(
     )
 
 
+@transaction.atomic
 def register_user(payload: UserRegisterRequest) -> AuthTokensResponse:
     normalized_email = UserManager.normalize_email(payload.email)
     normalized_name = payload.name or None
@@ -64,7 +66,7 @@ def register_user(payload: UserRegisterRequest) -> AuthTokensResponse:
             title="Email уже занят",
         ) from exc
 
-    # Starter benchmark lots seeding (BE-02/BE-04) will be hooked here once Lot models exist.
+    seed_starter_lots(user)
     return issue_auth_tokens(user)
 
 
@@ -102,7 +104,7 @@ def refresh_user_tokens(payload: TokenRefreshRequest) -> AuthTokensResponse:
         )
 
     try:
-        user = User.objects.filter(id=user_id, is_active=True).first()
+        user = User.objects.select_for_update().filter(id=user_id, is_active=True).first()
     except (ValueError, DjangoValidationError) as exc:
         raise UnauthorizedProblemError(
             "Токен содержит некорректный идентификатор пользователя",
@@ -118,12 +120,17 @@ def refresh_user_tokens(payload: TokenRefreshRequest) -> AuthTokensResponse:
     if jwt_settings.ROTATE_REFRESH_TOKENS:
         if jwt_settings.BLACKLIST_AFTER_ROTATION:
             try:
-                token.blacklist()
+                _, created = token.blacklist()
             except (AttributeError, TokenError) as exc:
                 raise UnauthorizedProblemError(
                     "Refresh-токен уже отозван или недействителен",
                     title="Сессия истекла",
                 ) from exc
+            if not created:
+                raise UnauthorizedProblemError(
+                    "Refresh-токен уже отозван или недействителен",
+                    title="Сессия истекла",
+                )
         return issue_auth_tokens(user)
 
     return issue_auth_tokens(user, refresh_token=token)

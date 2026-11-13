@@ -8,6 +8,7 @@ from config.settings.config import AppSettings, get_settings
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 app_settings = get_settings()
+LOT_PARSER_BACKEND = app_settings.LOT_PARSER_BACKEND
 
 SECRET_KEY = app_settings.SECRET_KEY
 DEBUG = app_settings.DEBUG
@@ -22,6 +23,7 @@ DJANGO_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django.contrib.postgres",
 ]
 
 THIRD_PARTY_APPS = [
@@ -34,6 +36,7 @@ THIRD_PARTY_APPS = [
 LOCAL_APPS = [
     "apps.core",
     "apps.users",
+    "apps.lots",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS

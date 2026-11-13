@@ -1,7 +1,9 @@
 from datetime import UTC, datetime
+from typing import Any
 
+from django.db.models import Manager
 from ninja import Schema
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, field_validator
 
 
 class StrictBaseModel(Schema):
@@ -13,6 +15,11 @@ class StrictBaseModel(Schema):
         validate_assignment=True,
         use_enum_values=True,
     )
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def load_related_records(cls, value: Any) -> Any:
+        return list(value.all()) if isinstance(value, Manager) else value
 
 
 class InvalidParamDetail(StrictBaseModel):
