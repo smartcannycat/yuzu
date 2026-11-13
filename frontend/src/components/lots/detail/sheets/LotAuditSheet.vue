@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { BaseBadge, BaseButton, BottomSheet } from '@/components/ui'
 import type { LotDetailResponse } from '@/types/api'
-import { formatMileageKm } from '@/utils/formatters'
+import { formatJpy, formatMileageKm } from '@/utils/formatters'
 
 interface Props {
   detail: LotDetailResponse
@@ -104,7 +104,7 @@ const open = defineModel<boolean>('open', { default: false })
             <div class="text-text-secondary mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[12px]">
               <span>Пробег: {{ formatMileageKm(record.mileage_km) }}</span>
               <span v-if="record.closing_price_jpy">
-                Цена: {{ record.closing_price_jpy.toLocaleString('ru-RU') }} ¥
+                Цена: {{ formatJpy(record.closing_price_jpy) }}
               </span>
             </div>
 

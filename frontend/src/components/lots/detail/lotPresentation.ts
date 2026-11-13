@@ -1,13 +1,51 @@
 import type { CostLadderStep, TtxItem } from '@/components/ui'
 import type {
+  ChecklistItemStatus,
   FuelType,
   LotDetailResponse,
+  NormalizedSheet,
   OdometerStatus,
   RiskFlags,
+  SafetyCheckItem,
   TrafficLightColor,
   WiseCostStep,
 } from '@/types/api'
-import { formatEngineLiters, formatMileageKm, formatRub } from '@/utils/formatters'
+import { formatEngineLiters, formatJpy, formatMileageKm, formatRub } from '@/utils/formatters'
+
+export const DEFAULT_JPY_RUB_RATE = 0.64
+export const FX_RATE_SOURCE_LABEL = 'VL.ru Деньги'
+
+export const MIN_BID_JPY = 100_000
+export const MAX_BID_JPY = 50_000_000
+export const MIN_BID_RUB = 50_000
+export const MAX_BID_RUB = 35_000_000
+
+export const NET_BENEFIT_SUCCESS_THRESHOLD_RUB = 150_000
+export const NET_BENEFIT_WARNING_THRESHOLD_RUB = 50_000
+
+export function resolveSafeJpyRate(rate: number | null | undefined): number {
+  if (typeof rate === 'number' && Number.isFinite(rate) && rate > 0) {
+    return rate
+  }
+  return DEFAULT_JPY_RUB_RATE
+}
+
+export function parsePositiveIntegerInput(raw: string): number | null {
+  const digits = raw.replace(/[^\d]/g, '')
+  if (!digits) return null
+  const parsed = Number(digits)
+  return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : null
+}
+
+export function clampBidJpy(value: number): number {
+  if (!Number.isFinite(value)) return MIN_BID_JPY
+  return Math.min(MAX_BID_JPY, Math.max(MIN_BID_JPY, Math.round(value)))
+}
+
+export function clampBidRub(value: number): number {
+  if (!Number.isFinite(value)) return MIN_BID_RUB
+  return Math.min(MAX_BID_RUB, Math.max(MIN_BID_RUB, Math.round(value)))
+}
 
 export interface ActiveRiskChip {
   label: string
@@ -52,6 +90,23 @@ export const VERDICT_META: Record<
   },
 }
 
+export const CHECKLIST_STATUS_META: Record<
+  ChecklistItemStatus,
+  { variant: 'success' | 'warning' | 'danger'; label: string; squircleColor: string }
+> = {
+  ok: { variant: 'success', label: 'Норма', squircleColor: '#34C759' },
+  warning: { variant: 'warning', label: 'Риск', squircleColor: '#FF9500' },
+  critical: { variant: 'danger', label: 'Критично', squircleColor: '#FF3B30' },
+}
+
+export const SAFETY_SHORT_LABELS: Record<SafetyCheckItem['system_key'], string> = {
+  structural_frame: 'Каркас и лонжероны',
+  airbags_srs: 'Подушки SRS',
+  engine_transmission: 'Двигатель и КПП',
+  underbody_corrosion: 'Днище и коррозия',
+  flood_or_fire: 'Признаки затопления / градобоя',
+}
+
 const ODOMETER_LABELS_RU: Record<OdometerStatus, string> = {
   confirmed: 'подтверждён',
   replaced: 'заменён (*)',
@@ -64,6 +119,70 @@ const FUEL_LABELS_RU: Record<FuelType, string> = {
   hybrid: 'Гибрид',
   diesel: 'Дизель',
   ev: 'Электро',
+}
+
+export function formatLotSpecsSubtitle(
+  passport: Pick<
+    NormalizedSheet,
+    'first_reg_year' | 'engine_cc' | 'mileage_km' | 'auction_house' | 'lot_number'
+  >,
+): string {
+  return [
+    passport.first_reg_year ?? '—',
+    formatEngineLiters(passport.engine_cc),
+    formatMileageKm(passport.mileage_km),
+    `${passport.auction_house} #${passport.lot_number}`,
+  ].join(' · ')
+}
+
+export function formatSpreadLabel(netBenefitRub: number, options?: { signed?: boolean }): string {
+  const absRub = Math.abs(netBenefitRub)
+  if (netBenefitRub < 0) {
+    return `Переплата: ${formatRub(absRub)}`
+  }
+  return `Выгода: ${formatRub(absRub, { signed: options?.signed })}`
+}
+
+export function formatRoiPercent(
+  benefitPercentage: number,
+  options?: { fixedDigits?: number },
+): string {
+  const formatted =
+    typeof options?.fixedDigits === 'number'
+      ? benefitPercentage.toFixed(options.fixedDigits)
+      : String(benefitPercentage)
+  return `${benefitPercentage > 0 ? '+' : ''}${formatted}%`
+}
+
+export function formatDromPriceRange(minRub: number | null, maxRub: number | null): string | null {
+  if (!minRub || !maxRub) return null
+  return `${formatRub(minRub)} – ${formatRub(maxRub)}`
+}
+
+export function formatUtilModeLabel(
+  isCommercialUtil: boolean,
+  isUnder160Hp: boolean | null,
+  variant: 'short' | 'detailed' = 'short',
+): string {
+  if (variant === 'detailed') {
+    if (isCommercialUtil) {
+      return 'Коммерческий тариф по ПП РФ № 1255 (для перепродажи / юрлица)'
+    }
+    if (isUnder160Hp === false) {
+      return 'Мощность > 160 л.с. — применяется повышенный утильсбор'
+    }
+    return 'Льготный личный ввоз для физлица (≤ 160 л.с.): 5 200 ₽'
+  }
+
+  if (isCommercialUtil) return 'Коммерческий тариф (ПП РФ № 1255)'
+  if (isUnder160Hp === false) return 'Повышенный тариф (> 160 л.с.)'
+  return 'Льготный для физлица (≤ 160 л.с.)'
+}
+
+export function getBenefitBadgeVariant(netBenefitRub: number): 'success' | 'warning' | 'danger' {
+  if (netBenefitRub >= NET_BENEFIT_SUCCESS_THRESHOLD_RUB) return 'success'
+  if (netBenefitRub >= NET_BENEFIT_WARNING_THRESHOLD_RUB) return 'warning'
+  return 'danger'
 }
 
 export function buildLotTtxItems(
@@ -133,7 +252,7 @@ export function formatLadderStepHint(
   jpyRate: number,
 ): string | undefined {
   if (stepNumber === 1) {
-    return `${Math.round(bidJpy).toLocaleString('ru-RU')} ¥ · курс ${jpyRate.toFixed(3)} ₽`
+    return `${formatJpy(bidJpy)} · курс ${jpyRate.toFixed(3)} ₽`
   }
   if (!currency || original === null) return undefined
   if (currency === 'EUR') {

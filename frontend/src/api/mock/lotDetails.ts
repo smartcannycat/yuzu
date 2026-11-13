@@ -3,6 +3,7 @@ import {
   buildWiseSteps,
   COMMERCIAL_UTIL_FEE_RUB,
   EUR_RUB_RATE,
+  formatVerdictBadgeText,
   JPY_RUB_RATE,
   PERSONAL_UTIL_FEE_RUB,
   recalculateMockLotDetail,
@@ -24,7 +25,6 @@ import type {
   SafetyCheckItem,
   TrafficLightVerdict,
 } from '@/types/api'
-import { formatRub } from '@/utils/formatters'
 
 export { recalculateMockLotDetail }
 
@@ -266,10 +266,7 @@ export function buildMockLotDetail(summary: LotSummary): LotDetailResponse {
           ? 'ПОД ВОПРОСОМ — ТРЕБУЕТ ВНИМАНИЯ'
           : 'ВЫСОКИЙ РИСК — ПОКУПКА НЕ РЕКОМЕНДОВАНА',
     short_verdict_label: summary.verdict_headline,
-    badge_text:
-      summary.net_benefit_rub >= 0
-        ? `Выгода: ${formatRub(summary.net_benefit_rub, { signed: true })}`
-        : `Переплата: ${formatRub(Math.abs(summary.net_benefit_rub))}`,
+    badge_text: formatVerdictBadgeText(summary.net_benefit_rub),
     net_benefit_rub: summary.net_benefit_rub,
     benefit_percentage: Number(benefitPct.toFixed(1)),
     body_summary_ru:

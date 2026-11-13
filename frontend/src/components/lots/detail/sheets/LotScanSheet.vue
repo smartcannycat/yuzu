@@ -1,18 +1,20 @@
 <script setup lang="ts">
 import { ZoomIn, ZoomOut } from '@lucide/vue'
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import { BaseButton, BottomSheet } from '@/components/ui'
 import type { LotDetailResponse } from '@/types/api'
+import { sanitizeImageUrl } from '@/utils/url'
 
 interface Props {
   detail: LotDetailResponse
 }
 
-defineProps<Props>()
+const props = defineProps<Props>()
 
 const open = defineModel<boolean>('open', { default: false })
 const zoomPercent = ref<100 | 150 | 200>(100)
+const safeScanUrl = computed(() => sanitizeImageUrl(props.detail.media.sheet_scan_url))
 
 watch(open, (next) => {
   if (next) {
@@ -46,11 +48,15 @@ function cycleZoom(): void {
 
       <div class="border-border bg-surface-inset max-h-[64vh] overflow-auto rounded-sm border p-2">
         <img
-          :src="detail.media.sheet_scan_url"
+          v-if="safeScanUrl"
+          :src="safeScanUrl"
           :alt="`Аукционный лист ${detail.passport.make} ${detail.passport.model} #${detail.passport.lot_number}`"
           class="mx-auto block rounded-xs transition-all duration-150"
           :style="{ width: `${zoomPercent}%`, maxWidth: 'none' }"
         />
+        <p v-else class="text-text-secondary py-8 text-center text-[13px]">
+          Скан аукционного листа недоступен.
+        </p>
       </div>
     </div>
 

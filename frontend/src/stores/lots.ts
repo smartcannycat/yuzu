@@ -231,6 +231,7 @@ export const useLotsStore = defineStore('lots', () => {
   ): Promise<LotDetailResponse | null> {
     const requestId = ++latestDetailRequestId
     latestRecalcRequestId += 1
+    isRecalculating.value = false
     isLoadingDetail.value = true
     detailError.value = null
     detailErrorStatus.value = null
@@ -244,7 +245,7 @@ export const useLotsStore = defineStore('lots', () => {
       const response = await client.lots.getDetail(lotId)
       if (requestId !== latestDetailRequestId) return null
 
-      baselineLotDetailsById.value[lotId] = structuredClone(response)
+      baselineLotDetailsById.value[lotId] = structuredClone(toRaw(response))
       currentLotDetail.value = response
       return response
     } catch (error: unknown) {
@@ -275,25 +276,27 @@ export const useLotsStore = defineStore('lots', () => {
 
     try {
       const response = await client.lots.recalculate(lotId, payload)
-      if (requestId !== latestRecalcRequestId) return null
+      if (requestId !== latestRecalcRequestId || currentLotDetail.value?.lot_id !== lotId) {
+        return null
+      }
 
-      if (currentLotDetail.value && currentLotDetail.value.lot_id === lotId) {
-        currentLotDetail.value = {
-          ...currentLotDetail.value,
-          updated_at: response.recalculated_at,
-          verdict: response.verdict,
-          economics: {
-            ...currentLotDetail.value.economics,
-            is_repairs_included: response.include_repairs,
-            customs: response.customs,
-            wise_cost_ladder: response.wise_cost_ladder,
-          },
-        }
+      currentLotDetail.value = {
+        ...currentLotDetail.value,
+        updated_at: response.recalculated_at,
+        verdict: response.verdict,
+        economics: {
+          ...currentLotDetail.value.economics,
+          is_repairs_included: response.include_repairs,
+          customs: response.customs,
+          wise_cost_ladder: response.wise_cost_ladder,
+        },
       }
 
       return response
     } catch (error: unknown) {
-      if (requestId !== latestRecalcRequestId) return null
+      if (requestId !== latestRecalcRequestId || currentLotDetail.value?.lot_id !== lotId) {
+        return null
+      }
       recalculateError.value =
         error instanceof ApiError
           ? error.detail

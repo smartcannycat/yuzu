@@ -4,7 +4,10 @@ import { computed, ref, watch } from 'vue'
 
 import LotBodyDiagram from '@/components/lots/detail/LotBodyDiagram.vue'
 import { getDefectTone } from '@/components/lots/detail/lotDefects'
-import { buildActiveRiskLabels } from '@/components/lots/detail/lotPresentation'
+import {
+  CHECKLIST_STATUS_META,
+  buildActiveRiskLabels,
+} from '@/components/lots/detail/lotPresentation'
 import { BaseBadge, BaseCard, InsetListGroup, InsetListItem } from '@/components/ui'
 import type { BodyPanel, LotDetailResponse } from '@/types/api'
 import { formatRub } from '@/utils/formatters'
@@ -40,12 +43,9 @@ const notesSubtitle = computed(() => {
   return count > 0 ? `${count} переведённых заметок` : 'Без дополнительных замечаний'
 })
 
-const safetySquircleColor = computed(() => {
-  const status = props.detail.safety_checklist.overall_status
-  if (status === 'critical') return '#FF3B30'
-  if (status === 'warning') return '#FF9500'
-  return '#34C759'
-})
+const safetySquircleColor = computed(
+  () => CHECKLIST_STATUS_META[props.detail.safety_checklist.overall_status].squircleColor,
+)
 
 const activeRiskLabels = computed(() => buildActiveRiskLabels(props.detail.passport.risk_flags))
 

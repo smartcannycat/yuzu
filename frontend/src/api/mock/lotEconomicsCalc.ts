@@ -16,6 +16,12 @@ export const USD_RUB_RATE = 88.5
 export const COMMERCIAL_UTIL_FEE_RUB = 528_000
 export const PERSONAL_UTIL_FEE_RUB = 5_200
 
+export function formatVerdictBadgeText(netBenefitRub: number): string {
+  return netBenefitRub >= 0
+    ? `Выгода: ${formatRub(netBenefitRub, { signed: true })}`
+    : `Переплата: ${formatRub(Math.abs(netBenefitRub))}`
+}
+
 export function buildWiseSteps(params: {
   bidJpy: number
   bidRub: number
@@ -131,10 +137,7 @@ export function deriveVerdict(params: {
     headline = 'СДЕРЖАННАЯ ВЫГОДА — СЛЕДИТЕ ЗА СТАВКОЙ'
   }
 
-  const badgeText =
-    params.netBenefitRub >= 0
-      ? `Выгода: ${formatRub(params.netBenefitRub, { signed: true })}`
-      : `Переплата: ${formatRub(Math.abs(params.netBenefitRub))}`
+  const badgeText = formatVerdictBadgeText(params.netBenefitRub)
 
   const shortPrefix =
     verdict === 'green' ? 'Можно брать' : verdict === 'yellow' ? 'Под вопросом' : 'Высокий риск'
@@ -164,18 +167,22 @@ export function recalculateMockLotDetail(
   base: LotDetailResponse,
   payload: RecalculateRequest,
 ): RecalculateResponse {
-  const rate = base.economics.customs.rates_snapshot.jpy_rub_bank || JPY_RUB_RATE
-  const appliedBidJpy =
-    typeof payload.bid_jpy === 'number'
-      ? Math.round(payload.bid_jpy)
-      : typeof payload.bid_rub === 'number'
-        ? Math.round(payload.bid_rub / rate)
-        : base.economics.wise_cost_ladder.car_bid_jpy
+  const rawRate = base.economics.customs.rates_snapshot.jpy_rub_bank
+  const rate = Number.isFinite(rawRate) && rawRate > 0 ? rawRate : JPY_RUB_RATE
+  const hasValidBidJpy =
+    typeof payload.bid_jpy === 'number' && Number.isFinite(payload.bid_jpy) && payload.bid_jpy > 0
+  const hasValidBidRub =
+    typeof payload.bid_rub === 'number' && Number.isFinite(payload.bid_rub) && payload.bid_rub > 0
 
-  const appliedBidRub =
-    typeof payload.bid_rub === 'number'
-      ? Math.round(payload.bid_rub)
-      : Math.round(appliedBidJpy * rate)
+  const appliedBidJpy = hasValidBidJpy
+    ? Math.round(payload.bid_jpy!)
+    : hasValidBidRub
+      ? Math.round(payload.bid_rub! / rate)
+      : base.economics.wise_cost_ladder.car_bid_jpy
+
+  const appliedBidRub = hasValidBidRub
+    ? Math.round(payload.bid_rub!)
+    : Math.round(appliedBidJpy * rate)
 
   const isCommercialUtil =
     typeof payload.is_commercial_util === 'boolean'

@@ -7,6 +7,7 @@ import LotGeneralVerdictCard from '@/components/lots/detail/LotGeneralVerdictCar
 import { buildLotTtxItems } from '@/components/lots/detail/lotPresentation'
 import { BaseBadge, BaseCard, InsetListGroup, InsetListItem, TtxGrid } from '@/components/ui'
 import type { LotDetailResponse } from '@/types/api'
+import { sanitizeExternalUrl } from '@/utils/url'
 
 interface Props {
   detail: LotDetailResponse
@@ -24,6 +25,7 @@ const emit = defineEmits<{
 }>()
 
 const ttxItems = computed(() => buildLotTtxItems(props.detail))
+const safeDromSearchUrl = computed(() => sanitizeExternalUrl(props.detail.media.drom_search_url))
 
 const auditSubtitle = computed(() => {
   const count = props.detail.audit.times_auctioned
@@ -85,7 +87,8 @@ const auditSubtitle = computed(() => {
           :subtitle="`В наличии · ${detail.market.search_region_ru}`"
           :value="`${detail.market.analogs_count} авто`"
           squircle-color="#FF9500"
-          :href="detail.media.drom_search_url"
+          :href="safeDromSearchUrl"
+          :disabled="!safeDromSearchUrl"
           chevron
         >
           <template #icon>

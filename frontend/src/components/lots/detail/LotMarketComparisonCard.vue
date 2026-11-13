@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+
+import { formatRoiPercent, getBenefitBadgeVariant } from '@/components/lots/detail/lotPresentation'
 import { BaseBadge, BaseCard } from '@/components/ui'
 import { formatRub } from '@/utils/formatters'
 
@@ -9,19 +12,18 @@ interface Props {
   benefitPercentage: number
 }
 
-defineProps<Props>()
+const props = defineProps<Props>()
+
+const badgeVariant = computed(() => getBenefitBadgeVariant(props.netBenefitRub))
+const roiLabel = computed(() => `${formatRoiPercent(props.benefitPercentage)} ROI`)
 </script>
 
 <template>
   <BaseCard variant="surface" padding="md">
     <div class="mb-3 flex items-center justify-between gap-2">
       <h3 class="text-text-primary text-[15px] font-semibold">Сравнение с рынком РФ</h3>
-      <BaseBadge
-        :variant="
-          netBenefitRub >= 150_000 ? 'success' : netBenefitRub >= 50_000 ? 'warning' : 'danger'
-        "
-      >
-        {{ benefitPercentage > 0 ? '+' : '' }}{{ benefitPercentage }}% ROI
+      <BaseBadge :variant="badgeVariant">
+        {{ roiLabel }}
       </BaseBadge>
     </div>
 

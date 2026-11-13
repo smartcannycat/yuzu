@@ -1,11 +1,29 @@
 import type { LotSummary, NormalizedSheet } from '@/types/api'
 
-function escapeXml(value: string): string {
-  return value
+function stripXmlControlChars(value: string): string {
+  let result = ''
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i)
+    const isValidXmlChar =
+      code === 0x09 || code === 0x0a || code === 0x0d || (code >= 0x20 && code !== 0x7f)
+    if (isValidXmlChar) {
+      result += value[i]
+    }
+  }
+  return result
+}
+
+/**
+ * Escapes arbitrary strings for safe interpolation into XML/SVG text and attributes.
+ */
+export function escapeXml(value: unknown): string {
+  const raw = value === null || value === undefined ? '' : String(value)
+  return stripXmlControlChars(raw)
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
 }
 
 /**
@@ -16,6 +34,8 @@ export function buildMockSheetSvgDataUrl(summary: LotSummary, sheet: NormalizedS
   const carName = escapeXml(`${summary.make} ${summary.model}`)
   const frame = escapeXml(summary.frame_id)
   const grade = escapeXml(summary.overall_grade)
+  const yearAndEngine = escapeXml(`${summary.year ?? '—'} · ${summary.engine_cc ?? '—'} cc`)
+  const strictness = escapeXml(sheet.auction_strictness_index.toFixed(2))
   const mileage = escapeXml(
     summary.mileage_km ? `${summary.mileage_km.toLocaleString('ru-RU')} km` : '—',
   )
@@ -23,6 +43,8 @@ export function buildMockSheetSvgDataUrl(summary: LotSummary, sheet: NormalizedS
     sheet.defects.map((defect) => `${defect.panel_id}:${defect.raw_code}`).join('  ·  ') ||
       'NO MAJOR DEFECTS',
   )
+  const note1 = escapeXml(sheet.inspector_notes_raw[0] ?? '外装小キズ・補修跡')
+  const note2 = escapeXml(sheet.inspector_notes_raw[1] ?? '機関・電装チェック済み')
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1220" viewBox="0 0 900 1220">
     <rect width="900" height="1220" fill="#F8F6EE"/>
@@ -44,7 +66,7 @@ export function buildMockSheetSvgDataUrl(summary: LotSummary, sheet: NormalizedS
     <text x="84" y="270" font-family="system-ui, sans-serif" font-size="14" fill="#6B7280">ODOMETER / 走行距離</text>
     <text x="84" y="300" font-family="ui-monospace, monospace" font-size="22" font-weight="700" fill="#111827">${mileage}</text>
     <text x="470" y="270" font-family="system-ui, sans-serif" font-size="14" fill="#6B7280">ENGINE &amp; YEAR / 排気量</text>
-    <text x="470" y="300" font-family="ui-monospace, monospace" font-size="22" font-weight="700" fill="#111827">${summary.year ?? '—'} · ${summary.engine_cc ?? '—'} cc</text>
+    <text x="470" y="300" font-family="ui-monospace, monospace" font-size="22" font-weight="700" fill="#111827">${yearAndEngine}</text>
 
     <rect x="64" y="346" width="772" height="390" rx="8" fill="#FFFFFF" stroke="#D1D5DB" stroke-width="2"/>
     <text x="84" y="382" font-family="system-ui, sans-serif" font-size="16" font-weight="700" fill="#374151">EXTERIOR BODY DIAGRAM / 展開図</text>
@@ -55,9 +77,9 @@ export function buildMockSheetSvgDataUrl(summary: LotSummary, sheet: NormalizedS
 
     <rect x="64" y="766" width="772" height="384" rx="8" fill="#FFFFFF" stroke="#D1D5DB" stroke-width="2"/>
     <text x="84" y="804" font-family="system-ui, sans-serif" font-size="16" font-weight="700" fill="#374151">INSPECTOR NOTES / 注意事項</text>
-    <text x="84" y="852" font-family="ui-monospace, monospace" font-size="20" fill="#111827">• ${escapeXml(sheet.inspector_notes_raw[0] ?? '外装小キズ・補修跡')}</text>
-    <text x="84" y="896" font-family="ui-monospace, monospace" font-size="20" fill="#111827">• ${escapeXml(sheet.inspector_notes_raw[1] ?? '機関・電装チェック済み')}</text>
-    <text x="84" y="946" font-family="system-ui, sans-serif" font-size="18" fill="#4B5563">YUZU OCR VERIFIED · STRICTNESS ${sheet.auction_strictness_index.toFixed(2)}</text>
+    <text x="84" y="852" font-family="ui-monospace, monospace" font-size="20" fill="#111827">• ${note1}</text>
+    <text x="84" y="896" font-family="ui-monospace, monospace" font-size="20" fill="#111827">• ${note2}</text>
+    <text x="84" y="946" font-family="system-ui, sans-serif" font-size="18" fill="#4B5563">YUZU OCR VERIFIED · STRICTNESS ${strictness}</text>
     <text x="84" y="1116" font-family="ui-monospace, monospace" font-size="15" fill="#9CA3AF">MOCK SCAN PREVIEW FOR ${frame}</text>
   </svg>`
 

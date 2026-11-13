@@ -183,4 +183,31 @@ describe('LotDetailView (Screens 4, 5, 6)', () => {
       baseTurnkey,
     )
   })
+
+  it('neutralizes unsafe drom_search_url and sheet_scan_url payloads', async () => {
+    const { host, lotsStore } = await mountLotDetail('892b4e10-3a2c-411f-a801-019283746501')
+
+    lotsStore.currentLotDetail = {
+      ...lotsStore.currentLotDetail!,
+      media: {
+        ...lotsStore.currentLotDetail!.media,
+        drom_search_url: 'javascript:alert(1)',
+        sheet_scan_url: 'data:text/html,<script>alert(1)</script>',
+      },
+    }
+    await flushUi()
+
+    const unsafeAnchor = host.querySelector('a[href^="javascript:"]')
+    expect(unsafeAnchor).toBeNull()
+
+    const scanRow = Array.from(host.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('Оригинальный аукционный лист'),
+    )
+    scanRow?.click()
+    await flushUi()
+
+    const dialog = document.body.querySelector('[role="dialog"]')
+    expect(dialog?.querySelector('img')).toBeNull()
+    expect(dialog?.textContent).toContain('Скан аукционного листа недоступен')
+  })
 })

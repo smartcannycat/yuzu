@@ -2,8 +2,13 @@
 import { Pencil, RotateCcw } from '@lucide/vue'
 import { computed, nextTick, ref, watch } from 'vue'
 
+import {
+  clampBidJpy,
+  clampBidRub,
+  parsePositiveIntegerInput,
+} from '@/components/lots/detail/lotPresentation'
 import { BaseButton, BaseCard } from '@/components/ui'
-import { formatRub } from '@/utils/formatters'
+import { formatJpy, formatRub } from '@/utils/formatters'
 
 interface Props {
   bidJpy: number
@@ -46,20 +51,11 @@ watch(
 const effectiveMinJpy = computed(() => Math.min(props.minJpy, props.bidJpy))
 const effectiveMaxJpy = computed(() => Math.max(props.maxJpy, props.bidJpy))
 
-function formatJpy(amount: number): string {
-  return `${Math.round(amount).toLocaleString('ru-RU')} ¥`
-}
-
-function parseNumericInput(raw: string): number | null {
-  const digits = raw.replace(/[^\d]/g, '')
-  if (!digits) return null
-  const parsed = Number(digits)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
-}
-
 function handleSliderInput(event: Event): void {
   const target = event.target as HTMLInputElement
-  emit('sliderInput', Number(target.value))
+  const parsed = Number(target.value)
+  if (!Number.isFinite(parsed) || parsed <= 0) return
+  emit('sliderInput', clampBidJpy(parsed))
 }
 
 async function startEditingJpy(): Promise<void> {
@@ -78,9 +74,9 @@ function cancelJpyEdit(): void {
 function submitJpyEdit(): void {
   if (!isEditingJpy.value) return
   isEditingJpy.value = false
-  const parsed = parseNumericInput(jpyTextInput.value)
+  const parsed = parsePositiveIntegerInput(jpyTextInput.value)
   if (parsed === null) return
-  const clamped = Math.min(50_000_000, Math.max(100_000, Math.round(parsed)))
+  const clamped = clampBidJpy(parsed)
   if (clamped !== props.bidJpy) {
     emit('commitJpy', clamped)
   }
@@ -102,9 +98,9 @@ function cancelRubEdit(): void {
 function submitRubEdit(): void {
   if (!isEditingRub.value) return
   isEditingRub.value = false
-  const parsed = parseNumericInput(rubTextInput.value)
+  const parsed = parsePositiveIntegerInput(rubTextInput.value)
   if (parsed === null) return
-  const clampedRub = Math.min(35_000_000, Math.max(50_000, Math.round(parsed)))
+  const clampedRub = clampBidRub(parsed)
   if (clampedRub !== props.displayBidRub) {
     emit('commitRub', clampedRub)
   }

@@ -2,8 +2,13 @@
 import { SlidersHorizontal } from '@lucide/vue'
 import { computed } from 'vue'
 
+import {
+  VERDICT_META,
+  formatDromPriceRange,
+  formatRoiPercent,
+} from '@/components/lots/detail/lotPresentation'
 import { BaseBadge, BaseCard } from '@/components/ui'
-import type { LotDetailResponse, TrafficLightColor } from '@/types/api'
+import type { LotDetailResponse } from '@/types/api'
 import { formatRub } from '@/utils/formatters'
 
 interface Props {
@@ -16,14 +21,12 @@ const emit = defineEmits<{
   openEconomicsTab: []
 }>()
 
-const BADGE_VARIANTS: Record<TrafficLightColor, 'success' | 'warning' | 'danger'> = {
-  green: 'success',
-  yellow: 'warning',
-  red: 'danger',
-}
-
-const badgeVariant = computed(() => BADGE_VARIANTS[props.detail.verdict.verdict])
+const badgeVariant = computed(() => VERDICT_META[props.detail.verdict.verdict].badgeVariant)
 const turnkeyCostRub = computed(() => props.detail.economics.wise_cost_ladder.turnkey_cost_rub)
+const dromRangeText = computed(() =>
+  formatDromPriceRange(props.detail.market.price_min_rub, props.detail.market.price_max_rub),
+)
+const roiFormatted = computed(() => formatRoiPercent(props.detail.verdict.benefit_percentage))
 </script>
 
 <template>
@@ -53,16 +56,12 @@ const turnkeyCostRub = computed(() => props.detail.economics.wise_cost_ladder.tu
         </span>
       </div>
 
-      <div
-        v-if="detail.market.price_min_rub && detail.market.price_max_rub"
-        class="flex items-center justify-between gap-3 text-[13px]"
-      >
+      <div v-if="dromRangeText" class="flex items-center justify-between gap-3 text-[13px]">
         <span class="text-text-secondary min-w-0"
           >Разброс в наличии ({{ detail.market.search_region_ru }})</span
         >
         <span class="text-text-secondary shrink-0 whitespace-nowrap tabular-nums">
-          {{ formatRub(detail.market.price_min_rub) }} –
-          {{ formatRub(detail.market.price_max_rub) }}
+          {{ dromRangeText }}
         </span>
       </div>
 
@@ -83,8 +82,7 @@ const turnkeyCostRub = computed(() => props.detail.economics.wise_cost_ladder.tu
           class="shrink-0 font-semibold whitespace-nowrap tabular-nums"
           :class="detail.verdict.net_benefit_rub >= 0 ? 'text-success' : 'text-danger'"
         >
-          {{ detail.verdict.benefit_percentage > 0 ? '+' : ''
-          }}{{ detail.verdict.benefit_percentage }}%
+          {{ roiFormatted }}
         </span>
       </div>
     </div>

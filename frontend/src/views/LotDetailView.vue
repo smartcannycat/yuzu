@@ -6,6 +6,7 @@ import { useRoute, useRouter } from 'vue-router'
 import LotDetailSheets, {
   type LotDetailSheetKind,
 } from '@/components/lots/detail/LotDetailSheets.vue'
+import { formatLotSpecsSubtitle } from '@/components/lots/detail/lotPresentation'
 import LotPrintReport from '@/components/lots/detail/LotPrintReport.vue'
 import LotStickyDangerAlert from '@/components/lots/detail/LotStickyDangerAlert.vue'
 import LotTabEconomics from '@/components/lots/detail/LotTabEconomics.vue'
@@ -14,7 +15,6 @@ import LotTabTech from '@/components/lots/detail/LotTabTech.vue'
 import { BaseButton, BaseCard, SegmentedControl, type SegmentOption } from '@/components/ui'
 import { useLotsStore } from '@/stores/lots'
 import type { RecalculateRequest } from '@/types/api'
-import { formatEngineLiters, formatMileageKm } from '@/utils/formatters'
 
 type LotDetailTab = 'general' | 'tech' | 'economics'
 
@@ -27,11 +27,17 @@ function parseTabQuery(raw: unknown): LotDetailTab {
   return 'general'
 }
 
+function parseLotIdParam(raw: unknown): string {
+  if (typeof raw === 'string') return raw.trim()
+  if (Array.isArray(raw) && typeof raw[0] === 'string') return raw[0].trim()
+  return ''
+}
+
 const route = useRoute()
 const router = useRouter()
 const lotsStore = useLotsStore()
 
-const lotId = computed(() => String(route.params.lotId ?? ''))
+const lotId = computed(() => parseLotIdParam(route.params.lotId))
 const activeTab = ref<LotDetailTab>(parseTabQuery(route.query.tab))
 const activeSheet = ref<LotDetailSheetKind>(null)
 
@@ -57,13 +63,7 @@ const tabOptions = computed<SegmentOption<LotDetailTab>[]>(() => [
 
 const headerSubtitle = computed(() => {
   if (!detail.value) return ''
-  const { passport } = detail.value
-  return [
-    passport.first_reg_year ?? '—',
-    formatEngineLiters(passport.engine_cc),
-    formatMileageKm(passport.mileage_km),
-    `${passport.auction_house} #${passport.lot_number}`,
-  ].join(' · ')
+  return formatLotSpecsSubtitle(detail.value.passport)
 })
 
 watch(

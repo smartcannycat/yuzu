@@ -3,7 +3,14 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import LotBidSimulatorCard from '@/components/lots/detail/LotBidSimulatorCard.vue'
 import LotMarketComparisonCard from '@/components/lots/detail/LotMarketComparisonCard.vue'
-import { buildCostLadderSteps } from '@/components/lots/detail/lotPresentation'
+import {
+  FX_RATE_SOURCE_LABEL,
+  buildCostLadderSteps,
+  clampBidJpy,
+  clampBidRub,
+  formatUtilModeLabel,
+  resolveSafeJpyRate,
+} from '@/components/lots/detail/lotPresentation'
 import { BaseBadge, BaseCard, BaseSwitch, CostLadder } from '@/components/ui'
 import type { LotDetailResponse, RecalculateRequest } from '@/types/api'
 import { formatRub } from '@/utils/formatters'
@@ -62,7 +69,9 @@ onBeforeUnmount(() => {
   clearSliderTimer()
 })
 
-const jpyRate = computed(() => props.detail.economics.customs.rates_snapshot.jpy_rub_bank || 0.64)
+const jpyRate = computed(() =>
+  resolveSafeJpyRate(props.detail.economics.customs.rates_snapshot.jpy_rub_bank),
+)
 
 const isLinearPreviewPending = computed(
   () =>
@@ -134,15 +143,17 @@ function handleSliderCommit(): void {
 }
 
 function handleCommitJpy(nextBidJpy: number): void {
+  const safeJpy = clampBidJpy(nextBidJpy)
   draftBidRubOverride.value = null
-  draftBidJpy.value = nextBidJpy
+  draftBidJpy.value = safeJpy
   emitRecalculateNow()
 }
 
 function handleCommitRub(nextBidRub: number): void {
-  draftBidRubOverride.value = nextBidRub
-  draftBidJpy.value = Math.max(100_000, Math.round(nextBidRub / jpyRate.value))
-  emitRecalculateNow({ bidRub: nextBidRub })
+  const safeRub = clampBidRub(nextBidRub)
+  draftBidRubOverride.value = safeRub
+  draftBidJpy.value = clampBidJpy(Math.round(safeRub / jpyRate.value))
+  emitRecalculateNow({ bidRub: safeRub })
 }
 
 function handleSwitchToggle(): void {
@@ -167,16 +178,13 @@ const ladderSteps = computed(() =>
   }),
 )
 
-const utilDescription = computed(() => {
-  const isUnder160 = props.detail.economics.customs.is_under_160_hp
-  if (draftCommercialUtil.value) {
-    return 'Коммерческий тариф по ПП РФ № 1255 (для перепродажи / юрлица)'
-  }
-  if (isUnder160 === false) {
-    return 'Мощность > 160 л.с. — применяется повышенный утильсбор'
-  }
-  return 'Льготный личный ввоз для физлица (≤ 160 л.с.): 5 200 ₽'
-})
+const utilDescription = computed(() =>
+  formatUtilModeLabel(
+    draftCommercialUtil.value,
+    props.detail.economics.customs.is_under_160_hp,
+    'detailed',
+  ),
+)
 </script>
 
 <template>
@@ -265,7 +273,7 @@ const utilDescription = computed(() => {
           {{ jpyRate.toFixed(3) }} ₽ · 1 € =
           {{ detail.economics.customs.rates_snapshot.eur_rub_cbrf.toFixed(2) }} ₽
         </span>
-        <span class="text-text-primary font-medium">Курс валют: VL.ru Деньги</span>
+        <span class="text-text-primary font-medium">Курс валют: {{ FX_RATE_SOURCE_LABEL }}</span>
       </div>
     </BaseCard>
   </div>
