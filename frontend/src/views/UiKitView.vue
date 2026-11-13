@@ -251,7 +251,7 @@ function goHome() {
           <SegmentedControl
             v-model="activeTab"
             :options="tabOptions"
-            aria-label="Разделы карточки лота"
+            ariaLabel="Разделы карточки лота"
           />
           <span class="text-text-secondary text-[13px]">
             Активная вкладка:
