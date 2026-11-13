@@ -247,3 +247,28 @@ def test_pipeline_persists_fallback_without_failing_batch(lot, monkeypatch):
     assert lot.farpost_repair.parts.get().is_statistical_fallback
     item.refresh_from_db()
     assert item.status != ItemProcessingStatus.FAILED
+
+
+@pytest.mark.django_db
+def test_structured_severity_is_used_when_raw_code_has_no_grade(lot):
+    item = defect(lot, "U")
+    item.severity = 1
+    item.save(update_fields=["severity"])
+    assert estimate_repair(lot, client=source()).total_works_rub == 2500
+
+
+@pytest.mark.django_db
+def test_structured_replacement_without_raw_code(lot):
+    item = defect(lot, "")
+    item.defect_types = ["XX"]
+    item.severity = 3
+    item.save(update_fields=["defect_types", "severity"])
+    assert estimate_repair(lot, client=source()).total_parts_from_rub == 18000
+
+
+@pytest.mark.django_db
+def test_failed_source_does_not_expand_into_another_network_request(lot):
+    defect(lot, "X")
+    client = source(error=True)
+    estimate_repair(lot, client=client)
+    assert client.search.call_count == 1
