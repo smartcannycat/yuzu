@@ -4,6 +4,7 @@ import { computed, ref, watch } from 'vue'
 
 import LotBodyDiagram from '@/components/lots/detail/LotBodyDiagram.vue'
 import { getDefectTone } from '@/components/lots/detail/lotDefects'
+import { buildActiveRiskLabels } from '@/components/lots/detail/lotPresentation'
 import { BaseBadge, BaseCard, InsetListGroup, InsetListItem } from '@/components/ui'
 import type { BodyPanel, LotDetailResponse } from '@/types/api'
 import { formatRub } from '@/utils/formatters'
@@ -46,19 +47,7 @@ const safetySquircleColor = computed(() => {
   return '#34C759'
 })
 
-const activeRiskLabels = computed(() => {
-  const flags = props.detail.passport.risk_flags
-  const chips: Array<{ label: string; variant: 'danger' | 'warning' | 'info' }> = []
-  if (flags.repaired_grade_r_ra) chips.push({ label: 'Аварийная оценка R/RA', variant: 'danger' })
-  if (flags.pillar_or_frame_repair) chips.push({ label: 'Ремонт стоек/каркаса', variant: 'danger' })
-  if (flags.odometer_issue) chips.push({ label: 'Нестыковка одометра', variant: 'danger' })
-  if (flags.is_flooded) chips.push({ label: 'Риск затопления', variant: 'danger' })
-  if (flags.airbag_deployed) chips.push({ label: 'Срабатывали SRS', variant: 'danger' })
-  if (flags.underbody_rust) chips.push({ label: 'Налёт ржавчины S1–S2', variant: 'warning' })
-  if (flags.windshield_damage) chips.push({ label: 'Дефект лобового стекла', variant: 'warning' })
-  if (flags.panel_replaced_xx) chips.push({ label: 'Есть заменённые панели XX', variant: 'info' })
-  return chips
-})
+const activeRiskLabels = computed(() => buildActiveRiskLabels(props.detail.passport.risk_flags))
 
 function toggleDefectRow(panelId: BodyPanel): void {
   selectedPanel.value = selectedPanel.value === panelId ? null : panelId

@@ -3,7 +3,8 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import LotBidSimulatorCard from '@/components/lots/detail/LotBidSimulatorCard.vue'
 import LotMarketComparisonCard from '@/components/lots/detail/LotMarketComparisonCard.vue'
-import { BaseBadge, BaseCard, BaseSwitch, CostLadder, type CostLadderStep } from '@/components/ui'
+import { buildCostLadderSteps } from '@/components/lots/detail/lotPresentation'
+import { BaseBadge, BaseCard, BaseSwitch, CostLadder } from '@/components/ui'
 import type { LotDetailResponse, RecalculateRequest } from '@/types/api'
 import { formatRub } from '@/utils/formatters'
 
@@ -156,34 +157,15 @@ function handleReset(): void {
   emit('resetSimulation')
 }
 
-function formatStepHint(
-  stepNumber: number,
-  currency: string | null,
-  original: number | null,
-): string | undefined {
-  if (stepNumber === 1) {
-    return `${Math.round(draftBidJpy.value).toLocaleString('ru-RU')} ¥ · курс ${jpyRate.value.toFixed(3)} ₽`
-  }
-  if (!currency || original === null) return undefined
-  if (currency === 'EUR') {
-    return `${original.toFixed(2)} EUR`
-  }
-  return `${Math.round(original).toLocaleString('ru-RU')} ${currency}`
-}
-
-const ladderSteps = computed<CostLadderStep[]>(() => {
-  return props.detail.economics.wise_cost_ladder.steps.map((step) => {
-    const amountRub = step.step_number === 1 ? displayBidRub.value : step.amount_rub
-    return {
-      label: step.name_ru,
-      value: formatRub(amountRub),
-      hint: formatStepHint(step.step_number, step.original_currency, step.original_amount),
-      active:
-        (step.step_number === 1 && isLinearPreviewPending.value) ||
-        (step.step_number === 7 && draftIncludeRepairs.value && amountRub > 0),
-    }
-  })
-})
+const ladderSteps = computed(() =>
+  buildCostLadderSteps(props.detail.economics.wise_cost_ladder.steps, {
+    bidJpy: draftBidJpy.value,
+    jpyRate: jpyRate.value,
+    displayBidRub: displayBidRub.value,
+    isPreviewPending: isLinearPreviewPending.value,
+    includeRepairs: draftIncludeRepairs.value,
+  }),
+)
 
 const utilDescription = computed(() => {
   const isUnder160 = props.detail.economics.customs.is_under_160_hp

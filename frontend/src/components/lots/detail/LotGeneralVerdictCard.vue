@@ -2,9 +2,10 @@
 import { AlertTriangle, CheckCircle2, OctagonAlert } from '@lucide/vue'
 import { computed } from 'vue'
 
+import { VERDICT_META } from '@/components/lots/detail/lotPresentation'
 import { CapyMascot } from '@/components/mascot'
 import { BaseBadge, BaseCard } from '@/components/ui'
-import type { LotDetailResponse, TrafficLightColor } from '@/types/api'
+import type { LotDetailResponse } from '@/types/api'
 
 interface Props {
   detail: LotDetailResponse
@@ -14,31 +15,6 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   isSimulationModified: false,
 })
-
-const VERDICT_META: Record<
-  TrafficLightColor,
-  {
-    badgeVariant: 'success' | 'warning' | 'danger'
-    label: string
-    shortTitle: string
-  }
-> = {
-  green: {
-    badgeVariant: 'success',
-    label: 'Можно брать',
-    shortTitle: 'Рекомендуется к покупке',
-  },
-  yellow: {
-    badgeVariant: 'warning',
-    label: 'Под вопросом',
-    shortTitle: 'Требует проверки сметы и рисков',
-  },
-  red: {
-    badgeVariant: 'danger',
-    label: 'Высокий риск',
-    shortTitle: 'Покупка не рекомендуется',
-  },
-}
 
 const verdictMeta = computed(() => VERDICT_META[props.detail.verdict.verdict])
 </script>
