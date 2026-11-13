@@ -120,12 +120,17 @@ def refresh_user_tokens(payload: TokenRefreshRequest) -> AuthTokensResponse:
     if jwt_settings.ROTATE_REFRESH_TOKENS:
         if jwt_settings.BLACKLIST_AFTER_ROTATION:
             try:
-                token.blacklist()
+                _, created = token.blacklist()
             except (AttributeError, TokenError) as exc:
                 raise UnauthorizedProblemError(
                     "Refresh-токен уже отозван или недействителен",
                     title="Сессия истекла",
                 ) from exc
+            if not created:
+                raise UnauthorizedProblemError(
+                    "Refresh-токен уже отозван или недействителен",
+                    title="Сессия истекла",
+                )
         return issue_auth_tokens(user)
 
     return issue_auth_tokens(user, refresh_token=token)

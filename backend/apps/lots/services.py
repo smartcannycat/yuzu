@@ -388,6 +388,7 @@ _SIMPLE_STARTER_LOTS: list[dict] = [
     {
         "make": "Honda",
         "model": "Vezel",
+        "trim": "Hybrid",
         "year": 2019,
         "frame_id": "RU3-1209412",
         "chassis_number": "RU3-1209412",
@@ -406,6 +407,7 @@ _SIMPLE_STARTER_LOTS: list[dict] = [
     {
         "make": "Nissan",
         "model": "Note",
+        "trim": "e-Power",
         "year": 2021,
         "frame_id": "HE12-389104",
         "chassis_number": "HE12-389104",
