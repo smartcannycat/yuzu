@@ -1,9 +1,11 @@
 """Read public Farpost listing pages and validate compatible local parts."""
 
 import re
+import time
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 
+import httpx
 from bs4 import BeautifulSoup
 
 
@@ -157,3 +159,41 @@ def parse_offers(html: str, criteria: PartCriteria, *, source_url: str) -> list[
     if not recognizable:
         raise FarpostFetchError("Farpost listing structure changed")
     return sorted(offers.values(), key=lambda offer: (offer.price_rub, offer.offer_id))
+
+
+class FarpostClient:
+    def __init__(self, *, timeout_sec: float = 5.0, transport: httpx.BaseTransport | None = None):
+        self.timeout_sec = timeout_sec
+        self.transport = transport
+
+    def search(self, criteria: PartCriteria, *, deadline: float) -> list[PartOffer]:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise FarpostFetchError("Farpost search budget exhausted")
+        url = "https://www.farpost.ru/vladivostok/zapchasti/"
+        try:
+            with httpx.Client(
+                transport=self.transport,
+                timeout=min(self.timeout_sec, remaining),
+                follow_redirects=True,
+            ) as client:
+                response = client.get(
+                    url,
+                    params={
+                        "query": criteria.query,
+                        "goodPresentState": "present",
+                        "condition[]": "used",
+                        "sortBy": "pricea",
+                    },
+                )
+                response.raise_for_status()
+                if time.monotonic() > deadline:
+                    raise FarpostFetchError("Farpost search budget exhausted")
+                if len(response.content) > 3_000_000:
+                    raise FarpostFetchError("Farpost page exceeds the size limit")
+                head = response.content[:4000].lower()
+                encoding = "cp1251" if b"windows-1251" in head else "utf-8"
+                html = response.content.decode(encoding, errors="replace")
+        except httpx.HTTPError as exc:
+            raise FarpostFetchError(f"Farpost request failed: {exc}") from exc
+        return parse_offers(html, criteria, source_url=str(response.url))
