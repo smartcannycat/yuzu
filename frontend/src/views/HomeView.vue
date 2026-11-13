@@ -21,6 +21,7 @@ import { useLotsStore } from '@/stores/lots'
 import type { InProgressItemPreview, LotSummary, TrafficLightColor } from '@/types/api'
 
 const HOME_IN_PROGRESS_POLL_MS = 2000
+const IN_PROGRESS_AUTO_EXPAND_LIMIT = 4
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -45,9 +46,12 @@ function stopBackgroundSync(): void {
   }
 }
 
-function scheduleBackgroundSync(): void {
+function scheduleBackgroundSync(options: { force?: boolean } = {}): void {
   stopBackgroundSync()
-  if (lotsStore.inProgress.total_processing_lots <= 0 || typeof window === 'undefined') {
+  if (
+    (!options.force && lotsStore.inProgress.total_processing_lots <= 0) ||
+    typeof window === 'undefined'
+  ) {
     return
   }
 
@@ -71,6 +75,7 @@ watch(
       }
     } else {
       stopBackgroundSync()
+      isInProgressOpen.value = false
     }
   },
 )
@@ -98,8 +103,12 @@ async function handleUploadSubmit(files: File[]): Promise<void> {
   isUploadOpen.value = false
 
   if (isDesktop.value) {
-    isInProgressOpen.value = true
-    scheduleBackgroundSync()
+    const totalInProgress = lotsStore.inProgress.total_processing_lots
+    const isBatchActive = created.status === 'queued' || created.status === 'processing'
+    const effectiveTotal =
+      totalInProgress > 0 ? totalInProgress : isBatchActive ? created.total_items : 0
+    isInProgressOpen.value = effectiveTotal > 0 && effectiveTotal <= IN_PROGRESS_AUTO_EXPAND_LIMIT
+    scheduleBackgroundSync({ force: created.total_items > 0 && isBatchActive })
   } else {
     await router.push({
       name: 'batch-progress',
@@ -211,6 +220,13 @@ async function handleLogout(): Promise<void> {
       </template>
     </AppHeader>
 
+    <InProgressAccordion
+      v-model:open="isInProgressOpen"
+      class="mt-4 sm:mt-5"
+      :summary="lotsStore.inProgress"
+      @select-item="handleSelectInProgressItem"
+    />
+
     <LotsToolbar
       class="mt-4 sm:mt-5"
       :query="lotsStore.query"
@@ -229,28 +245,21 @@ async function handleLogout(): Promise<void> {
       @reset-filters="handleResetAllFilters"
     />
 
-    <div class="mt-6 flex flex-1 flex-col gap-3 sm:mt-7 sm:gap-3.5">
-      <InProgressAccordion
-        v-model:open="isInProgressOpen"
-        :summary="lotsStore.inProgress"
-        @select-item="handleSelectInProgressItem"
-      />
-
-      <LotsFeed
-        :items="lotsStore.items"
-        :is-loading="lotsStore.isLoading"
-        :is-loading-more="lotsStore.isLoadingMore"
-        :has-loaded-once="lotsStore.hasLoadedOnce"
-        :has-more="lotsStore.hasMore"
-        :has-any-active-filter="lotsStore.hasAnyActiveFilter"
-        :error-message="lotsStore.errorMessage"
-        @select-lot="previewLot = $event"
-        @retry="lotsStore.fetchLots()"
-        @reset-filters="handleResetAllFilters"
-        @open-upload="openUploadSheet"
-        @load-more="lotsStore.loadMore()"
-      />
-    </div>
+    <LotsFeed
+      class="mt-5 sm:mt-6"
+      :items="lotsStore.items"
+      :is-loading="lotsStore.isLoading"
+      :is-loading-more="lotsStore.isLoadingMore"
+      :has-loaded-once="lotsStore.hasLoadedOnce"
+      :has-more="lotsStore.hasMore"
+      :has-any-active-filter="lotsStore.hasAnyActiveFilter"
+      :error-message="lotsStore.errorMessage"
+      @select-lot="previewLot = $event"
+      @retry="lotsStore.fetchLots()"
+      @reset-filters="handleResetAllFilters"
+      @open-upload="openUploadSheet"
+      @load-more="lotsStore.loadMore()"
+    />
 
     <button
       type="button"
