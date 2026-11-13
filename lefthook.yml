@@ -1,0 +1,19 @@
+# Lefthook pre-commit hook configuration
+# Docs: https://github.com/evilmartians/lefthook
+
+pre-commit:
+  parallel: true
+  commands:
+    oxfmt:
+      root: "frontend/"
+      glob: "*.{js,ts,vue,json,css,html,md}"
+      run: bun x oxfmt {staged_files}
+      stage_fixed: true
+    oxlint:
+      root: "frontend/"
+      glob: "*.{js,ts,vue}"
+      run: bun x oxlint {staged_files}
+    typecheck:
+      root: "frontend/"
+      glob: "*.{ts,vue}"
+      run: bun run typecheck
