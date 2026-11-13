@@ -7,6 +7,7 @@ from ninja_jwt.settings import api_settings as jwt_settings
 from ninja_jwt.tokens import RefreshToken
 
 from apps.core.exceptions import ConflictProblemError, UnauthorizedProblemError
+from apps.lots.services import seed_starter_lots
 from apps.users.models import User, UserManager
 from apps.users.schemas import (
     AuthTokensResponse,
@@ -42,6 +43,7 @@ def issue_auth_tokens(
     )
 
 
+@transaction.atomic
 def register_user(payload: UserRegisterRequest) -> AuthTokensResponse:
     normalized_email = UserManager.normalize_email(payload.email)
     normalized_name = payload.name or None
@@ -64,7 +66,7 @@ def register_user(payload: UserRegisterRequest) -> AuthTokensResponse:
             title="Email уже занят",
         ) from exc
 
-    # Starter benchmark lots seeding (BE-02/BE-04) will be hooked here once Lot models exist.
+    seed_starter_lots(user)
     return issue_auth_tokens(user)
 
 
