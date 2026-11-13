@@ -48,11 +48,11 @@ const paddingClasses = computed(() => PADDING_CLASSES[props.padding])
 <template>
   <component
     :is="as"
-    class="text-text-primary rounded-md transition-colors duration-150"
+    class="text-text-primary rounded-md transition-[border-color,background-color] duration-150"
     :class="[
       variantClasses,
       paddingClasses,
-      interactive ? 'hover:bg-surface-hover active:bg-surface-inset/70 cursor-pointer' : '',
+      interactive ? 'hover:border-border-strong active:bg-surface-hover cursor-pointer' : '',
     ]"
   >
     <slot />

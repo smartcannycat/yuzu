@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
 import { apiClient, tokenStorage } from '@/api'
+import { useLotsStore } from '@/stores/lots'
 import type {
   AuthTokensResponse,
   UserLoginRequest,
@@ -48,6 +49,7 @@ export const useAuthStore = defineStore('auth', () => {
   function clearSession(): void {
     sessionEpoch += 1
     tokenStorage.clear()
+    useLotsStore().clear()
   }
 
   async function initialize(): Promise<void> {
