@@ -45,6 +45,7 @@ class AppSettings(BaseSettings):
 
     # Media Files
     MEDIA_URL: str = "/media/"
+    LOT_PARSER_BACKEND: str = ""
     MEDIA_ROOT: str = "media"
 
     # External Services

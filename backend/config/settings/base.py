@@ -8,6 +8,7 @@ from config.settings.config import AppSettings, get_settings
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 app_settings = get_settings()
+LOT_PARSER_BACKEND = app_settings.LOT_PARSER_BACKEND
 
 SECRET_KEY = app_settings.SECRET_KEY
 DEBUG = app_settings.DEBUG

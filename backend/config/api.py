@@ -2,6 +2,7 @@ from ninja_extra import NinjaExtraAPI
 
 from apps.core.api import HealthController
 from apps.core.exception_handlers import register_exception_handlers
+from apps.lots.api import LotController
 from apps.users.api import AuthController
 
 api = NinjaExtraAPI(
@@ -16,4 +17,5 @@ register_exception_handlers(api)
 api.register_controllers(
     HealthController,
     AuthController,
+    LotController,
 )
