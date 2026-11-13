@@ -3,6 +3,7 @@ from typing import Any
 
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.db import models
+from django.db.models.functions import Lower
 
 
 class UserManager(BaseUserManager["User"]):
@@ -65,6 +66,16 @@ class User(AbstractBaseUser, PermissionsMixin):
     class Meta:
         db_table = "users"
         ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                Lower("email"),
+                name="users_email_ci_unique",
+            ),
+        ]
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        self.email = UserManager.normalize_email(self.email)
+        super().save(*args, **kwargs)
 
     def __str__(self) -> str:
         return self.email

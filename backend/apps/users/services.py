@@ -1,6 +1,7 @@
 from django.contrib.auth import authenticate
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
+from django.http import HttpRequest
 from ninja_jwt.exceptions import TokenError
 from ninja_jwt.settings import api_settings as jwt_settings
 from ninja_jwt.tokens import RefreshToken
@@ -43,9 +44,7 @@ def issue_auth_tokens(
 
 def register_user(payload: UserRegisterRequest) -> AuthTokensResponse:
     normalized_email = UserManager.normalize_email(payload.email)
-    normalized_name = payload.name.strip() if payload.name else None
-    if normalized_name == "":
-        normalized_name = None
+    normalized_name = payload.name or None
 
     if User.objects.filter(email=normalized_email).exists():
         raise ConflictProblemError(
@@ -69,9 +68,13 @@ def register_user(payload: UserRegisterRequest) -> AuthTokensResponse:
     return issue_auth_tokens(user)
 
 
-def authenticate_user(payload: UserLoginRequest) -> AuthTokensResponse:
+def authenticate_user(
+    payload: UserLoginRequest,
+    *,
+    request: HttpRequest | None = None,
+) -> AuthTokensResponse:
     normalized_email = UserManager.normalize_email(payload.email)
-    user = authenticate(username=normalized_email, password=payload.password)
+    user = authenticate(request=request, username=normalized_email, password=payload.password)
     if user is None or not isinstance(user, User) or not user.is_active:
         raise UnauthorizedProblemError(
             "Неверный email или пароль",
@@ -81,6 +84,7 @@ def authenticate_user(payload: UserLoginRequest) -> AuthTokensResponse:
     return issue_auth_tokens(user)
 
 
+@transaction.atomic
 def refresh_user_tokens(payload: TokenRefreshRequest) -> AuthTokensResponse:
     try:
         token = RefreshToken(payload.refresh_token)
@@ -111,5 +115,15 @@ def refresh_user_tokens(payload: TokenRefreshRequest) -> AuthTokensResponse:
             title="Сессия истекла",
         )
 
-    next_refresh = None if jwt_settings.ROTATE_REFRESH_TOKENS else token
-    return issue_auth_tokens(user, refresh_token=next_refresh)
+    if jwt_settings.ROTATE_REFRESH_TOKENS:
+        if jwt_settings.BLACKLIST_AFTER_ROTATION:
+            try:
+                token.blacklist()
+            except (AttributeError, TokenError) as exc:
+                raise UnauthorizedProblemError(
+                    "Refresh-токен уже отозван или недействителен",
+                    title="Сессия истекла",
+                ) from exc
+        return issue_auth_tokens(user)
+
+    return issue_auth_tokens(user, refresh_token=token)

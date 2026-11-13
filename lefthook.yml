@@ -2,7 +2,7 @@
 # Docs: https://github.com/evilmartians/lefthook
 
 pre-commit:
-  parallel: true
+  parallel: false
   commands:
     ruff-check:
       root: "backend/"

@@ -1,21 +1,30 @@
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import EmailStr, Field
+from pydantic import EmailStr, Field, StringConstraints
 
 from apps.core.schemas import StrictBaseModel
+
+RegisterPasswordStr = Annotated[
+    str,
+    StringConstraints(strip_whitespace=False, min_length=8, max_length=128),
+]
+LoginPasswordStr = Annotated[
+    str,
+    StringConstraints(strip_whitespace=False, min_length=1),
+]
 
 
 class UserRegisterRequest(StrictBaseModel):
     email: EmailStr = Field(..., description="User email address")
-    password: str = Field(..., min_length=8, max_length=128, description="User password")
+    password: RegisterPasswordStr = Field(..., description="User password")
     name: str | None = Field(None, max_length=100, description="Optional display name")
 
 
 class UserLoginRequest(StrictBaseModel):
     email: EmailStr = Field(..., description="User email address")
-    password: str = Field(..., min_length=1, description="User password")
+    password: LoginPasswordStr = Field(..., description="User password")
 
 
 class TokenRefreshRequest(StrictBaseModel):

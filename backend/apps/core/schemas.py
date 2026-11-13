@@ -11,6 +11,7 @@ class StrictBaseModel(Schema):
         extra="forbid",
         str_strip_whitespace=True,
         validate_assignment=True,
+        use_enum_values=True,
     )
 
 

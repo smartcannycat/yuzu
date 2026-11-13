@@ -1,7 +1,8 @@
+import json
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -56,10 +57,34 @@ class AppSettings(BaseSettings):
     @classmethod
     def parse_comma_separated_list(cls, value: list[str] | str) -> list[str]:
         if isinstance(value, str):
-            return [item.strip() for item in value.split(",") if item.strip()]
+            stripped = value.strip()
+            if stripped.startswith("["):
+                parsed = json.loads(stripped)
+                if isinstance(parsed, list):
+                    return [str(item).strip() for item in parsed if str(item).strip()]
+            return [item.strip() for item in stripped.split(",") if item.strip()]
         if isinstance(value, (list, tuple)):
-            return [str(item).strip() for item in value]
+            return [str(item).strip() for item in value if str(item).strip()]
         return []
+
+    @model_validator(mode="after")
+    def validate_production_security(self) -> "AppSettings":
+        if not self.is_production:
+            return self
+
+        if self.SECRET_KEY.startswith("django-insecure-") or len(self.SECRET_KEY) < 32:
+            raise ValueError(
+                "SECRET_KEY must be at least 32 characters and not use an insecure default "
+                "when ENVIRONMENT=production"
+            )
+        if not self.ALLOWED_HOSTS or "*" in self.ALLOWED_HOSTS:
+            raise ValueError(
+                "ALLOWED_HOSTS must explicitly list allowed hostnames (not empty or '*') "
+                "when ENVIRONMENT=production"
+            )
+        if self.CORS_ALLOW_ALL_ORIGINS:
+            raise ValueError("CORS_ALLOW_ALL_ORIGINS must be False when ENVIRONMENT=production")
+        return self
 
     @property
     def is_production(self) -> bool:

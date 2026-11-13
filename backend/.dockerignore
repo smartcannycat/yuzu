@@ -2,6 +2,10 @@
 .gitignore
 .dockerignore
 .venv
+.env
+.env.*
+!.env.example
+.ruff_cache
 __pycache__
 *.pyc
 *.pyo
@@ -13,4 +17,6 @@ htmlcov
 .vscode
 *.sqlite3
 *.log
+media
+staticfiles
 README.md

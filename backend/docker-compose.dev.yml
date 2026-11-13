@@ -28,7 +28,7 @@ services:
       - ./config:/app/config
       - ./apps:/app/apps
       - ./tests:/app/tests
-      - ./media:/app/media
+      - media_data_dev:/app/media
     ports:
       - "8000:8000"
     environment:
@@ -58,3 +58,4 @@ services:
 
 volumes:
   postgres_data_dev:
+  media_data_dev:

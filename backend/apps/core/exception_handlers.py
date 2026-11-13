@@ -1,3 +1,4 @@
+import logging
 from typing import Any
 
 from django.conf import settings
@@ -9,14 +10,18 @@ from ninja_extra.exceptions import APIException
 from apps.core.exceptions import ERROR_TYPE_BASE, ApiProblemError
 from apps.core.schemas import InvalidParamDetail, ProblemDetail
 
+logger = logging.getLogger(__name__)
+
 _STATUS_TITLES: dict[int, str] = {
     400: "Некорректный запрос",
     401: "Требуется авторизация",
     403: "Доступ запрещен",
     404: "Ресурс не найден",
+    405: "Метод не поддерживается",
     409: "Конфликт данных",
     422: "Ошибка валидации параметров",
     500: "Внутренняя ошибка сервера",
+    503: "Сервис временно недоступен",
 }
 
 
@@ -140,6 +145,8 @@ def register_exception_handlers(api: NinjaExtraAPI) -> None:
         status_code = exc.status_code
         title = _STATUS_TITLES.get(status_code, "Ошибка запроса")
         detail = exc.message or title
+        if status_code == 400 and detail == "Cannot parse request body":
+            detail = "Некорректный формат JSON в теле запроса"
         return _problem_response(
             api,
             request,
@@ -162,6 +169,7 @@ def register_exception_handlers(api: NinjaExtraAPI) -> None:
 
     @api.exception_handler(Exception)
     def handle_unexpected_error(request: HttpRequest, exc: Exception) -> HttpResponse:
+        logger.exception("Unhandled API exception on %s", request.path)
         detail = (
             str(exc)
             if settings.DEBUG

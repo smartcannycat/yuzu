@@ -3,7 +3,7 @@
 # ==========================================
 FROM python:3.12-slim-bookworm AS base
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.13.6 /uv /uvx /bin/
 
 WORKDIR /app
 
@@ -18,9 +18,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
+# Create non-root user and writable runtime directories
 RUN groupadd -r -g 1000 appgroup && \
-    useradd -r -u 1000 -g appgroup -d /app -s /bin/bash appuser
+    useradd -r -u 1000 -g appgroup -d /app -s /bin/bash appuser && \
+    mkdir -p /app/media /app/staticfiles && \
+    chown -R appuser:appgroup /app
 
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
@@ -34,6 +36,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project
 
 COPY --chown=appuser:appgroup . .
+RUN mkdir -p /app/media /app/staticfiles && chown -R appuser:appgroup /app
 
 USER appuser
 
@@ -60,6 +63,13 @@ COPY --from=prod-builder --chown=appuser:appgroup /app/.venv /app/.venv
 COPY --chown=appuser:appgroup config ./config
 COPY --chown=appuser:appgroup apps ./apps
 COPY --chown=appuser:appgroup manage.py ./manage.py
+
+RUN SECRET_KEY=build-only-collectstatic-placeholder \
+    ENVIRONMENT=local \
+    USE_SQLITE=True \
+    python manage.py collectstatic --noinput && \
+    mkdir -p /app/media /app/staticfiles && \
+    chown -R appuser:appgroup /app/media /app/staticfiles
 
 USER appuser
 
