@@ -81,4 +81,36 @@ describe('mockApiClient', () => {
     expect(apiError.status).toBe(422)
     expect(apiError.getFieldError('password')).toBeDefined()
   })
+
+  it('lists lots with filtering, sorting, pagination, and available_filters', async () => {
+    const client = createMockApiClient({ delayMs: 0 })
+
+    const all = await client.lots.list()
+    expect(all.items.length).toBe(6)
+    expect(all.available_filters.total_lots_count).toBe(6)
+    expect(all.in_progress.total_processing_lots).toBe(2)
+
+    const filtered = await client.lots.list({
+      query: 'ZWE211',
+      verdict: 'green',
+    })
+    expect(filtered.items).toHaveLength(1)
+    expect(filtered.items[0]?.model).toBe('Corolla Touring')
+
+    const anomalyOnly = await client.lots.list({ has_anomaly: true })
+    expect(anomalyOnly.items.length).toBeGreaterThan(0)
+    expect(anomalyOnly.items.every((item) => item.has_anomaly)).toBe(true)
+
+    const sortedByBenefit = await client.lots.list({
+      sort_by: 'net_benefit',
+      sort_order: 'desc',
+      page_size: 2,
+      page: 1,
+    })
+    expect(sortedByBenefit.items).toHaveLength(2)
+    expect(sortedByBenefit.pagination.total_pages).toBe(3)
+    expect(sortedByBenefit.items[0]!.net_benefit_rub).toBeGreaterThanOrEqual(
+      sortedByBenefit.items[1]!.net_benefit_rub,
+    )
+  })
 })

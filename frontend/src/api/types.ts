@@ -1,5 +1,7 @@
 import type {
   AuthTokensResponse,
+  LotListQueryParams,
+  LotListResponse,
   TokenRefreshRequest,
   UserLoginRequest,
   UserProfileResponse,
@@ -13,6 +15,11 @@ export interface AuthApi {
   me(): Promise<UserProfileResponse>
 }
 
+export interface LotsApi {
+  list(params?: LotListQueryParams): Promise<LotListResponse>
+}
+
 export interface ApiClient {
   auth: AuthApi
+  lots: LotsApi
 }
