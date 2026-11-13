@@ -96,7 +96,12 @@ erDiagram
 | `net_benefit_rub` | `integer` | Нет | Домен 3 | Текст выгоды | Чистая выгода покупателя относительно рынка РФ (**+415 101 ₽**). |
 | `has_anomaly` | `boolean` | Нет | Домен 2 (Аудит) | Тревожная плашка | `true`, если по машине найден скрученный пробег или скрытый аварийный ремонт. |
 | `anomaly_text` | `string` | Да | Домен 2 | Текст предупреждения | Например, *"Скрутка пробега (-124k км)"*. |
-| `thumbnail_url` | `string (URI)`| Нет | S3 / CDN | Квадратное фото авто | Ссылка на миниатюру фото автомобиля (или кроп титульного угла листа). |
+| `thumbnail_url` | `string (URI)`| Да | S3 / CDN | Квадратное фото авто | Ссылка на миниатюру скана аукционного листа. |
+| `auction_date` | `string` | Да | Домен 1 | Статус торгов | Дата текущих торгов (`ДД.ММ.ГГГГ`), если распознана. |
+| `is_archived` | `boolean` | Нет | БД / Lifecycle | Переключатель «Активные / Архив» | Флаг нахождения лота в архиве (автоархивация по истечении срока или вручную). |
+| `archived_at` | `string (ISO)`| Да | База данных | Архив | Дата/время архивации (UTC). |
+| `archived_reason` | `enum` | Да | База данных | Бейдж архива | Причина архивации: `expired` или `manual`. |
+| `expires_at` | `string (ISO)`| Да | БД / Lifecycle | Индикатор актуальности | Дедлайн автоархивации (`auction_date JST + 24ч` или `created_at + 3 дня`), `null` при ручном возврате. |
 | `created_at` | `string (ISO)`| Нет | База данных | Дата расчета | Дата и время добавления лота в историю. |
 
 ---
@@ -132,18 +137,21 @@ erDiagram
 
 ---
 
-## 3. Каталог всех 7 клиентских эндпоинтов мобильного приложения
+## 3. Каталог клиентских эндпоинтов приложения
 
 ```
-[ Мобильное приложение ]
+[ Мобильное / Web приложение ]
        │
-       ├─► (1) POST /api/v1/lots/batches             ➔ Загрузка пачки фото (до 10 шт)
-       ├─► (2) GET  /api/v1/lots/batches/{id}        ➔ Live Polling очереди (1.5-2.0 сек)
-       ├─► (3) POST /api/v1/lots/batches/{id}/items  ➔ Догрузка еще листов без прерывания
-       ├─► (4) GET  /api/v1/lots                     ➔ Главный дашборд (лента расчетов)
-       ├─► (5) GET  /api/v1/lots/{id}                ➔ Полная спецификация (Табы 4, 5, 6)
-       ├─► (6) POST /api/v1/lots/{id}/recalculate    ➔ Интерактивный слайдер ставки и свитчи
-       └─► (7) GET  /api/v1/lots/{id}/report.pdf     ➔ Официальный PDF-отчет для клиента
+       ├─► (1)  POST   /api/v1/lots/batches             ➔ Загрузка пачки фото (до 10 шт)
+       ├─► (2)  GET    /api/v1/lots/batches/{id}        ➔ Live Polling очереди (1.5-2.0 сек)
+       ├─► (3)  POST   /api/v1/lots/batches/{id}/items  ➔ Догрузка еще листов без прерывания
+       ├─► (4)  GET    /api/v1/lots                     ➔ Главный дашборд: Активные / Архив и фильтры
+       ├─► (5)  GET    /api/v1/lots/{id}                ➔ Полная спецификация (Табы 4, 5, 6)
+       ├─► (6)  POST   /api/v1/lots/{id}/recalculate    ➔ Интерактивный слайдер ставки и свитчи
+       ├─► (7)  GET    /api/v1/lots/{id}/report.pdf     ➔ [P1] Серверный PDF-отчет (в MVP — клиентский print/PDF)
+       ├─► (8)  PATCH  /api/v1/lots/{id}                ➔ Ручная архивация / возврат из архива
+       ├─► (9)  DELETE /api/v1/lots/{id}                ➔ Soft-delete ненужного лота (без корзины в UI)
+       └─► (10) POST   /api/v1/lots/bulk-delete         ➔ Массовый soft-delete выбранных лотов
 ```
 
 | Метод | Путь эндпоинта | Назначение в приложении | Входные параметры / Тело | Ответ |
@@ -151,10 +159,13 @@ erDiagram
 | `POST` | `/api/v1/lots/batches` | Экран 2: Загрузка пачки листов из галереи | `multipart/form-data: files[]` | `202 Accepted` (`BatchCreateResponse`) |
 | `GET` | `/api/v1/lots/batches/{batch_id}` | Экран 3: Опрос прогресса очереди и маскота | `batch_id: UUID` в path | `200 OK` (`BatchProgressResponse`) |
 | `POST` | `/api/v1/lots/batches/{batch_id}/items`| Экран 3: Кнопка «+ Еще листы» | `batch_id` + `multipart: files[]` | `202 Accepted` (`BatchProgressResponse`) |
-| `GET` | `/api/v1/lots` | Экран 1: Главный дашборд с фильтрами | Query: `tab=ready\|processing`, `verdict`, `query` | `200 OK` (`LotListResponse`) |
+| `GET` | `/api/v1/lots` | Экран 1: Главный дашборд с фильтрами | Query: `lifecycle`, `verdict`, `make`, `model`, `query` | `200 OK` (`LotListResponse`) |
 | `GET` | `/api/v1/lots/{lot_id}` | Экраны 4, 5, 6: Детальный экран со всеми табами| `lot_id: UUID` в path | `200 OK` (`LotDetailResponse`) |
-| `POST` | `/api/v1/lots/{lot_id}/recalculate` | Экран 6: Симуляция слайдера ставки и свитчей | JSON: `bid_jpy`, `is_commercial_util`, `repairs` | `200 OK` (`RecalculateResponse`) |
-| `GET` | `/api/v1/lots/{lot_id}/report.pdf` | Экспорт фирменного PDF для клиента | `lot_id: UUID` в path | `200 OK` (`application/pdf`) |
+| `POST` | `/api/v1/lots/{lot_id}/recalculate` | Экран 6: Симуляция слайдера ставки и свитчей | JSON: `bid_jpy` / `bid_rub`, `is_commercial_util`, `include_repairs` | `200 OK` (`RecalculateResponse`) |
+| `GET` | `/api/v1/lots/{lot_id}/report.pdf` | `[P1]` Экспорт фирменного PDF для клиента | `lot_id: UUID` в path | `200 OK` (`application/pdf`) |
+| `PATCH` | `/api/v1/lots/{lot_id}` | Экран 1 / Детали: Ручная архивация / возврат | JSON: `{"is_archived": bool}` | `200 OK` (`LotSummary`) |
+| `DELETE` | `/api/v1/lots/{lot_id}` | Экран 1 / Детали: Soft-delete ненужного лота | `lot_id: UUID` в path | `204 No Content` |
+| `POST` | `/api/v1/lots/bulk-delete` | Экран 1: Массовый soft-delete выбранных лотов | JSON: `{"lot_ids": UUID[]}` | `200 OK` (`LotBulkDeleteResponse`) |
 
 ---
 

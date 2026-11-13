@@ -3,8 +3,11 @@ import type { LotsApi } from '@/api/types'
 import type {
   BatchCreateResponse,
   BatchProgressResponse,
+  LotDetailResponse,
   LotListQueryParams,
   LotListResponse,
+  RecalculateRequest,
+  RecalculateResponse,
 } from '@/types/api'
 
 function sanitizeLotQuery(
@@ -40,6 +43,19 @@ export function createHttpLotsApi(request: HttpRequestFn): LotsApi {
       return request<LotListResponse>('/lots', {
         method: 'GET',
         query: sanitizeLotQuery(params),
+      })
+    },
+
+    getDetail(lotId: string): Promise<LotDetailResponse> {
+      return request<LotDetailResponse>(`/lots/${encodeURIComponent(lotId)}`, {
+        method: 'GET',
+      })
+    },
+
+    recalculate(lotId: string, payload: RecalculateRequest): Promise<RecalculateResponse> {
+      return request<RecalculateResponse>(`/lots/${encodeURIComponent(lotId)}/recalculate`, {
+        method: 'POST',
+        body: payload,
       })
     },
 

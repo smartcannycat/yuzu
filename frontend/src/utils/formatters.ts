@@ -44,6 +44,16 @@ export function formatRub(amount: number, options?: { signed?: boolean }): strin
 }
 
 /**
+ * Formats integer amounts in Japanese yen using non-breaking space grouping.
+ */
+export function formatJpy(amount: number): string {
+  if (!Number.isFinite(amount)) {
+    return '—'
+  }
+  return `${rubNumberFormatter.format(Math.round(amount))} ¥`
+}
+
+/**
  * Formats mileage in kilometers (e.g. "62 000 км") or returns an em-dash if unknown.
  */
 export function formatMileageKm(mileageKm: number | null): string {

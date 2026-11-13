@@ -13,10 +13,6 @@ export interface TokenRefreshRequest {
   refresh_token: string
 }
 
-export interface TokenLogoutRequest {
-  refresh_token: string
-}
-
 export interface UserProfileResponse {
   user_id: string
   email: string

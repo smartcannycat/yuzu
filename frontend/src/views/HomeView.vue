@@ -9,7 +9,6 @@ import {
   BatchUploadSheet,
   InProgressAccordion,
   LotFilterSheet,
-  LotPreviewSheets,
   LotsFeed,
   LotsToolbar,
   type LotFilterDraft,
@@ -33,7 +32,6 @@ const isProfileOpen = ref(false)
 const isFiltersOpen = ref(false)
 const isUploadOpen = ref(false)
 const isInProgressOpen = ref(false)
-const previewLot = ref<LotSummary | null>(null)
 
 let backgroundPollTimerId: number | null = null
 let backgroundPollEpoch = 0
@@ -118,9 +116,24 @@ async function handleUploadSubmit(files: File[]): Promise<void> {
 }
 
 function handleSelectInProgressItem(item: InProgressItemPreview): void {
+  if (item.status === 'ready' && item.lot_id) {
+    void router.push({
+      name: 'lot-detail',
+      params: { lotId: item.lot_id },
+    })
+    return
+  }
+
   void router.push({
     name: 'batch-progress',
     params: { batchId: item.batch_id },
+  })
+}
+
+function handleSelectLot(lot: LotSummary): void {
+  void router.push({
+    name: 'lot-detail',
+    params: { lotId: lot.lot_id },
   })
 }
 
@@ -254,7 +267,7 @@ async function handleLogout(): Promise<void> {
       :has-more="lotsStore.hasMore"
       :has-any-active-filter="lotsStore.hasAnyActiveFilter"
       :error-message="lotsStore.errorMessage"
-      @select-lot="previewLot = $event"
+      @select-lot="handleSelectLot"
       @retry="lotsStore.fetchLots()"
       @reset-filters="handleResetAllFilters"
       @open-upload="openUploadSheet"
@@ -291,8 +304,6 @@ async function handleLogout(): Promise<void> {
       :server-error="batchesStore.uploadError"
       @submit="handleUploadSubmit"
     />
-
-    <LotPreviewSheets v-model:lot="previewLot" />
 
     <ProfileSheet
       v-model:open="isProfileOpen"
