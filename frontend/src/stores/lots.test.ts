@@ -120,4 +120,43 @@ describe('useLotsStore', () => {
     expect(store.items[0]?.lot_id).toBe('newer-lot')
     expect(store.isLoading).toBe(false)
   })
+
+  it('always resets isLoading when refreshLotsSilently overlaps with fetchLots', async () => {
+    const store = useLotsStore()
+    const visibleFetch = createDeferred<LotListResponse>()
+    const silentFetch = createDeferred<LotListResponse>()
+
+    const listMock = vi
+      .fn()
+      .mockReturnValueOnce(visibleFetch.promise)
+      .mockReturnValueOnce(silentFetch.promise)
+
+    const client = {
+      auth: createMockApiClient({ delayMs: 0 }).auth,
+      lots: { list: listMock },
+    } as unknown as ApiClient
+
+    const visiblePromise = store.fetchLots(client)
+    expect(store.isLoading).toBe(true)
+
+    const silentPromise = store.refreshLotsSilently(client)
+
+    silentFetch.resolve({
+      items: [],
+      in_progress: { active_batches_count: 1, total_processing_lots: 1, items: [] },
+      pagination: { total_items: 0, page: 1, page_size: 20, total_pages: 0 },
+      available_filters: { total_lots_count: 0, makes: [], models: [], counts_by_verdict: {} },
+    })
+    await silentPromise
+
+    visibleFetch.resolve({
+      items: [],
+      in_progress: { active_batches_count: 0, total_processing_lots: 0, items: [] },
+      pagination: { total_items: 0, page: 1, page_size: 20, total_pages: 0 },
+      available_filters: { total_lots_count: 0, makes: [], models: [], counts_by_verdict: {} },
+    })
+    await visiblePromise
+
+    expect(store.isLoading).toBe(false)
+  })
 })

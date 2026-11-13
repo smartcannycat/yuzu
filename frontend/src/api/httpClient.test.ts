@@ -365,4 +365,92 @@ describe('httpClient (ofetch)', () => {
     await client.auth.logout({ refresh_token: 'refresh-logout' })
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
+
+  it('sends multipart FormData for createBatch and appendBatchItems and polls batch status', async () => {
+    tokenStorage.setFromAuthResponse({
+      access_token: 'access-batch',
+      refresh_token: 'refresh-batch',
+      token_type: 'bearer',
+      expires_in_sec: 3600,
+      user: sampleUser,
+    })
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = extractUrl(input)
+      expect(extractAuthHeader(input, init)).toBe('Bearer access-batch')
+
+      if (url === '/api/v1/lots/batches') {
+        expect(init?.method).toBe('POST')
+        if (!(init?.body instanceof FormData)) {
+          throw new Error('Expected FormData body')
+        }
+        const files = init.body.getAll('files')
+        expect(files).toHaveLength(2)
+        return jsonResponse(
+          {
+            batch_id: 'batch-uuid-1',
+            total_items: 2,
+            status: 'queued',
+            created_at: '2026-11-13T10:15:00Z',
+            poll_interval_ms: 1500,
+          },
+          202,
+        )
+      }
+
+      if (url === '/api/v1/lots/batches/batch-uuid-1') {
+        expect(init?.method).toBe('GET')
+        return jsonResponse({
+          batch_id: 'batch-uuid-1',
+          status: 'processing',
+          mascot: {
+            mood: 'thinking',
+            phrase_ru: 'Распознаем лоты... 1/2',
+            badge_text: '1 из 2 готово',
+          },
+          total_count: 2,
+          processed_count: 1,
+          ready_count: 1,
+          failed_count: 0,
+          items: [],
+        })
+      }
+
+      expect(url).toBe('/api/v1/lots/batches/batch-uuid-1/items')
+      expect(init?.method).toBe('POST')
+      expect(init?.body).toBeInstanceOf(FormData)
+      return jsonResponse(
+        {
+          batch_id: 'batch-uuid-1',
+          status: 'processing',
+          mascot: {
+            mood: 'thinking',
+            phrase_ru: 'Распознаем лоты... 1/3',
+            badge_text: '1 из 3 готово',
+          },
+          total_count: 3,
+          processed_count: 1,
+          ready_count: 1,
+          failed_count: 0,
+          items: [],
+        },
+        202,
+      )
+    })
+
+    const client = createHttpApiClient({ fetch: fetchMock })
+    const fileA = new File(['a'], 'a.jpg', { type: 'image/jpeg' })
+    const fileB = new File(['b'], 'b.png', { type: 'image/png' })
+    const fileC = new File(['c'], 'c.webp', { type: 'image/webp' })
+
+    const created = await client.lots.createBatch([fileA, fileB])
+    expect(created.batch_id).toBe('batch-uuid-1')
+
+    const progress = await client.lots.getBatch('batch-uuid-1')
+    expect(progress.total_count).toBe(2)
+
+    const appended = await client.lots.appendBatchItems('batch-uuid-1', [fileC])
+    expect(appended.total_count).toBe(3)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
 })

@@ -1,3 +1,4 @@
+export { default as BatchUploadSheet } from './BatchUploadSheet.vue'
 export { default as InProgressAccordion } from './InProgressAccordion.vue'
 export { default as LotCard } from './LotCard.vue'
 export { default as LotFilterSheet, type LotFilterDraft } from './LotFilterSheet.vue'

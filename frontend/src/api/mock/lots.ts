@@ -1,9 +1,13 @@
 import { delay } from '@/api/mock/helpers'
+import { createMockLotsWorkspace } from '@/api/mock/lotsBatches'
 import { MOCK_IN_PROGRESS_SUMMARY, SEEDED_MOCK_LOTS } from '@/api/mock/lotsSeed'
 import type { LotsApi } from '@/api/types'
 import type {
   AvailableFilters,
+  BatchCreateResponse,
+  BatchProgressResponse,
   FilterCountItem,
+  InProgressSummary,
   LotListQueryParams,
   LotListResponse,
   LotSummary,
@@ -137,9 +141,13 @@ function buildAvailableFilters(
   }
 }
 
-export function queryMockLots(params: LotListQueryParams = {}): LotListResponse {
+export function queryMockLots(
+  params: LotListQueryParams = {},
+  sourceLots: readonly LotSummary[] = SEEDED_MOCK_LOTS,
+  inProgress: InProgressSummary = MOCK_IN_PROGRESS_SUMMARY,
+): LotListResponse {
   const filters = normalizeFilters(params)
-  const filtered = SEEDED_MOCK_LOTS.filter((lot) => matchesLotFilters(lot, filters))
+  const filtered = sourceLots.filter((lot) => matchesLotFilters(lot, filters))
 
   const sortBy = params.sort_by ?? 'created_at'
   const sortOrder = params.sort_order ?? 'desc'
@@ -163,22 +171,43 @@ export function queryMockLots(params: LotListQueryParams = {}): LotListResponse 
 
   return {
     items: sorted.slice(offset, offset + pageSize),
-    in_progress: MOCK_IN_PROGRESS_SUMMARY,
+    in_progress: inProgress,
     pagination: {
       total_items: totalItems,
       page,
       page_size: pageSize,
       total_pages: totalPages,
     },
-    available_filters: buildAvailableFilters(SEEDED_MOCK_LOTS, filters),
+    available_filters: buildAvailableFilters(sourceLots, filters),
   }
 }
 
 export function createMockLotsApi(defaultDelay: number): LotsApi {
+  const workspace = createMockLotsWorkspace()
+
   return {
     async list(params?: LotListQueryParams): Promise<LotListResponse> {
       await delay(Math.min(defaultDelay, 160))
-      return queryMockLots(params)
+      const snapshot = workspace.getFeedSnapshot()
+      return queryMockLots(params, snapshot.lots, snapshot.inProgress)
+    },
+
+    async createBatch(files: readonly File[]): Promise<BatchCreateResponse> {
+      await delay(Math.min(defaultDelay, 220))
+      return workspace.createBatch(files)
+    },
+
+    async getBatch(batchId: string): Promise<BatchProgressResponse> {
+      await delay(Math.min(defaultDelay, 120))
+      return workspace.getBatch(batchId)
+    },
+
+    async appendBatchItems(
+      batchId: string,
+      files: readonly File[],
+    ): Promise<BatchProgressResponse> {
+      await delay(Math.min(defaultDelay, 180))
+      return workspace.appendBatchItems(batchId, files)
     },
   }
 }
