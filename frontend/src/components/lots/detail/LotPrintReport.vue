@@ -60,7 +60,7 @@ defineProps<Props>()
     </div>
 
     <div class="mt-4">
-      <h2 class="mb-2 text-[14px] font-semibold">Лестница себестоимости</h2>
+      <h2 class="mb-2 text-[14px] font-semibold">Себестоимость привоза во Владивосток под ключ</h2>
       <table class="w-full border-collapse text-[12px]">
         <tbody>
           <tr

@@ -1185,7 +1185,7 @@ export function buildMockLotDetail(summary: LotSummary): LotDetailResponse {
     meti_sanction_risk: summary.meti_sanction_risk,
     rates_snapshot: {
       jpy_rub_bank: JPY_RUB_RATE,
-      jpy_rate_source: 'ДВ-банк (ориентир)',
+      jpy_rate_source: 'VL.ru Деньги',
       eur_rub_cbrf: EUR_RUB_RATE,
       usd_rub_cbrf: USD_RUB_RATE,
       cbrf_date: '13.11.2026',

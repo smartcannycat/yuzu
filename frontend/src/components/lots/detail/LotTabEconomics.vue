@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { Minus, Plus, RotateCcw } from '@lucide/vue'
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { Pencil, RotateCcw } from '@lucide/vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import {
   BaseBadge,
@@ -32,11 +32,19 @@ const emit = defineEmits<{
 }>()
 
 const SLIDER_DEBOUNCE_MS = 300
-const QUICK_BID_STEP_JPY = 50_000
 
 const draftBidJpy = ref(props.detail.economics.wise_cost_ladder.car_bid_jpy)
+const draftBidRubOverride = ref<number | null>(null)
 const draftCommercialUtil = ref(props.detail.economics.customs.is_commercial_util)
 const draftIncludeRepairs = ref(props.detail.economics.is_repairs_included)
+
+const isEditingJpy = ref(false)
+const jpyTextInput = ref('')
+const jpyInputRef = ref<HTMLInputElement | null>(null)
+
+const isEditingRub = ref(false)
+const rubTextInput = ref('')
+const rubInputRef = ref<HTMLInputElement | null>(null)
 
 let sliderTimerId: number | null = null
 
@@ -57,8 +65,11 @@ watch(
   (next) => {
     clearSliderTimer()
     draftBidJpy.value = next.bidJpy
+    draftBidRubOverride.value = null
     draftCommercialUtil.value = next.commercialUtil
     draftIncludeRepairs.value = next.includeRepairs
+    isEditingJpy.value = false
+    isEditingRub.value = false
   },
 )
 
@@ -66,17 +77,26 @@ onBeforeUnmount(() => {
   clearSliderTimer()
 })
 
-const sliderMinJpy = computed(() => props.detail.economics.bid_slider_min_jpy)
-const sliderMaxJpy = computed(() => props.detail.economics.bid_slider_max_jpy)
+const sliderMinJpy = computed(() =>
+  Math.min(props.detail.economics.bid_slider_min_jpy, draftBidJpy.value),
+)
+const sliderMaxJpy = computed(() =>
+  Math.max(props.detail.economics.bid_slider_max_jpy, draftBidJpy.value),
+)
 const sliderStepJpy = computed(() => Math.max(1000, props.detail.economics.bid_slider_step_jpy))
 
 const jpyRate = computed(() => props.detail.economics.customs.rates_snapshot.jpy_rub_bank || 0.64)
 
 const isLinearPreviewPending = computed(
-  () => draftBidJpy.value !== props.detail.economics.wise_cost_ladder.car_bid_jpy,
+  () =>
+    draftBidRubOverride.value !== null ||
+    draftBidJpy.value !== props.detail.economics.wise_cost_ladder.car_bid_jpy,
 )
 
 const displayBidRub = computed(() => {
+  if (draftBidRubOverride.value !== null) {
+    return draftBidRubOverride.value
+  }
   if (!isLinearPreviewPending.value) {
     return props.detail.economics.wise_cost_ladder.car_bid_rub
   }
@@ -104,8 +124,24 @@ function formatJpy(amount: number): string {
   return `${Math.round(amount).toLocaleString('ru-RU')} ¥`
 }
 
-function emitRecalculateNow(): void {
+function parseNumericInput(raw: string): number | null {
+  const digits = raw.replace(/[^\d]/g, '')
+  if (!digits) return null
+  const parsed = Number(digits)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+}
+
+function emitRecalculateNow(override?: { bidRub?: number }): void {
   clearSliderTimer()
+  if (override?.bidRub !== undefined) {
+    emit('recalculate', {
+      bid_rub: override.bidRub,
+      is_commercial_util: draftCommercialUtil.value,
+      include_repairs: draftIncludeRepairs.value,
+    })
+    return
+  }
+
   emit('recalculate', {
     bid_jpy: draftBidJpy.value,
     is_commercial_util: draftCommercialUtil.value,
@@ -115,6 +151,7 @@ function emitRecalculateNow(): void {
 
 function handleBidInput(event: Event): void {
   const target = event.target as HTMLInputElement
+  draftBidRubOverride.value = null
   draftBidJpy.value = Number(target.value)
   clearSliderTimer()
   if (typeof window !== 'undefined') {
@@ -131,22 +168,67 @@ function handleBidCommit(): void {
   }
 }
 
-function nudgeBid(deltaJpy: number): void {
-  const next = Math.min(
-    sliderMaxJpy.value,
-    Math.max(sliderMinJpy.value, draftBidJpy.value + deltaJpy),
-  )
-  if (next === draftBidJpy.value) return
-  draftBidJpy.value = next
+async function startEditingJpy(): Promise<void> {
+  isEditingRub.value = false
+  jpyTextInput.value = String(Math.round(draftBidJpy.value))
+  isEditingJpy.value = true
+  await nextTick()
+  jpyInputRef.value?.focus()
+  jpyInputRef.value?.select()
+}
+
+function cancelJpyEdit(): void {
+  isEditingJpy.value = false
+}
+
+function commitJpyEdit(): void {
+  if (!isEditingJpy.value) return
+  isEditingJpy.value = false
+  const parsed = parseNumericInput(jpyTextInput.value)
+  if (parsed === null) return
+  const clamped = Math.min(50_000_000, Math.max(100_000, Math.round(parsed)))
+  draftBidRubOverride.value = null
+  if (clamped === draftBidJpy.value) return
+  draftBidJpy.value = clamped
   emitRecalculateNow()
 }
 
+async function startEditingRub(): Promise<void> {
+  isEditingJpy.value = false
+  rubTextInput.value = String(Math.round(displayBidRub.value))
+  isEditingRub.value = true
+  await nextTick()
+  rubInputRef.value?.focus()
+  rubInputRef.value?.select()
+}
+
+function cancelRubEdit(): void {
+  isEditingRub.value = false
+}
+
+function commitRubEdit(): void {
+  if (!isEditingRub.value) return
+  isEditingRub.value = false
+  const parsed = parseNumericInput(rubTextInput.value)
+  if (parsed === null) return
+  const clampedRub = Math.min(35_000_000, Math.max(50_000, Math.round(parsed)))
+  if (clampedRub === displayBidRub.value) return
+  draftBidRubOverride.value = clampedRub
+  draftBidJpy.value = Math.max(100_000, Math.round(clampedRub / jpyRate.value))
+  emitRecalculateNow({ bidRub: clampedRub })
+}
+
 function handleSwitchToggle(): void {
-  emitRecalculateNow()
+  emitRecalculateNow(
+    draftBidRubOverride.value !== null ? { bidRub: draftBidRubOverride.value } : undefined,
+  )
 }
 
 function handleReset(): void {
   clearSliderTimer()
+  draftBidRubOverride.value = null
+  isEditingJpy.value = false
+  isEditingRub.value = false
   emit('resetSimulation')
 }
 
@@ -195,20 +277,93 @@ const utilDescription = computed(() => {
   <div class="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-start lg:gap-5">
     <!-- Left Column: Interactive Simulator + Market Comparison -->
     <div class="flex min-w-0 flex-col gap-4 lg:col-span-5">
-      <!-- Bid Slider Card -->
-      <BaseCard variant="surface" padding="lg">
+      <!-- Bid Simulator Card with Inline Editable JPY & RUB -->
+      <BaseCard variant="surface" padding="md">
         <div class="flex items-start justify-between gap-2">
-          <div>
+          <div class="min-w-0 flex-1">
             <span class="text-text-secondary text-[12px] font-medium">
               Максимальная ставка на аукционе
             </span>
-            <div
-              class="text-text-primary mt-1 text-[24px] leading-tight font-semibold tabular-nums"
-            >
-              {{ formatJpy(draftBidJpy) }}
+
+            <!-- Inline Editable JPY -->
+            <div class="mt-1">
+              <div
+                v-if="isEditingJpy"
+                class="border-accent bg-surface ring-accent/15 inline-flex items-center gap-1.5 rounded-sm border px-2 py-0.5 ring-2"
+              >
+                <input
+                  ref="jpyInputRef"
+                  v-model="jpyTextInput"
+                  type="text"
+                  inputmode="numeric"
+                  aria-label="Введите ставку в иенах"
+                  class="text-text-primary w-32 bg-transparent text-[22px] leading-tight font-semibold tabular-nums outline-none"
+                  @keydown.enter.prevent="commitJpyEdit"
+                  @keydown.escape.prevent="cancelJpyEdit"
+                  @blur="commitJpyEdit"
+                />
+                <span class="text-text-secondary text-[18px] font-semibold">¥</span>
+              </div>
+
+              <button
+                v-else
+                type="button"
+                aria-label="Изменить ставку в иенах"
+                title="Нажмите, чтобы ввести точную ставку в иенах"
+                class="group hover:bg-surface-inset focus-visible:outline-accent -mx-1.5 inline-flex cursor-pointer items-center gap-1.5 rounded-sm px-1.5 py-0.5 transition-colors focus-visible:outline-2"
+                @click="startEditingJpy"
+              >
+                <span
+                  class="text-text-primary border-border group-hover:border-accent border-b border-dashed text-[24px] leading-tight font-semibold tabular-nums transition-colors"
+                >
+                  {{ formatJpy(draftBidJpy) }}
+                </span>
+                <Pencil
+                  :size="14"
+                  class="text-text-muted group-hover:text-accent shrink-0 transition-colors"
+                />
+              </button>
             </div>
-            <div class="text-text-secondary text-[13px] tabular-nums">
-              ≈ {{ formatRub(displayBidRub) }}
+
+            <!-- Inline Editable RUB -->
+            <div class="mt-1">
+              <div
+                v-if="isEditingRub"
+                class="border-accent bg-surface ring-accent/15 inline-flex items-center gap-1 rounded-sm border px-2 py-0.5 ring-2"
+              >
+                <span class="text-text-secondary text-[13px]">≈</span>
+                <input
+                  ref="rubInputRef"
+                  v-model="rubTextInput"
+                  type="text"
+                  inputmode="numeric"
+                  aria-label="Введите ставку в рублях"
+                  class="text-text-primary w-28 bg-transparent text-[14px] font-medium tabular-nums outline-none"
+                  @keydown.enter.prevent="commitRubEdit"
+                  @keydown.escape.prevent="cancelRubEdit"
+                  @blur="commitRubEdit"
+                />
+                <span class="text-text-secondary text-[13px] font-medium">₽</span>
+              </div>
+
+              <button
+                v-else
+                type="button"
+                aria-label="Изменить ставку в рублях"
+                title="Нажмите, чтобы ввести бюджет ставки в рублях"
+                class="group hover:bg-surface-inset focus-visible:outline-accent -mx-1.5 inline-flex cursor-pointer items-center gap-1.5 rounded-sm px-1.5 py-0.5 transition-colors focus-visible:outline-2"
+                @click="startEditingRub"
+              >
+                <span
+                  class="text-text-secondary border-border group-hover:border-accent group-hover:text-text-primary border-b border-dashed text-[13px] tabular-nums transition-colors"
+                >
+                  ≈ {{ formatRub(displayBidRub) }}
+                </span>
+                <Pencil
+                  :size="12"
+                  class="text-text-muted group-hover:text-accent shrink-0 transition-colors"
+                />
+              </button>
             </div>
           </div>
 
@@ -226,7 +381,7 @@ const utilDescription = computed(() => {
           </BaseButton>
         </div>
 
-        <div class="mt-4">
+        <div class="mt-3">
           <input
             type="range"
             aria-label="Максимальная ставка на аукционе в иенах"
@@ -240,38 +395,16 @@ const utilDescription = computed(() => {
           />
 
           <div
-            class="text-text-muted mt-1.5 flex items-center justify-between text-[11px] tabular-nums"
+            class="text-text-muted mt-1 flex items-center justify-between text-[11px] tabular-nums"
           >
             <span>{{ formatJpy(sliderMinJpy) }}</span>
             <span>{{ formatJpy(sliderMaxJpy) }}</span>
           </div>
         </div>
-
-        <div class="mt-3.5 grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            :disabled="draftBidJpy <= sliderMinJpy"
-            class="border-border bg-surface hover:bg-surface-hover text-text-primary inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-sm border px-3 py-2 text-[13px] font-medium tabular-nums transition-colors disabled:cursor-not-allowed disabled:opacity-45"
-            @click="nudgeBid(-QUICK_BID_STEP_JPY)"
-          >
-            <Minus :size="14" />
-            <span>50 000 ¥</span>
-          </button>
-
-          <button
-            type="button"
-            :disabled="draftBidJpy >= sliderMaxJpy"
-            class="border-border bg-surface hover:bg-surface-hover text-text-primary inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-sm border px-3 py-2 text-[13px] font-medium tabular-nums transition-colors disabled:cursor-not-allowed disabled:opacity-45"
-            @click="nudgeBid(QUICK_BID_STEP_JPY)"
-          >
-            <Plus :size="14" />
-            <span>50 000 ¥</span>
-          </button>
-        </div>
       </BaseCard>
 
       <!-- Duty & Repair Switches -->
-      <BaseCard variant="surface" padding="lg">
+      <BaseCard variant="surface" padding="md">
         <div class="flex flex-col divide-y divide-[#E5E5EA]">
           <div class="pb-3">
             <BaseSwitch
@@ -294,7 +427,7 @@ const utilDescription = computed(() => {
       </BaseCard>
 
       <!-- Market Comparison Card -->
-      <BaseCard variant="surface" padding="lg">
+      <BaseCard variant="surface" padding="md">
         <div class="mb-3 flex items-center justify-between gap-2">
           <h3 class="text-text-primary text-[15px] font-semibold">Сравнение с рынком РФ</h3>
           <BaseBadge
@@ -313,14 +446,14 @@ const utilDescription = computed(() => {
         <div class="flex flex-col gap-2 text-[14px]">
           <div class="flex items-center justify-between gap-3">
             <span class="text-text-secondary">1. Рыночная цена (Drom)</span>
-            <span class="text-text-primary font-semibold tabular-nums">
+            <span class="text-text-primary shrink-0 font-semibold whitespace-nowrap tabular-nums">
               {{ formatRub(detail.market.market_price_rf_rub) }}
             </span>
           </div>
 
           <div class="flex items-center justify-between gap-3">
             <span class="text-text-secondary">2. Себестоимость под ключ</span>
-            <span class="text-text-primary font-semibold tabular-nums">
+            <span class="text-text-primary shrink-0 font-semibold whitespace-nowrap tabular-nums">
               {{ formatRub(displayTurnkeyRub) }}
             </span>
           </div>
@@ -328,7 +461,7 @@ const utilDescription = computed(() => {
           <div class="border-border mt-1 flex items-center justify-between gap-3 border-t pt-2.5">
             <span class="text-text-primary font-medium">3. Чистая выгода клиента</span>
             <span
-              class="text-[17px] font-semibold tabular-nums"
+              class="shrink-0 text-[17px] font-semibold whitespace-nowrap tabular-nums"
               :class="displayNetBenefitRub >= 0 ? 'text-success' : 'text-danger'"
             >
               {{ formatRub(displayNetBenefitRub, { signed: true }) }}
@@ -338,12 +471,12 @@ const utilDescription = computed(() => {
       </BaseCard>
     </div>
 
-    <!-- Right Column: Wise Cost Ladder -->
+    <!-- Right Column: Turnkey Cost Calculator -->
     <BaseCard variant="surface" padding="lg" class="min-w-0 lg:col-span-7">
       <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 class="text-text-primary text-[16px] font-semibold">
-            Лестница себестоимости во Владивостоке
+            Себестоимость привоза во Владивосток под ключ
           </h2>
           <p class="text-text-secondary text-[12px]">
             Пошаговый расчёт от аукционной ставки до выдачи ЭПТС
@@ -375,7 +508,7 @@ const utilDescription = computed(() => {
           {{ jpyRate.toFixed(3) }} ₽ · 1 € =
           {{ detail.economics.customs.rates_snapshot.eur_rub_cbrf.toFixed(2) }} ₽
         </span>
-        <span>{{ detail.economics.customs.rates_snapshot.jpy_rate_source }}</span>
+        <span class="text-text-primary font-medium">Курс валют: VL.ru Деньги</span>
       </div>
     </BaseCard>
   </div>

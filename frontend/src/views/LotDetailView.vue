@@ -226,36 +226,37 @@ function handlePrintPdf(): void {
 
       <!-- Loaded Detail Content -->
       <template v-else-if="detail">
-        <!-- Lot Heading -->
-        <div class="mt-3 flex flex-col gap-1">
-          <div class="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
-            <h1
-              class="text-text-primary text-[24px] leading-tight font-semibold tracking-[-0.015em] sm:text-[28px]"
-            >
-              {{ detail.passport.make }} {{ detail.passport.model }}
-            </h1>
-            <span v-if="detail.passport.trim" class="text-text-secondary text-[15px] font-medium">
-              {{ detail.passport.trim }}
-            </span>
+        <!-- Lot Heading (Left) + 3-Tab Switcher (Right) -->
+        <div
+          class="mt-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between md:gap-5"
+        >
+          <div class="flex min-w-0 flex-col gap-1">
+            <div class="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+              <h1
+                class="text-text-primary text-[24px] leading-tight font-semibold tracking-[-0.015em] sm:text-[28px]"
+              >
+                {{ detail.passport.make }} {{ detail.passport.model }}
+              </h1>
+              <span v-if="detail.passport.trim" class="text-text-secondary text-[15px] font-medium">
+                {{ detail.passport.trim }}
+              </span>
+            </div>
+            <p class="text-text-secondary text-[13px] sm:text-[14px]">
+              {{ headerSubtitle }}
+            </p>
           </div>
-          <p class="text-text-secondary text-[13px] sm:text-[14px]">
-            {{ headerSubtitle }}
-          </p>
-        </div>
 
-        <!-- Sticky Danger Alert (when critical anomaly detected) -->
-        <LotStickyDangerAlert class="mt-4" :audit="detail.audit" @inspect="activeSheet = 'audit'" />
-
-        <!-- 3-Tab Switcher (Screens 4, 5, 6) -->
-        <div class="mt-4">
           <SegmentedControl
             v-model="currentTabModel"
             :options="tabOptions"
             ariaLabel="Разделы спецификации лота"
             full-width
-            class="max-w-[460px]"
+            class="w-full shrink-0 md:w-[372px]"
           />
         </div>
+
+        <!-- Sticky Danger Alert (when critical anomaly detected) -->
+        <LotStickyDangerAlert class="mt-4" :audit="detail.audit" @inspect="activeSheet = 'audit'" />
 
         <!-- Tab Panels -->
         <main class="mt-4 flex-1 sm:mt-5">

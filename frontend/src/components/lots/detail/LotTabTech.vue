@@ -51,9 +51,9 @@ const notesSubtitle = computed(() => {
 
 const safetySquircleColor = computed(() => {
   const status = props.detail.safety_checklist.overall_status
-  if (status === 'critical') return '#B91C1C'
-  if (status === 'warning') return '#B45309'
-  return '#15803D'
+  if (status === 'critical') return '#FF3B30'
+  if (status === 'warning') return '#FF9500'
+  return '#34C759'
 })
 
 const activeRiskLabels = computed(() => {
@@ -77,64 +77,75 @@ function toggleDefectRow(panelId: BodyPanel): void {
 
 <template>
   <div class="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-start lg:gap-5">
-    <!-- Left Column: 2D Schematic + Interactive Legend -->
-    <BaseCard variant="surface" padding="lg" class="min-w-0 lg:col-span-7">
-      <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+    <!-- Left Column: Compact 2D Schematic -->
+    <BaseCard variant="surface" padding="md" class="min-w-0 lg:col-span-5">
+      <div class="mb-2.5 flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 class="text-text-primary text-[16px] font-semibold">Схема дефектов кузова</h2>
-          <p class="text-text-secondary text-[12px]">
-            Нажмите на пин или строку, чтобы выделить повреждённую панель
-          </p>
+          <p class="text-text-secondary text-[12px]">Нажмите на пин, чтобы выделить панель</p>
         </div>
-        <BaseBadge variant="neutral"> {{ detail.passport.defects.length }} дефект(а) </BaseBadge>
+        <BaseBadge variant="neutral">{{ detail.passport.defects.length }} дефект(а)</BaseBadge>
       </div>
 
-      <div class="bg-surface-inset/50 border-border rounded-sm border px-3 py-4">
+      <div class="bg-surface-inset/50 border-border rounded-sm border px-3 py-3">
         <LotBodyDiagram v-model:selected-panel="selectedPanel" :defects="detail.passport.defects" />
-      </div>
-
-      <ul v-if="detail.passport.defects.length > 0" class="mt-4 flex flex-col gap-2">
-        <li
-          v-for="(defect, index) in detail.passport.defects"
-          :key="`${defect.panel_id}-${defect.raw_code}-${index}`"
-        >
-          <button
-            type="button"
-            class="flex w-full cursor-pointer items-start justify-between gap-3 rounded-sm border px-3 py-2.5 text-left transition-colors"
-            :class="
-              selectedPanel === defect.panel_id
-                ? 'border-accent bg-accent-subtle/60'
-                : 'border-border bg-surface hover:bg-surface-hover/70'
-            "
-            @click="toggleDefectRow(defect.panel_id)"
-          >
-            <div class="min-w-0">
-              <div class="text-text-primary text-[14px] font-medium">
-                {{ defect.panel_ru }}
-              </div>
-              <p class="text-text-secondary mt-0.5 text-[12px] leading-snug">
-                {{ defect.description_ru }}
-              </p>
-            </div>
-            <BaseBadge :variant="getDefectBadgeVariant(defect)" class="shrink-0 font-mono">
-              {{ defect.raw_code }}
-            </BaseBadge>
-          </button>
-        </li>
-      </ul>
-
-      <div
-        v-else
-        class="bg-success-bg text-success mt-4 flex items-center gap-2 rounded-sm px-3.5 py-2.5 text-[13px] font-medium"
-      >
-        <CheckCircle2 :size="16" class="shrink-0" />
-        <span>На схеме аукционного листа значимых дефектов кузова не отмечено</span>
       </div>
     </BaseCard>
 
-    <!-- Right Column: 3 Native Drilldown Rows + Risk Badges -->
-    <div class="flex min-w-0 flex-col gap-4 lg:col-span-5">
-      <InsetListGroup>
+    <!-- Right Column: Defect Breakdown + Drilldown Rows + Risk Badges -->
+    <div class="flex min-w-0 flex-col gap-4 lg:col-span-7">
+      <!-- Defect Explanations Card -->
+      <BaseCard variant="surface" padding="md">
+        <div class="mb-2.5 flex items-center justify-between gap-2">
+          <h3 class="text-text-primary text-[15px] font-semibold">Расшифровка дефектов</h3>
+          <span v-if="detail.passport.defects.length > 0" class="text-text-secondary text-[12px]">
+            Нажмите на строку для подсветки
+          </span>
+        </div>
+
+        <ul
+          v-if="detail.passport.defects.length > 0"
+          class="flex flex-col gap-2 lg:max-h-[280px] lg:overflow-y-auto lg:pr-0.5"
+        >
+          <li
+            v-for="(defect, index) in detail.passport.defects"
+            :key="`${defect.panel_id}-${defect.raw_code}-${index}`"
+          >
+            <button
+              type="button"
+              class="flex w-full cursor-pointer items-start justify-between gap-3 rounded-sm border px-3 py-2 text-left transition-colors"
+              :class="
+                selectedPanel === defect.panel_id
+                  ? 'border-accent bg-accent-subtle/60'
+                  : 'border-border bg-surface hover:bg-surface-hover/70'
+              "
+              @click="toggleDefectRow(defect.panel_id)"
+            >
+              <div class="min-w-0">
+                <div class="text-text-primary text-[14px] font-medium">
+                  {{ defect.panel_ru }}
+                </div>
+                <p class="text-text-secondary mt-0.5 text-[12px] leading-snug">
+                  {{ defect.description_ru }}
+                </p>
+              </div>
+              <BaseBadge :variant="getDefectBadgeVariant(defect)" class="shrink-0 font-mono">
+                {{ defect.raw_code }}
+              </BaseBadge>
+            </button>
+          </li>
+        </ul>
+
+        <div
+          v-else
+          class="bg-success-bg text-success flex items-center gap-2 rounded-sm px-3.5 py-2.5 text-[13px] font-medium"
+        >
+          <CheckCircle2 :size="16" class="shrink-0" />
+          <span>На схеме аукционного листа значимых дефектов кузова не отмечено</span>
+        </div>
+      </BaseCard>
+
+      <InsetListGroup title="Диагностика и смета">
         <InsetListItem
           title="Смета ремонта Farpost"
           :subtitle="
@@ -143,7 +154,7 @@ function toggleDefectRow(panelId: BodyPanel): void {
               : 'Оценка запчастей и работ во Владивостоке'
           "
           :value="repairValueText"
-          squircle-color="#FF6B00"
+          squircle-color="#AF52DE"
           interactive
           chevron
           @click="emit('openRepair')"
@@ -157,7 +168,7 @@ function toggleDefectRow(panelId: BodyPanel): void {
           title="Замечания инспектора аукциона"
           :subtitle="notesSubtitle"
           value="Перевод"
-          squircle-color="#1D4ED8"
+          squircle-color="#007AFF"
           interactive
           chevron
           @click="emit('openInspectorNotes')"

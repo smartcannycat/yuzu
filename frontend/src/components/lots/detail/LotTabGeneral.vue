@@ -22,12 +22,7 @@ import {
   type TtxItem,
 } from '@/components/ui'
 import type { FuelType, LotDetailResponse, OdometerStatus, TrafficLightColor } from '@/types/api'
-import {
-  cleanVerdictText,
-  formatEngineLiters,
-  formatMileageKm,
-  formatRub,
-} from '@/utils/formatters'
+import { formatEngineLiters, formatMileageKm, formatRub } from '@/utils/formatters'
 
 interface Props {
   detail: LotDetailResponse
@@ -48,24 +43,24 @@ const VERDICT_META: Record<
   TrafficLightColor,
   {
     badgeVariant: 'success' | 'warning' | 'danger'
-    bannerClass: string
     label: string
+    shortTitle: string
   }
 > = {
   green: {
     badgeVariant: 'success',
-    bannerClass: 'bg-success-bg/70 border-success/20',
     label: 'Можно брать',
+    shortTitle: 'Рекомендуется к покупке',
   },
   yellow: {
     badgeVariant: 'warning',
-    bannerClass: 'bg-warning-bg/70 border-warning/20',
     label: 'Под вопросом',
+    shortTitle: 'Требует проверки сметы и рисков',
   },
   red: {
     badgeVariant: 'danger',
-    bannerClass: 'bg-danger-bg/70 border-danger/20',
     label: 'Высокий риск',
+    shortTitle: 'Покупка не рекомендуется',
   },
 }
 
@@ -177,33 +172,30 @@ const auditSubtitle = computed(() => {
     <div class="flex min-w-0 flex-col gap-4 lg:col-span-7">
       <!-- Traffic Light Verdict Card -->
       <BaseCard variant="surface" padding="lg">
-        <div
-          class="flex flex-col gap-3 rounded-sm border p-3.5 sm:flex-row sm:items-center"
-          :class="verdictMeta.bannerClass"
-        >
-          <div class="shrink-0 self-start sm:self-center">
+        <div class="flex items-center gap-3">
+          <div class="h-14 w-14 shrink-0">
             <CapyMascot :verdict="detail.verdict.verdict" size="compact" />
           </div>
 
           <div class="min-w-0 flex-1">
-            <div class="flex flex-wrap items-center gap-2">
+            <div class="flex flex-wrap items-center gap-1.5">
               <BaseBadge :variant="verdictMeta.badgeVariant">
                 {{ verdictMeta.label }}
               </BaseBadge>
               <BaseBadge v-if="detail.economics.customs.meti_sanction_risk" variant="warning">
-                METI санкционный риск
+                METI риск
               </BaseBadge>
-              <BaseBadge v-if="isSimulationModified" variant="info"> Симуляция ставки </BaseBadge>
+              <BaseBadge v-if="isSimulationModified" variant="info">Симуляция</BaseBadge>
             </div>
 
-            <h2 class="text-text-primary mt-2 text-[17px] leading-snug font-semibold">
-              {{ cleanVerdictText(detail.verdict.headline) }}
+            <h2 class="text-text-primary mt-1.5 text-[16px] leading-snug font-semibold">
+              {{ verdictMeta.shortTitle }}
             </h2>
           </div>
         </div>
 
         <!-- Body & Interior Summaries -->
-        <div class="mt-4 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+        <div class="mt-3.5 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
           <div class="bg-surface-inset rounded-sm p-3">
             <div class="text-text-secondary text-[12px] font-medium">Кузов</div>
             <p class="text-text-primary mt-1 text-[13px] leading-relaxed">
@@ -220,7 +212,7 @@ const auditSubtitle = computed(() => {
         </div>
 
         <!-- Key Reasoning Bullets -->
-        <ul v-if="detail.verdict.reasoning_bullets.length > 0" class="mt-4 flex flex-col gap-2">
+        <ul v-if="detail.verdict.reasoning_bullets.length > 0" class="mt-3 flex flex-col gap-1.5">
           <li
             v-for="bullet in detail.verdict.reasoning_bullets"
             :key="bullet"
@@ -335,12 +327,12 @@ const auditSubtitle = computed(() => {
         </button>
       </BaseCard>
 
-      <InsetListGroup>
+      <InsetListGroup title="Документы и рынок">
         <InsetListItem
           title="Оригинальный аукционный лист"
           subtitle="Открыть скан в полном размере"
           value="Скан"
-          squircle-color="#FF6B00"
+          squircle-color="#007AFF"
           interactive
           chevron
           @click="emit('openScan')"
@@ -352,9 +344,9 @@ const auditSubtitle = computed(() => {
 
         <InsetListItem
           title="Сравнить с рынком на Drom.ru"
-          :subtitle="`В наличии, без «под заказ» · ${detail.market.search_region_ru}`"
+          :subtitle="`В наличии · ${detail.market.search_region_ru}`"
           :value="`${detail.market.analogs_count} авто`"
-          squircle-color="#1D4ED8"
+          squircle-color="#FF9500"
           :href="detail.media.drom_search_url"
           chevron
         >
@@ -367,7 +359,7 @@ const auditSubtitle = computed(() => {
           title="История торгов в Японии"
           :subtitle="auditSubtitle"
           :value="detail.audit.has_critical_anomaly ? 'Риск' : `${detail.audit.times_auctioned}`"
-          :squircle-color="detail.audit.has_critical_anomaly ? '#B91C1C' : '#15803D'"
+          :squircle-color="detail.audit.has_critical_anomaly ? '#FF3B30' : '#34C759'"
           interactive
           chevron
           @click="emit('openAuditHistory')"

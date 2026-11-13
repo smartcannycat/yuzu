@@ -138,7 +138,29 @@ describe('LotDetailView (Screens 4, 5, 6)', () => {
     econTab.click()
     await flushUi()
 
-    expect(host.textContent).toContain('Лестница себестоимости во Владивостоке')
+    expect(host.textContent).toContain('Себестоимость привоза во Владивосток под ключ')
+    expect(host.textContent).toContain('VL.ru Деньги')
+
+    // Inline JPY bid input works when clicked and submitted via Enter
+    const editJpyBtn = host.querySelector(
+      'button[aria-label="Изменить ставку в иенах"]',
+    ) as HTMLButtonElement | null
+    expect(editJpyBtn).not.toBeNull()
+    editJpyBtn?.click()
+    await flushUi()
+
+    const jpyInput = host.querySelector(
+      'input[aria-label="Введите ставку в иенах"]',
+    ) as HTMLInputElement | null
+    expect(jpyInput).not.toBeNull()
+    if (jpyInput) {
+      jpyInput.value = '1500000'
+      jpyInput.dispatchEvent(new Event('input'))
+      jpyInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+      await vi.advanceTimersByTimeAsync(250)
+      await flushUi()
+    }
+    expect(lotsStore.currentLotDetail!.economics.wise_cost_ladder.car_bid_jpy).toBe(1_500_000)
 
     const utilSwitch = host.querySelector('button[role="switch"]') as HTMLButtonElement
     utilSwitch.click()

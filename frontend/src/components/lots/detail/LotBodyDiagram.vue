@@ -97,12 +97,12 @@ function togglePanel(panelId: BodyPanel): void {
 </script>
 
 <template>
-  <div class="flex flex-col items-center gap-4">
+  <div class="flex flex-col items-center gap-3">
     <svg
       viewBox="0 0 280 400"
       role="img"
       aria-label="Схема дефектов кузова автомобиля сверху"
-      class="h-auto w-full max-w-[270px] select-none"
+      class="h-auto w-full max-w-[232px] select-none sm:max-w-[244px]"
     >
       <!-- Outer Sills (left/right side skirts) -->
       <rect

@@ -40,7 +40,12 @@ const tagName = computed(() => {
 
 const linkAttrs = computed(() => {
   if (props.to && !props.disabled) return { to: props.to }
-  if (props.href && !props.disabled) return { href: props.href }
+  if (props.href && !props.disabled) {
+    const isExternal = /^https?:\/\//i.test(props.href)
+    return isExternal
+      ? { href: props.href, target: '_blank', rel: 'noopener noreferrer' }
+      : { href: props.href }
+  }
   if (props.interactive) return { type: 'button' as const, disabled: props.disabled }
   return {}
 })
