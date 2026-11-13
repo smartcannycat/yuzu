@@ -1,4 +1,100 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="100%" height="100%">
-  <path fill="#42b883" d="M78.8,10L64,35.4L49.2,10H0l64,110l64-110C128,10,78.8,10,78.8,10z"/>
-  <path fill="#35495e" d="M78.8,10L64,35.4L49.2,10H25.6L64,76l38.4-66H78.8z"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="32 14 136 140" fill="none">
+  <defs>
+    <clipPath id="yuzu-fav-eye0">
+      <rect x="-30" y="-27" width="20" height="26" rx="10" />
+    </clipPath>
+    <clipPath id="yuzu-fav-eye1">
+      <rect x="10" y="-27" width="20" height="26" rx="10" />
+    </clipPath>
+    <clipPath id="yuzu-fav-lid0">
+      <rect x="-32" y="-29" width="24" height="30" rx="12" />
+    </clipPath>
+    <clipPath id="yuzu-fav-lid1">
+      <rect x="8" y="-29" width="24" height="30" rx="12" />
+    </clipPath>
+  </defs>
+
+  <!-- Chubby loaf body -->
+  <rect x="38.5" y="92.75" width="123" height="57.25" rx="26.3" fill="#A56644" />
+
+  <!-- Head group centered at (100, 87) -->
+  <g transform="translate(100 87)">
+    <rect
+      x="-38"
+      y="-45"
+      width="15"
+      height="18"
+      rx="7.5"
+      fill="#8C5235"
+      transform="rotate(-2 -30 -30)"
+    />
+    <rect
+      x="23"
+      y="-45"
+      width="15"
+      height="18"
+      rx="7.5"
+      fill="#8C5235"
+      transform="rotate(2 30 -30)"
+    />
+
+    <rect x="-44" y="-38" width="88" height="76" rx="34" fill="#A56644" />
+
+    <!-- Signature Yuzu citrus seated on crown of head -->
+    <g transform="translate(0 -46)">
+      <rect
+        x="1.5"
+        y="-18"
+        width="13"
+        height="6.4"
+        rx="3.2"
+        fill="#58CC02"
+        transform="rotate(-22 1.5 -15)"
+      />
+      <circle cx="0" cy="-2" r="11.5" fill="#FFC800" />
+      <path
+        d="M 11.5 -2 A 11.5 11.5 0 0 1 -4.3 8.6 A 14.4 14.4 0 0 1 11.5 -2 Z"
+        fill="#FFB100"
+      />
+      <rect x="-6.5" y="-8.5" width="4" height="6.4" rx="2" fill="#FFFFFF" />
+    </g>
+
+    <rect x="-32" y="0" width="64" height="36" rx="17" fill="#E5A259" />
+    <rect x="-42" y="6" width="11" height="7" rx="3.5" fill="#FFB2B2" />
+    <rect x="31" y="6" width="11" height="7" rx="3.5" fill="#FFB2B2" />
+
+    <rect x="-9" y="8" width="6" height="8" rx="3" fill="#5C3520" />
+    <rect x="3" y="8" width="6" height="8" rx="3" fill="#5C3520" />
+    <path
+      d="M -6.2 23 Q 0 27.2 6.2 23 Q 0 27.2 -6.2 23 Z"
+      fill="#5C3520"
+      stroke="#5C3520"
+      stroke-width="3"
+      stroke-linejoin="round"
+      stroke-linecap="round"
+    />
+
+    <rect x="-30" y="-27" width="20" height="26" rx="10" fill="#FFFFFF" />
+    <g clip-path="url(#yuzu-fav-eye0)">
+      <rect x="-25" y="-22.5" width="10" height="15" rx="5" fill="#3C3C3C" />
+      <circle cx="-21.5" cy="-18.5" r="2.2" fill="#FFFFFF" />
+    </g>
+    <g clip-path="url(#yuzu-fav-lid0)">
+      <rect x="-34" y="-31" width="28" height="4.2" fill="#A56644" />
+      <rect x="-32" y="-2.5" width="24" height="3.5" fill="#A56644" />
+    </g>
+
+    <rect x="10" y="-27" width="20" height="26" rx="10" fill="#FFFFFF" />
+    <g clip-path="url(#yuzu-fav-eye1)">
+      <rect x="15" y="-22.5" width="10" height="15" rx="5" fill="#3C3C3C" />
+      <circle cx="18.5" cy="-18.5" r="2.2" fill="#FFFFFF" />
+    </g>
+    <g clip-path="url(#yuzu-fav-lid1)">
+      <rect x="6" y="-31" width="28" height="4.2" fill="#A56644" />
+      <rect x="8" y="-2.5" width="24" height="3.5" fill="#A56644" />
+    </g>
+  </g>
+
+  <rect x="74" y="136" width="22" height="14" rx="7" fill="#E5A259" />
+  <rect x="104" y="136" width="22" height="14" rx="7" fill="#E5A259" />
 </svg>

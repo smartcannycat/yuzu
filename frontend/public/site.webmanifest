@@ -1,0 +1,30 @@
+{
+  "name": "YUZU — Интеллект японских автоаукционов",
+  "short_name": "YUZU",
+  "description": "Экспертная дефектоскопия японских аукционных листов и расчёт полной себестоимости авто под ключ во Владивостоке.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F2F2F7",
+  "theme_color": "#FF6B00",
+  "lang": "ru",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
