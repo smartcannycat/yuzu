@@ -1,12 +1,15 @@
 """Listing parsing, compatibility filters and transport failures for BE-07."""
 
+import time
 from dataclasses import replace
 from pathlib import Path
 
+import httpx
 import pytest
 from bs4 import BeautifulSoup
 
 from apps.lots.integrations.farpost.client import (
+    FarpostClient,
     FarpostFetchError,
     PartCriteria,
     parse_offers,
@@ -118,3 +121,49 @@ def test_explicit_empty_result_is_valid():
     html = """<input name="goodPresentState" value="present" checked>
     <script id="ctr-viewdir-event" type="application/json">{"exactFeedCount":0}</script>"""
     assert parse(html) == []
+
+
+def test_client_requests_local_used_parts_and_decodes_cp1251():
+    def handler(request):
+        assert request.url.params["goodPresentState"] == "present"
+        assert request.url.params["condition[]"] == "used"
+        assert "NRE210" in request.url.params["query"]
+        html = listing().replace("<title>", '<meta charset="windows-1251"><title>')
+        return httpx.Response(200, content=html.encode("cp1251", errors="xmlcharrefreplace"))
+
+    client = FarpostClient(transport=httpx.MockTransport(handler))
+    assert client.search(CRITERIA, deadline=time.monotonic() + 20)[0].price_rub == 18000
+
+
+@pytest.mark.parametrize("status", [403, 429, 500])
+def test_http_errors_are_not_empty_results(status):
+    client = FarpostClient(transport=httpx.MockTransport(lambda _request: httpx.Response(status)))
+    with pytest.raises(FarpostFetchError):
+        client.search(CRITERIA, deadline=time.monotonic() + 20)
+
+
+def test_exhausted_budget_does_not_request():
+    def handler(request):
+        pytest.fail("Network must not be called after the lot deadline")
+
+    client = FarpostClient(transport=httpx.MockTransport(handler))
+    with pytest.raises(FarpostFetchError, match="budget"):
+        client.search(CRITERIA, deadline=time.monotonic() - 1)
+
+
+def test_new_or_unknown_condition_is_not_a_contract_part():
+    assert parse(listing(annotation="Новая деталь")) == []
+
+
+def test_network_timeout_is_a_source_error():
+    def handler(request):
+        raise httpx.ReadTimeout("source timed out")
+
+    client = FarpostClient(transport=httpx.MockTransport(handler))
+    with pytest.raises(FarpostFetchError, match="request failed"):
+        client.search(CRITERIA, deadline=time.monotonic() + 20)
+
+
+def test_farpost_noindex_link_wrapper_preserves_local_offer():
+    offers = parse(listing(href="/ni/vladivostok/zapchasti/door-123.html"))
+    assert len(offers) == 1
