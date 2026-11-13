@@ -46,9 +46,12 @@ function stopBackgroundSync(): void {
   }
 }
 
-function scheduleBackgroundSync(): void {
+function scheduleBackgroundSync(options: { force?: boolean } = {}): void {
   stopBackgroundSync()
-  if (lotsStore.inProgress.total_processing_lots <= 0 || typeof window === 'undefined') {
+  if (
+    (!options.force && lotsStore.inProgress.total_processing_lots <= 0) ||
+    typeof window === 'undefined'
+  ) {
     return
   }
 
@@ -101,8 +104,11 @@ async function handleUploadSubmit(files: File[]): Promise<void> {
 
   if (isDesktop.value) {
     const totalInProgress = lotsStore.inProgress.total_processing_lots
-    isInProgressOpen.value = totalInProgress > 0 && totalInProgress <= IN_PROGRESS_AUTO_EXPAND_LIMIT
-    scheduleBackgroundSync()
+    const isBatchActive = created.status === 'queued' || created.status === 'processing'
+    const effectiveTotal =
+      totalInProgress > 0 ? totalInProgress : isBatchActive ? created.total_items : 0
+    isInProgressOpen.value = effectiveTotal > 0 && effectiveTotal <= IN_PROGRESS_AUTO_EXPAND_LIMIT
+    scheduleBackgroundSync({ force: created.total_items > 0 && isBatchActive })
   } else {
     await router.push({
       name: 'batch-progress',
