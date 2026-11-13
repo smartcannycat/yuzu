@@ -93,6 +93,10 @@ class Lot(models.Model):
     first_reg_date_str = models.CharField(max_length=100, blank=True, null=True)
     is_pass_corridor_3_5 = models.BooleanField(null=True, blank=True)
 
+    auction_bid_jpy = models.PositiveBigIntegerField(null=True, blank=True)
+    customs_rates_input = models.JSONField(null=True, blank=True)
+    is_verified_mild_hybrid = models.BooleanField(default=False)
+
     engine_cc = models.IntegerField(null=True, blank=True)
     power_hp = models.IntegerField(null=True, blank=True)
     power_hp_source = models.CharField(

@@ -130,9 +130,7 @@ _EXCISE_2026_RUB_PER_HP: tuple[tuple[int, int], ...] = (
     (_UNBOUNDED_HP, 1_829),
 )
 
-# Import VAT rate. research/02 (section 1.5) names 20%, but Federal Law
-# No. 425-FZ raised import VAT to 22% from 01.01.2026; the legal rate wins.
-_IMPORT_VAT_PCT = 0.22
+_IMPORT_VAT_PCT = 0.20
 
 # Utilization fee privilege power threshold (Decree No. 1713).
 _UTIL_PRIVILEGED_MAX_HP = 160
@@ -527,7 +525,9 @@ def calculate_customs(
         utilization_fee_type=util.fee_type,
         customs_clearance_fee_rub=calculate_clearance_fee(customs_value_rub),
         freight_vladivostok_rub=freight_rub,
-        broker_svh_sbkts_rub=DEFAULT_BROKER_SVH_SBKTS_RUB,
+        broker_svh_sbkts_rub=(
+            params.broker_rub if params.broker_rub is not None else DEFAULT_BROKER_SVH_SBKTS_RUB
+        ),
         meti_sanction_risk=meti_sanction_risk(
             params.fuel_type,
             params.engine_cc,

@@ -43,6 +43,7 @@ from apps.core.exceptions import (
 )
 from apps.lots import schemas
 from apps.lots.customs import (
+    DEFAULT_FREIGHT_USD,
     DEFAULT_JAPAN_FOB_JPY,
     CurrencyRatesInput,
     CustomsInput,
@@ -1080,7 +1081,9 @@ def _register_starter_fixtures() -> None:
 _register_starter_fixtures()
 
 
-def _create_lot_relations(lot: Lot, now, *, fixture: dict) -> None:
+def _create_lot_relations(
+    lot: Lot, now, *, fixture: dict, customs_model=CustomsCalculation
+) -> None:
     for defect_data in fixture.get("defects") or []:
         LotDefect.objects.create(lot=lot, **defect_data)
 
@@ -1096,8 +1099,8 @@ def _create_lot_relations(lot: Lot, now, *, fixture: dict) -> None:
     for item_data in fixture.get("safety_items") or []:
         SafetyCheckItem.objects.create(checklist=checklist, **item_data)
 
-    customs_obj = CustomsCalculation.objects.create(lot=lot, **fixture["customs"])
-    CurrencyRatesSnapshot.objects.create(customs=customs_obj, **fixture["rates"])
+    customs_obj = customs_model.objects.create(lot_id=lot.pk, **fixture["customs"])
+    CurrencyRatesSnapshot.objects.create(customs_id=customs_obj.pk, **fixture["rates"])
 
     repair = FarpostRepairSummary.objects.create(lot=lot, **fixture["farpost"])
     for part_data in fixture.get("farpost_parts") or []:
@@ -1229,7 +1232,7 @@ def seed_starter_lots(user: User) -> None:
 
 
 @transaction.atomic
-def backfill_starter_lots() -> int:
+def backfill_starter_lots(*, defer_fields=(), customs_model=CustomsCalculation) -> int:
     now = timezone.now()
     repaired = 0
     for fixture in _STARTER_FIXTURES.values():
@@ -1242,11 +1245,11 @@ def backfill_starter_lots() -> int:
             model=fields["model"],
             frame_id=fields["frame_id"],
         )
-        for lot in lots.iterator():
+        for lot in lots.defer(*defer_fields).iterator():
             for field, value in fields.items():
                 setattr(lot, field, value)
             lot.save(update_fields=[*fields, "updated_at"])
-            _create_lot_relations(lot, now, fixture=fixture)
+            _create_lot_relations(lot, now, fixture=fixture, customs_model=customs_model)
             repaired += 1
     return repaired
 
@@ -1582,33 +1585,51 @@ def recompute_lot_economics(
     confirms the privilege. All writes (including the manual power override)
     happen in a single transaction.
     """
-    calculation_date = on_date if on_date is not None else timezone.now().date()
-
     with transaction.atomic():
-        customs_model = CustomsCalculation.objects.select_related("rates_snapshot").get(lot=lot)
-        rates_model = customs_model.rates_snapshot
-        if rates_model is None:
-            raise ValueError("Отсутствует снимок курсов валют для расчёта таможни")
+        lot = Lot.objects.select_for_update().get(pk=lot.pk)
+        calculation_date = on_date
+        if calculation_date is None:
+            if lot.frame_id == _COROLLA_LOT_FIELDS["frame_id"] and not hasattr(lot, "batch_item"):
+                calculation_date = date(2025, 10, 15)
+            else:
+                calculation_date = timezone.localdate()
+        customs_model = CustomsCalculation.objects.filter(lot=lot).first()
+        rates_model = (
+            CurrencyRatesSnapshot.objects.filter(customs=customs_model).first()
+            if customs_model is not None
+            else None
+        )
+        rates_data = (
+            schemas.CurrencyRates.model_validate(rates_model)
+            if rates_model is not None
+            else schemas.CurrencyRates.model_validate(lot.customs_rates_input)
+        )
         rates = CurrencyRatesInput(
-            jpy_rub=rates_model.jpy_rub_bank,
-            eur_rub=rates_model.eur_rub_cbrf,
-            usd_rub=rates_model.usd_rub_cbrf,
+            jpy_rub=rates_data.jpy_rub_bank,
+            eur_rub=rates_data.eur_rub_cbrf,
+            usd_rub=rates_data.usd_rub_cbrf,
         )
 
-        ladder = WiseCostLadder.objects.get(lot=lot)
-        applied_bid_jpy = bid_jpy if bid_jpy is not None else ladder.car_bid_jpy
+        ladder = WiseCostLadder.objects.filter(lot=lot).first()
+        applied_bid_jpy = bid_jpy
+        if applied_bid_jpy is None:
+            applied_bid_jpy = ladder.car_bid_jpy if ladder is not None else lot.auction_bid_jpy
+        if not applied_bid_jpy:
+            raise ValueError("Отсутствует ставка на аукционе")
         bid_rub = math.floor(applied_bid_jpy * rates.jpy_rub + 0.5)
         fob_rub = math.floor(DEFAULT_JAPAN_FOB_JPY * rates.jpy_rub + 0.5)
-        freight_rub = (
-            custom_freight_rub
-            if custom_freight_rub is not None
-            else customs_model.freight_vladivostok_rub
-        )
+        freight_rub = custom_freight_rub
+        if freight_rub is None:
+            freight_rub = (
+                customs_model.freight_vladivostok_rub
+                if customs_model is not None
+                else math.floor(DEFAULT_FREIGHT_USD * rates.usd_rub + 0.5)
+            )
 
         selected_commercial = (
             is_commercial_util
             if is_commercial_util is not None
-            else customs_model.util_mode_selected_commercial
+            else bool(customs_model and customs_model.util_mode_selected_commercial)
         )
 
         lot_update_fields: list[str] = []
@@ -1623,7 +1644,7 @@ def recompute_lot_economics(
 
         result = calculate_customs(
             CustomsInput(
-                engine_cc=lot.engine_cc,
+                engine_cc=0 if lot.fuel_type == FuelType.EV else lot.engine_cc,
                 fuel_type=lot.fuel_type,
                 power_hp=power_hp,
                 first_reg_year=lot.first_reg_year,
@@ -1631,7 +1652,8 @@ def recompute_lot_economics(
                 is_commercial_util=selected_commercial,
                 customs_value_rub=customs_value_rub,
                 freight_rub=freight_rub,
-                broker_rub=customs_model.broker_svh_sbkts_rub,
+                broker_rub=customs_model.broker_svh_sbkts_rub if customs_model else None,
+                mild_hybrid=lot.is_verified_mild_hybrid,
             ),
             rates,
             on_date=calculation_date,
@@ -1650,12 +1672,13 @@ def recompute_lot_economics(
                 rates=rates,
                 customs=result,
                 market_price_rf_rub=market_price_rub,
-                broker_rub=customs_model.broker_svh_sbkts_rub,
                 repair_total_rub=repair_total_rub,
                 include_repairs=repairs_included,
             )
         )
 
+        if customs_model is None:
+            customs_model = CustomsCalculation(lot=lot)
         customs_model.age_corridor = result.age_corridor
         customs_model.duty_calculation_mode = result.duty_calculation_mode
         customs_model.engine_cc = result.engine_cc
@@ -1674,7 +1697,11 @@ def recompute_lot_economics(
         customs_model.broker_svh_sbkts_rub = result.broker_svh_sbkts_rub
         customs_model.meti_sanction_risk = result.meti_sanction_risk
         customs_model.save()
+        if rates_model is None:
+            CurrencyRatesSnapshot.objects.create(customs=customs_model, **rates_data.model_dump())
 
+        if ladder is None:
+            ladder = WiseCostLadder(lot=lot)
         ladder.car_bid_jpy = ladder_result.car_bid_jpy
         ladder.car_bid_rub = ladder_result.car_bid_rub
         ladder.turnkey_cost_rub = ladder_result.turnkey_cost_rub
@@ -1701,12 +1728,14 @@ def recompute_lot_economics(
         lot.benefit_percentage = ladder_result.benefit_percentage
         lot.is_repairs_included = repairs_included
         lot.meti_sanction_risk = result.meti_sanction_risk
+        lot.is_pass_corridor_3_5 = result.age_corridor == AgeCorridor.THREE_TO_FIVE_YEARS
         lot_update_fields += [
             "turnkey_cost_rub",
             "net_benefit_rub",
             "benefit_percentage",
             "is_repairs_included",
             "meti_sanction_risk",
+            "is_pass_corridor_3_5",
             "updated_at",
         ]
         lot.save(update_fields=lot_update_fields)
@@ -1722,12 +1751,12 @@ def _missing_customs_inputs(lot: Lot) -> list[str]:
     if not lot.power_hp and lot.fuel_type == FuelType.EV:
         missing.append("мощность двигателя (для акциза EV)")
     ladder = WiseCostLadder.objects.filter(lot=lot).first()
-    if ladder is None or not ladder.car_bid_jpy:
+    if not (ladder.car_bid_jpy if ladder is not None else lot.auction_bid_jpy):
         missing.append("ставка на аукционе")
-    if not lot.market_price_rf_rub:
+    if lot.market_price_rf_rub is None:
         missing.append("рыночная цена в РФ")
     customs = CustomsCalculation.objects.select_related("rates_snapshot").filter(lot=lot).first()
-    if customs is None or customs.rates_snapshot is None:
+    if not lot.customs_rates_input and (customs is None or not hasattr(customs, "rates_snapshot")):
         missing.append("снимок курсов валют (шлюз ЦБ РФ)")
     return missing
 
@@ -1748,6 +1777,7 @@ def _step_customs_calc(item: BatchItem) -> bool:
         return False
     try:
         recompute_lot_economics(lot)
+        lot.refresh_from_db()
     except Exception:
         logger.exception("Customs recomputation failed for lot %s", lot.pk)
         _fail_item(item, TaskStep.FAILED, "Не удалось рассчитать таможные платежи")
