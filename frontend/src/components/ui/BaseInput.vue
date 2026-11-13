@@ -16,6 +16,7 @@ interface Props {
   clearLabel?: string
   autocomplete?: string
   inputmode?: 'text' | 'decimal' | 'numeric' | 'tel' | 'search' | 'email'
+  maxlength?: number
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -26,6 +27,11 @@ const props = withDefaults(defineProps<Props>(), {
   clearable: false,
   clearLabel: 'Очистить поле',
 })
+
+const emit = defineEmits<{
+  blur: [event: FocusEvent]
+  focus: [event: FocusEvent]
+}>()
 
 const modelValue = defineModel<string>({ default: '' })
 const slots = useSlots()
@@ -84,8 +90,11 @@ function handleClear() {
         :required="required"
         :autocomplete="autocomplete"
         :inputmode="inputmode"
+        :maxlength="maxlength"
         :aria-invalid="hasError || undefined"
         :aria-describedby="describedBy"
+        @blur="emit('blur', $event)"
+        @focus="emit('focus', $event)"
         class="text-text-primary placeholder:text-text-muted disabled:bg-canvas disabled:text-text-muted h-11 w-full rounded-sm border text-[16px] leading-6 transition-[border-color,box-shadow,background-color] duration-[var(--duration-quick)] ease-[var(--ease-smooth-out)] focus:outline-none disabled:cursor-not-allowed"
         :class="[
           hasPrefix ? 'pl-10' : 'pl-3.5',

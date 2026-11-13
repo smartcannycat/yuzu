@@ -1,74 +1,146 @@
 <script setup lang="ts">
-import { ArrowRight, Layers, ShieldCheck, Sparkles } from '@lucide/vue'
+import { CheckCircle2, LogOut, ShieldCheck, User } from '@lucide/vue'
+import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 
-import { BaseBadge, BaseButton, BaseCard, InsetListGroup, InsetListItem } from '@/components/ui'
+import { isMockMode } from '@/api'
+import {
+  BaseBadge,
+  BaseButton,
+  BaseCard,
+  BottomSheet,
+  InsetListGroup,
+  InsetListItem,
+} from '@/components/ui'
+import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
+const authStore = useAuthStore()
 
-function openUiKit() {
-  void router.push({ name: 'ui-kit' })
+const isProfileOpen = ref(false)
+
+async function handleLogout(): Promise<void> {
+  isProfileOpen.value = false
+  authStore.logout()
+  await router.replace({ name: 'auth' })
 }
 </script>
 
 <template>
-  <main
-    class="mx-auto flex min-h-screen w-full max-w-[680px] flex-col justify-center gap-6 px-4 py-10"
-  >
-    <BaseCard padding="lg" class="flex flex-col gap-5">
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <BaseBadge variant="info">
+  <main class="mx-auto flex min-h-dvh w-full max-w-[680px] flex-col gap-5 px-4 py-6">
+    <header class="flex items-center justify-between gap-3">
+      <div class="flex items-center gap-2.5">
+        <span
+          class="bg-accent text-text-on-accent flex h-8 w-8 items-center justify-center rounded-[9px] text-[14px] font-semibold tracking-tight"
+          aria-hidden="true"
+        >
+          YZ
+        </span>
+        <div class="flex flex-col">
+          <span class="text-text-primary text-[17px] leading-tight font-semibold tracking-tight">
+            YUZU
+          </span>
+          <span class="text-text-secondary text-[12px] leading-tight">
+            Интеллект японских автоаукционов
+          </span>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        aria-label="Открыть меню профиля"
+        class="border-border bg-surface hover:bg-surface-hover active:bg-surface-inset focus-visible:outline-accent flex h-10 max-w-[200px] cursor-pointer items-center gap-2 rounded-full border pr-3 pl-1.5 transition-colors duration-[var(--duration-quick)] focus-visible:outline-2 focus-visible:outline-offset-2"
+        @click="isProfileOpen = true"
+      >
+        <span
+          class="bg-accent-subtle text-accent flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[12px] font-semibold"
+        >
+          {{ authStore.initials }}
+        </span>
+        <span class="text-text-primary truncate text-[13px] font-medium">
+          {{ authStore.displayName }}
+        </span>
+      </button>
+    </header>
+
+    <BaseCard padding="lg" class="flex flex-col gap-4">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <BaseBadge variant="success">
           <template #icon>
-            <Sparkles :size="14" :stroke-width="2" />
+            <CheckCircle2 :size="14" :stroke-width="2" />
           </template>
-          YUZU Clean Light
+          Сессия активна
         </BaseBadge>
-        <span class="text-text-secondary text-[12px] font-medium">Vue 3 + Tailwind v4</span>
+
+        <BaseBadge variant="neutral">
+          {{ isMockMode ? 'Mock API' : 'Backend API' }}
+        </BaseBadge>
       </div>
 
-      <div class="flex flex-col gap-2">
-        <h1 class="text-text-primary text-[28px] leading-tight font-semibold tracking-[-0.02em]">
-          YUZU // Интеллект японских автоаукционов
+      <div class="flex flex-col gap-1.5">
+        <h1 class="text-text-primary text-[22px] leading-tight font-semibold tracking-[-0.015em]">
+          Добро пожаловать, {{ authStore.displayName }}
         </h1>
-        <p class="text-text-secondary text-[15px] leading-relaxed">
-          Базовая дизайн-система Clean Light, типографика SF Pro Display, иконки Lucide и доступные
-          интерактивные компоненты готовы к сборке продуктовых экранов.
+        <p class="text-text-secondary text-[14px] leading-relaxed">
+          Авторизация (Экран 0) и JWT-клиент с автообновлением токена настроены. Следующий шаг —
+          реализация главного дашборда лотов (Экран 1).
         </p>
-      </div>
-
-      <div class="flex flex-wrap items-center gap-3">
-        <BaseButton variant="primary" size="lg" @click="openUiKit">
-          <span>Открыть UI-кит</span>
-          <template #icon-right>
-            <ArrowRight :size="18" :stroke-width="2" />
-          </template>
-        </BaseButton>
       </div>
     </BaseCard>
 
-    <InsetListGroup title="Быстрая навигация">
+    <InsetListGroup title="Разделы">
       <InsetListItem
-        title="Витрина базовых компонентов"
-        subtitle="Кнопки, поля ввода, свитч iOS 26, Bottom Sheet, ТТХ и лестница"
-        value="/ui-kit"
+        title="Профиль и сессия"
+        :subtitle="authStore.user?.email"
+        value="Аккаунт"
         squircle-color="#FF6B00"
-        :to="{ name: 'ui-kit' }"
+        interactive
         chevron
+        @click="isProfileOpen = true"
       >
         <template #icon>
-          <Layers :size="17" :stroke-width="2" />
-        </template>
-      </InsetListItem>
-      <InsetListItem
-        title="Доступность и адаптив"
-        subtitle="Focus-visible, ARIA, prefers-reduced-motion, 320px–1200px"
-        value="WCAG AA"
-        squircle-color="#15803D"
-      >
-        <template #icon>
-          <ShieldCheck :size="17" :stroke-width="2" />
+          <User :size="17" :stroke-width="2" />
         </template>
       </InsetListItem>
     </InsetListGroup>
+
+    <BottomSheet
+      v-model:open="isProfileOpen"
+      title="Профиль"
+      :subtitle="authStore.user?.email"
+      max-width="sm"
+    >
+      <div class="flex flex-col gap-4">
+        <InsetListGroup>
+          <InsetListItem
+            title="Имя"
+            :value="authStore.user?.name || 'Не указано'"
+            squircle-color="#1D4ED8"
+          >
+            <template #icon>
+              <User :size="16" :stroke-width="2" />
+            </template>
+          </InsetListItem>
+          <InsetListItem
+            title="Режим API"
+            :value="isMockMode ? 'Mock' : 'Live'"
+            squircle-color="#15803D"
+          >
+            <template #icon>
+              <ShieldCheck :size="16" :stroke-width="2" />
+            </template>
+          </InsetListItem>
+        </InsetListGroup>
+      </div>
+
+      <template #footer>
+        <BaseButton variant="destructive" size="lg" block @click="handleLogout">
+          <template #icon-left>
+            <LogOut :size="18" :stroke-width="2" />
+          </template>
+          Выйти из аккаунта
+        </BaseButton>
+      </template>
+    </BottomSheet>
   </main>
 </template>
