@@ -204,6 +204,17 @@ class FuelType(str, Enum):
     DIESEL = "diesel"
     EV = "ev"
     OTHER = "other"
+
+class LotLifecycleFilter(str, Enum):
+    """Фильтр жизненного цикла лотов в ленте главного дашборда"""
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+    ALL = "all"
+
+class LotArchiveReason(str, Enum):
+    """Причина перевода лота в архив"""
+    EXPIRED = "expired"  # Автоархивация по истечении срока актуальности торгов
+    MANUAL = "manual"    # Переведен в архив вручную пользователем
 ```
 
 ---
@@ -261,6 +272,7 @@ class NormalizedSheet(StrictBaseModel):
     lot_number: str = Field(..., description="Номер лота на аукционе", examples=["3142"])
     auction_house: AuctionHouse = Field(..., description="Канонический аукционный дом")
     auction_branch: Optional[str] = Field(None, description="Филиал площадки, если указан на листе", examples=["TAA Chubu"])
+    auction_date: Optional[str] = Field(None, description="Дата текущих торгов в формате ДД.ММ.ГГГГ (если распознана с листа/источника; null при обрезанном фото)", examples=["14.11.2026"])
     auction_strictness_index: float = Field(..., ge=0.0, le=1.0, description="Индекс строгости (0.55..1.00)", examples=[1.00])
     make: str = Field(..., description="Марка автомобиля латиницей", examples=["Toyota"])
     model: str = Field(..., description="Модель автомобиля латиницей", examples=["Corolla Touring"])
@@ -429,13 +441,16 @@ class TrafficLightVerdict(StrictBaseModel):
    │     └── GET  /api/v1/auth/me              ➔ Профиль текущего пользователя
    │
    ├── Lots & Pipeline (требуют Authorization: Bearer <token>):
-   │     ├── (1) POST /api/v1/lots/batches             ➔ Загрузка пачки фото 1–10 файлов (Экран 2: Модалка)
-   │     ├── (2) GET  /api/v1/lots/batches/{batch_id}  ➔ Live Polling очереди 1.5с + Fast Header OCR (Экран 3)
-   │     ├── (3) POST /api/v1/lots/batches/{batch_id}/items ➔ Догрузка файлов без прерывания (Экран 3: «Догрузить еще листы»)
-   │     ├── (4) GET  /api/v1/lots                     ➔ Главный дашборд с фильтрами, счетчиками и In-Progress (Экран 1)
-   │     ├── (5) GET  /api/v1/lots/{lot_id}            ➔ Полная спецификация лота: Табы 4, 5, 6 + Bottom Sheets (Экран 4–7)
-   │     ├── (6) POST /api/v1/lots/{lot_id}/recalculate➔ Интерактивная симуляция ставки и утильсбора (Экран 6)
-   │     └── (7) GET  /api/v1/lots/{lot_id}/report.pdf ➔ [P1] Серверный PDF (на MVP — клиентский экспорт HTML→PDF)
+   │     ├── (1)  POST   /api/v1/lots/batches             ➔ Загрузка пачки фото 1–10 файлов (Экран 2: Модалка)
+   │     ├── (2)  GET    /api/v1/lots/batches/{batch_id}  ➔ Live Polling очереди 1.5с + Fast Header OCR (Экран 3)
+   │     ├── (3)  POST   /api/v1/lots/batches/{batch_id}/items ➔ Догрузка файлов без прерывания (Экран 3: «Догрузить еще листы»)
+   │     ├── (4)  GET    /api/v1/lots                     ➔ Главный дашборд: Активные / Архив, фильтры, счетчики и In-Progress (Экран 1)
+   │     ├── (5)  GET    /api/v1/lots/{lot_id}            ➔ Полная спецификация лота: Табы 4, 5, 6 + Bottom Sheets (Экран 4–7)
+   │     ├── (6)  POST   /api/v1/lots/{lot_id}/recalculate➔ Интерактивная симуляция ставки и утильсбора (Экран 6)
+   │     ├── (7)  GET    /api/v1/lots/{lot_id}/report.pdf ➔ [P1] Серверный PDF (на MVP — клиентский экспорт HTML→PDF)
+   │     ├── (8)  PATCH  /api/v1/lots/{lot_id}            ➔ Ручная архивация / возврат из архива (Экран 1, шапка деталей)
+   │     ├── (9)  DELETE /api/v1/lots/{lot_id}            ➔ Soft-delete ненужного лота без корзины в UI (Экран 1, шапка деталей)
+   │     └── (10) POST   /api/v1/lots/bulk-delete         ➔ Массовый soft-delete выбранных ненужных лотов (Экран 1)
 ```
 
 ---
@@ -542,14 +557,14 @@ class MascotState(StrictBaseModel):
     badge_text: str = Field(..., description="Текст прогресса ('Распознаем лоты... 3/4')")
 
 class BatchItemStatus(StrictBaseModel):
-    lot_id: Optional[UUID] = Field(None, description="Идентификатор лота (создается при принятии листа; null при failed / rejected_not_sheet)")
+    lot_id: Optional[UUID] = Field(None, description="Идентификатор лота (создается при принятии листа; null при failed / rejected_not_sheet или если лот уже удален пользователем)")
     file_index: int = Field(..., ge=0, description="Порядковый номер файла в пачке")
     original_filename: str = Field(..., description="Оригинальное имя загруженного файла")
     preview_title: Optional[str] = Field(None, description="Предварительное название из Fast Header OCR (make + model + #lot_number) пока полный анализ ещё идет", examples=["Subaru Forester #5190"])
     status: ItemProcessingStatus = Field(..., description="Статус обработки файла")
     current_step: TaskStep = Field(..., description="Текущий этап DAG-конвейера")
     error_message: Optional[str] = Field(None, description="Текст ошибки при сбое")
-    summary: Optional['LotSummary'] = Field(None, description="Компактная карточка авто (заполняется при ready)")
+    summary: Optional['LotSummary'] = Field(None, description="Компактная карточка авто (заполняется при ready; null если лот был удален)")
 
 class BatchProgressResponse(StrictBaseModel):
     batch_id: UUID = Field(..., description="Идентификатор опрашиваемой пачки")
@@ -688,6 +703,7 @@ class BatchProgressResponse(StrictBaseModel):
 | `model` | `Query` | `Optional[str]` | Нет | `None` | Фильтр по модели (например, `"Corolla Touring"`) |
 | `verdict` | `Query` | `Optional[TrafficLightColor]` | Нет | `None` | Фильтр по вердикту: `green`, `yellow`, `red` |
 | `has_anomaly` | `Query` | `Optional[bool]` | Нет | `None` | Фильтр по наличию критических аномалий аудита |
+| `lifecycle` | `Query` | `LotLifecycleFilter` | Нет | `"active"` | Фильтр жизненного цикла: `active` (актуальные), `archived` (архив), `all` (все не удаленные) |
 | `page` | `Query` | `int` | Нет | `1` | Номер страницы (>= 1) |
 | `page_size` | `Query` | `int` | Нет | `20` | Количество элементов (1..100) |
 | `sort_by` | `Query` | `str` | Нет | `"created_at"` | Сортировка: `created_at`, `net_benefit`, `turnkey_cost` |
@@ -716,6 +732,11 @@ class LotSummary(StrictBaseModel):
     has_anomaly: bool = Field(..., description="Флаг аномалии кросс-аудита")
     anomaly_text: Optional[str] = Field(None, description="Текст предупреждения об аномалии")
     thumbnail_url: Optional[str] = Field(None, description="URL миниатюры оригинального скана аукционного листа (НЕ фото автомобиля)")
+    auction_date: Optional[str] = Field(None, description="Дата текущих торгов в формате ДД.ММ.ГГГГ (null если дата не распознана)", examples=["14.11.2026"])
+    is_archived: bool = Field(False, description="Флаг нахождения лота в архиве (скрыт из активной ленты по умолчанию)")
+    archived_at: Optional[datetime] = Field(None, description="Время перевода в архив (UTC), null для активных лотов")
+    archived_reason: Optional[LotArchiveReason] = Field(None, description="Причина архивации: expired (истек срок) | manual (вручную)")
+    expires_at: Optional[datetime] = Field(None, description="Плановый дедлайн автоархивации (UTC): auction_date JST + 24ч либо created_at + 3 дня; null если автоархивация отключена после ручного возврата")
     created_at: datetime = Field(..., description="Время создания записи (UTC)")
 
 class InProgressItemPreview(StrictBaseModel):
@@ -742,17 +763,24 @@ class FilterCountItem(StrictBaseModel):
     count: int = Field(..., ge=0, description="Количество готовых лотов в ленте", examples=[4])
 
 class AvailableFilters(StrictBaseModel):
-    total_lots_count: int = Field(..., ge=0, description="Счетчик для чипса 'Все (N)'", examples=[12])
-    makes: List[FilterCountItem] = Field(default_factory=list, description="Марки со счетчиками для шторки '⚙️'")
-    models: List[FilterCountItem] = Field(default_factory=list, description="Модели со счетчиками для чипсов ('Vezel (4)', 'Corolla (3)')")
-    counts_by_verdict: Dict[TrafficLightColor, int] = Field(default_factory=dict, description="Количество по цветам светофора")
+    total_lots_count: int = Field(..., ge=0, description="Счетчик для чипса 'Все (N)' строго внутри выбранного lifecycle", examples=[12])
+    archived_lots_count: int = Field(0, ge=0, description="Общее число не удаленных архивных лотов пользователя (для бейджа переключателя 'Архив (N)')", examples=[4])
+    makes: List[FilterCountItem] = Field(default_factory=list, description="Марки со счетчиками внутри выбранного lifecycle для шторки '⚙️'")
+    models: List[FilterCountItem] = Field(default_factory=list, description="Модели со счетчиками внутри выбранного lifecycle для чипсов ('Vezel (4)', 'Corolla (3)')")
+    counts_by_verdict: Dict[TrafficLightColor, int] = Field(default_factory=dict, description="Количество по цветам светофора внутри выбранного lifecycle")
 
 class LotListResponse(StrictBaseModel):
-    items: List[LotSummary] = Field(..., description="Список готовых лотов (LIFO)")
+    items: List[LotSummary] = Field(..., description="Список готовых лотов (LIFO) без soft-deleted записей")
     in_progress: InProgressSummary = Field(..., description="Блок активных задач для выпадающей плашки в хедере")
     pagination: PaginationMeta = Field(..., description="Метаданные пагинации")
     available_filters: AvailableFilters = Field(..., description="Фильтры со счетчиками")
 ```
+
+#### Бизнес-правила жизненного цикла и автоархивации:
+- **Гибридный дедлайн актуальности (`expires_at`):** если распознана дата текущих торгов `auction_date`, дедлайн вычисляется как **конец дня `auction_date` в Японии (`JST, UTC+9`) + 24 часа** (т.е. `auction_date + 1 день, 23:59:59 JST`, переведённые в UTC). Если `auction_date == null` (обрезанный скан), используется fallback `created_at + 3 дня (72 часа)`.
+- **Автоархивация без удаления:** при достижении `now_utc >= expires_at` активный лот (если для него не отключена автоархивация ручным возвратом) переводится в архив (`is_archived = true`, `archived_reason = "expired"`, `archived_at = expires_at`) и скрывается из дефолтного `lifecycle="active"`, оставаясь в `lifecycle="archived"` бессрочно до явного удаления пользователем.
+- **Ручной возврат (Unarchive):** при возврате лота из архива через `PATCH /api/v1/lots/{lot_id}` (`{"is_archived": false}`) сервер сбрасывает `archived_at = null`, `archived_reason = null`, `expires_at = null` и отключает дальнейшую автоархивацию для этого лота, чтобы просроченный лот не возвращался в архив автоматически.
+- **Повторная загрузка:** наличие архивного или удалённого (`deleted_at IS NOT NULL`) лота с тем же `frame_id` / `lot_number` не блокирует создание нового расчёта при повторном выставлении машины на торги.
 
 #### HTTP Статус-коды:
 - `200 OK` — Успешное получение ленты лотов.
@@ -782,6 +810,11 @@ class LotListResponse(StrictBaseModel):
       "has_anomaly": false,
       "anomaly_text": null,
       "thumbnail_url": "https://cdn.auction-calc.ru/lots/3142/sheet_thumb.webp",
+      "auction_date": "14.11.2026",
+      "is_archived": false,
+      "archived_at": null,
+      "archived_reason": null,
+      "expires_at": "2026-11-15T14:59:59Z",
       "created_at": "2026-11-13T10:15:00Z"
     }
   ],
@@ -806,6 +839,7 @@ class LotListResponse(StrictBaseModel):
   },
   "available_filters": {
     "total_lots_count": 12,
+    "archived_lots_count": 4,
     "makes": [
       {"value": "Toyota", "count": 5},
       {"value": "Honda", "count": 4},
@@ -876,6 +910,10 @@ class LotDetailResponse(StrictBaseModel):
     lot_id: UUID = Field(..., description="Уникальный идентификатор лота")
     created_at: datetime = Field(..., description="Время создания (UTC)")
     updated_at: datetime = Field(..., description="Время обновления (UTC)")
+    is_archived: bool = Field(False, description="Находится ли лот в архиве (архивный лот остаётся полностью интерактивным)")
+    archived_at: Optional[datetime] = Field(None, description="Время архивации (UTC)")
+    archived_reason: Optional[LotArchiveReason] = Field(None, description="Причина архивации: expired | manual")
+    expires_at: Optional[datetime] = Field(None, description="Плановый дедлайн автоархивации (UTC), null при ручном возврате из архива")
     passport: NormalizedSheet = Field(..., description="Паспорт авто, дефекты 2D-схемы, риски и заметки инспектора")
     verdict: TrafficLightVerdict = Field(..., description="Светофор, буллиты 'Кузов'/'Салон' и чистая выгода")
     market: MarketComparisonInfo = Field(..., description="Сравнение с рынком РФ (Drom.ru)")
@@ -886,8 +924,8 @@ class LotDetailResponse(StrictBaseModel):
 ```
 
 #### HTTP Статус-коды:
-- `200 OK` — Полная спецификация лота успешно сформирована.
-- `404 Not Found` — Лот не найден.
+- `200 OK` — Полная спецификация лота успешно сформирована (работает как для активных, так и для архивных лотов; для архивных лотов также остаются доступными `POST /recalculate` и экспорт PDF).
+- `404 Not Found` — Лот не найден, принадлежит другому пользователю или был удалён (`deleted_at IS NOT NULL`).
 
 #### Эталонный JSON-сниппет ответа (`200 OK` — Toyota Corolla Touring Лот #3142):
 ```json
@@ -895,10 +933,15 @@ class LotDetailResponse(StrictBaseModel):
   "lot_id": "8fa1947b-1234-4567-8901-abcdef123456",
   "created_at": "2026-11-13T10:15:00Z",
   "updated_at": "2026-11-13T10:15:00Z",
+  "is_archived": false,
+  "archived_at": null,
+  "archived_reason": null,
+  "expires_at": "2026-11-15T14:59:59Z",
   "passport": {
     "lot_number": "3142",
     "auction_house": "TAA",
     "auction_branch": "TAA Chubu",
+    "auction_date": "14.11.2026",
     "auction_strictness_index": 1.0,
     "make": "Toyota",
     "model": "Corolla Touring",
@@ -1448,6 +1491,71 @@ class RecalculateResponse(StrictBaseModel):
 
 ---
 
+### Эндпоинт 8: Ручная архивация и возврат лота из архива
+
+- **Название:** Обновление жизненного цикла лота (Archive / Unarchive Lot)
+- **HTTP Метод:** `PATCH`
+- **Путь:** `/api/v1/lots/{lot_id}`
+- **Назначение в UI:** Перевод неактуального лота в «Архив» или ручной возврат архивного лота в «Активные» с карточки на главном экране или из шапки детального экрана. При возврате из архива (`is_archived = false`) бэкенд сбрасывает `archived_at` / `archived_reason` / `expires_at` в `null` и отключает дальнейшую автоархивацию для этого лота.
+- **Параметры:** `lot_id: UUID` (`Path`, обязательный).
+
+#### Pydantic V2 модели Request / Response:
+
+```python
+class LotLifecyclePatchRequest(StrictBaseModel):
+    is_archived: bool = Field(..., description="true — отправить в архив вручную (archived_reason='manual'); false — вернуть в активную ленту и отключить автоархивацию")
+```
+
+- **Ответ (`200 OK`):** Возвращает актуализированную модель `LotSummary`.
+
+#### HTTP Статус-коды:
+- `200 OK` — Статус жизненного цикла лота обновлён.
+- `404 Not Found` — Лот не найден, принадлежит другому пользователю или уже удалён.
+- `422 Unprocessable Entity` — Некорректное тело запроса.
+
+---
+
+### Эндпоинт 9: Удаление одного ненужного лота
+
+- **Название:** Удаление лота (Soft-Delete Lot)
+- **HTTP Метод:** `DELETE`
+- **Путь:** `/api/v1/lots/{lot_id}`
+- **Назначение в UI:** Удаление красного, дублирующего или ошибочно загруженного лота из карточки на Экране 1 (без отдельной «Корзины» в UI; клиент может показывать Undo-тост 4–5 сек перед отправкой или выполнять немедленное удаление с коротким подтверждением в шапке детального экрана).
+- **Поведение на сервере:** Выполняется **soft-delete** (`deleted_at = now_utc`) с проверкой владельца (`user_id`). Удалённый лот исключается из `GET /api/v1/lots` и пересчёта `AvailableFilters`, при прямом обращении к `GET / PATCH / POST recalculate / DELETE` возвращает `404 Not Found`, а в `BatchProgressResponse.items` связанные `lot_id` и `summary` становятся `null`, исключая битые ссылки в истории пачек.
+- **Параметры:** `lot_id: UUID` (`Path`, обязательный).
+
+#### HTTP Статус-коды:
+- `204 No Content` — Лот успешно удалён (тело ответа пустое).
+- `404 Not Found` — Лот не найден, принадлежит другому пользователю или уже был удалён.
+
+---
+
+### Эндпоинт 10: Массовое удаление ненужных лотов
+
+- **Название:** Батчевое удаление лотов (Bulk Soft-Delete Lots)
+- **HTTP Метод:** `POST`
+- **Путь:** `/api/v1/lots/bulk-delete`
+- **Назначение в UI:** Массовая очистка ленты или архива (мультивыбор карточек / быстрая зачистка ненужных лотов после пачки).
+- **Поведение на сервере:** Идемпотентно помечает как `deleted_at = now_utc` все активные/архивные (не удалённые ранее) лоты из списка `lot_ids`, принадлежащие текущему `user_id`. Записи, которые уже удалены, не существуют или принадлежат другому пользователю, возвращаются в `not_found_ids` без падения всего запроса.
+
+#### Pydantic V2 модели Request / Response:
+
+```python
+class LotBulkDeleteRequest(StrictBaseModel):
+    lot_ids: List[UUID] = Field(..., min_length=1, max_length=100, description="Список UUID лотов к удалению (от 1 до 100 за запрос)")
+
+class LotBulkDeleteResponse(StrictBaseModel):
+    deleted_ids: List[UUID] = Field(..., description="UUID лотов, успешно переведенных в deleted состояние этим запросом")
+    not_found_ids: List[UUID] = Field(default_factory=list, description="UUID из запроса, которые не найдены, уже удалены или недоступны пользователю")
+    deleted_count: int = Field(..., ge=0, description="Количество реально удалённых лотов (len(deleted_ids))")
+```
+
+#### HTTP Статус-коды:
+- `200 OK` — Запрос обработан (`LotBulkDeleteResponse`).
+- `422 Unprocessable Entity` — Пустой массив `lot_ids`, невалидный UUID или превышен лимит `100` элементов.
+
+---
+
 ## 5. Стандарт обработки ошибок (RFC 7807 Problem Details)
 
 Все ошибки бэкенда возвращаются строго в соответствии со стандартом **RFC 7807 (Problem Details for HTTP APIs)**:
@@ -1512,7 +1620,9 @@ class ProblemDetail(StrictBaseModel):
 | № | Экран UI (v3.2) | Компонент интерфейса | Технический ключ контракта | Тип данных | Отображение в UI (Бенчмарк Corolla Touring) |
 | :-: | :--- | :--- | :--- | :--- | :--- |
 | **0** | **Экран 0: Auth** | Вход / Регистрация | `POST /auth/login`, `/register`, `/refresh` | `JWT Bearer` | Авторизация, токен в `Authorization: Bearer ...` |
-| **1** | **Экран 1: Дашборд** | Поиск и фильтры `⚙️` | `query`, `AvailableFilters.makes` | `string` / `FilterCountItem[]` | Поиск по кузову + счетчики марок |
+| **1** | **Экран 1: Дашборд** | Поиск и фильтры `⚙️` | `query`, `lifecycle`, `AvailableFilters.makes` | `string` / `FilterCountItem[]` | Поиск по кузову + счетчики марок |
+| **1** | **Экран 1: Дашборд** | Вкладки «Активные / Архив» | `lifecycle=active\|archived`, `archived_lots_count` | `enum` / `int` | Переключатель `Активные` / `Архив (4)` |
+| **1** | **Экран 1: Дашборд** | Очистка / архив карточки | `PATCH /lots/{id}`, `DELETE /lots/{id}`, `POST /lots/bulk-delete` | `endpoint` | Архивация, Undo-удаление карточки и массовая очистка |
 | **1** | **Экран 1: Дашборд** | Чипсы моделей | `AvailableFilters.total_lots_count`, `models` | `int` / `FilterCountItem[]` | `Все (12)`, `Vezel (4)`, `Corolla (3)`, `Note (2)` |
 | **1** | **Экран 1: Дашборд** | Плашка «⏳ В обработке ▾» | `LotListResponse.in_progress` | `InProgressSummary` | «⏳ В обработке: 4 авто ▾» (без `%`, аккордеон со списком) |
 | **1** | **Экран 1: Дашборд** | Карточка: Миниатюра | `LotSummary.thumbnail_url` | `string?` | Миниатюра оригинального скана аукционного листа |
@@ -1522,7 +1632,7 @@ class ProblemDetail(StrictBaseModel):
 | **3** | **Экран 3: Очередь** | Маскот 🤖 | `BatchProgressResponse.mascot` | `MascotState` | Робот 🤖 + «Распознаем лоты... 3/4» |
 | **3** | **Экран 3: Очередь** | Строка в обработке | `BatchItemStatus.preview_title` | `string?` | «⏳ Subaru Forester #5190» (из Fast Header OCR) |
 | **3** | **Экран 3: Очередь** | Кнопка догрузки | `POST /batches/{id}/items` | `endpoint` | «Догрузить еще листы» без сброса очереди |
-| **4** | **Экран 4: Таб «Общий»** | Хедер и кнопка PDF | `passport.make/model`, Client Print/PDF (MVP) / `GET .../report.pdf` (P1) | `string / pdf` | `Toyota Corolla Touring` + `[PDF]` |
+| **4** | **Экран 4: Таб «Общий»** | Хедер, архив, удаление и PDF | `is_archived`, `PATCH /lots/{id}`, `DELETE /lots/{id}`, Client Print/PDF | `bool` / `endpoint` | `Toyota Corolla Touring` + бейдж архива + `[В архив / Удалить / PDF]` |
 | **4** | **Экран 4: Таб «Общий»** | Светофор + 2 буллита | `verdict.headline`, `body_summary_ru`, `interior_summary_ru` | `string` | Зелёная/жёлтая/красная плашка + «Кузов» + «Салон» |
 | **4** | **Экран 4: Таб «Общий»** | Выгода под ключ | `wise_cost_ladder.turnkey_cost_rub`, `verdict.badge_text`, `market` | `int / string` | `1 104 899 ₽` + `Выгода: +415 101 ₽` + Рынок / Вложения |
 | **4** | **Экран 4: Таб «Общий»** | Карточка ТТХ | `passport` (`frame_id`, `first_reg_date_str`, `engine_cc`, `transmission`, `mileage_km`, `overall_grade`) | `various` | Аккуратная двухколоночная сетка ТТХ |
