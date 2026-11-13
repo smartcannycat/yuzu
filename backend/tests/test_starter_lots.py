@@ -29,7 +29,7 @@ def test_register_seeds_three_starter_lots(api_client: Client) -> None:
     assert vezel.model == "Vezel"
     assert vezel.frame_id == "RU3-1209412"
     assert vezel.turnkey_cost_rub == 1480000
-    assert vezel.verdict == "yellow"
+    assert vezel.verdict == "red"
     assert vezel.fuel_type == "hybrid"
     assert vezel.meti_sanction_risk is True
 
@@ -37,7 +37,7 @@ def test_register_seeds_three_starter_lots(api_client: Client) -> None:
     assert note.model == "Note"
     assert note.frame_id == "HE12-389104"
     assert note.turnkey_cost_rub == 980000
-    assert note.verdict == "green"
+    assert note.verdict == "red"
     assert note.fuel_type == "hybrid"
     assert note.meti_sanction_risk is True
 
