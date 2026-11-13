@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest'
 
+import { buildMockLotDetail } from '@/api/mock/lotDetails'
+import { queryMockLots } from '@/api/mock/lots'
 import {
+  CHECKLIST_STATUS_META,
   DEFAULT_JPY_RUB_RATE,
   MAX_BID_JPY,
   MAX_BID_RUB,
   MIN_BID_JPY,
   MIN_BID_RUB,
+  buildActiveRiskLabels,
+  buildLotTtxItems,
   clampBidJpy,
   clampBidRub,
   formatDromPriceRange,
@@ -16,6 +21,7 @@ import {
   parsePositiveIntegerInput,
   resolveSafeJpyRate,
 } from '@/components/lots/detail/lotPresentation'
+import type { RiskFlags } from '@/types/api'
 
 describe('lotPresentation helpers', () => {
   it('resolves safe JPY/RUB rate and falls back on non-positive or non-finite values', () => {
@@ -36,7 +42,9 @@ describe('lotPresentation helpers', () => {
     expect(clampBidJpy(99_999_999)).toBe(MAX_BID_JPY)
     expect(clampBidJpy(Number.NaN)).toBe(MIN_BID_JPY)
 
+    expect(MAX_BID_RUB).toBe(50_000_000)
     expect(clampBidRub(1_000)).toBe(MIN_BID_RUB)
+    expect(clampBidRub(45_000_000)).toBe(45_000_000)
     expect(clampBidRub(99_999_999)).toBe(MAX_BID_RUB)
     expect(clampBidRub(Number.POSITIVE_INFINITY)).toBe(MIN_BID_RUB)
   })
@@ -62,5 +70,45 @@ describe('lotPresentation helpers', () => {
     expect(getBenefitBadgeVariant(150_000)).toBe('success')
     expect(getBenefitBadgeVariant(50_000)).toBe('warning')
     expect(getBenefitBadgeVariant(49_999)).toBe('danger')
+  })
+
+  it('supports unknown checklist status, core_support_repair risk flag, fuel other, and null is_under_160_hp', () => {
+    expect(CHECKLIST_STATUS_META.unknown).toEqual({
+      variant: 'neutral',
+      label: 'Нет данных',
+      squircleColor: '#8E8E93',
+    })
+
+    const flags: RiskFlags = {
+      is_flooded: false,
+      airbag_deployed: false,
+      hail_damage: false,
+      underbody_corrosion: false,
+      pillar_or_frame_repair: false,
+      core_support_repair: true,
+      underbody_rust: false,
+      panel_needs_replacement_x: false,
+      panel_replaced_xx: false,
+      odometer_issue: false,
+      color_changed: false,
+      windshield_damage: false,
+      repaired_grade_r_ra: false,
+    }
+    expect(buildActiveRiskLabels(flags)).toEqual([
+      { label: 'Ремонт рамки радиатора', variant: 'danger' },
+    ])
+
+    const summary = queryMockLots().items[0]!
+    const detail = buildMockLotDetail(summary)
+    detail.passport.power_hp = 150
+    detail.passport.is_under_160_hp = null
+    detail.passport.fuel_type = 'other'
+
+    const items = buildLotTtxItems(detail)
+    const engineItem = items.find((item) => item.label === 'Двигатель и мощность')
+    const drivetrainItem = items.find((item) => item.label === 'КПП и привод')
+    expect(engineItem?.value).toContain('150 л.с.')
+    expect(engineItem?.value).not.toContain('160')
+    expect(drivetrainItem?.value).toContain('Другое')
   })
 })

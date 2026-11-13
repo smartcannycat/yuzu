@@ -150,11 +150,16 @@ export interface BatchProgressResponse {
 
 export type OdometerStatus = 'confirmed' | 'replaced' | 'tampered' | 'unknown'
 export type DriveType = '2WD' | '4WD'
-export type FuelType = 'gasoline' | 'hybrid' | 'diesel' | 'ev'
+export type FuelType = 'gasoline' | 'hybrid' | 'diesel' | 'ev' | 'other'
 export type AgeCorridor = 'under_3_years' | '3_to_5_years' | 'over_5_years'
-export type CrossAuditStatus = 'clean' | 'anomaly_detected' | 'not_found'
+export type CrossAuditStatus =
+  | 'clean'
+  | 'anomaly_detected'
+  | 'not_found'
+  | 'live_only'
+  | 'unavailable'
 export type RiskLevel = 'CLEAN' | 'INFO' | 'WARNING' | 'CRITICAL'
-export type ChecklistItemStatus = 'ok' | 'warning' | 'critical'
+export type ChecklistItemStatus = 'ok' | 'warning' | 'critical' | 'unknown'
 
 export type BodyPanel =
   | 'front_bumper'
@@ -189,6 +194,7 @@ export interface RiskFlags {
   hail_damage: boolean
   underbody_corrosion: boolean
   pillar_or_frame_repair: boolean
+  core_support_repair: boolean
   underbody_rust: boolean
   panel_needs_replacement_x: boolean
   panel_replaced_xx: boolean

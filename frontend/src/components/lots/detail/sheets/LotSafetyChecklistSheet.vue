@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { AlertTriangle, CheckCircle2, OctagonAlert } from '@lucide/vue'
+import { AlertTriangle, CheckCircle2, CircleHelp, OctagonAlert } from '@lucide/vue'
 
 import { BaseButton, BottomSheet } from '@/components/ui'
 import type { LotDetailResponse } from '@/types/api'
@@ -32,7 +32,12 @@ const open = defineModel<boolean>('open', { default: false })
           :size="18"
           class="text-warning mt-0.5 shrink-0"
         />
-        <OctagonAlert v-else :size="18" class="text-danger mt-0.5 shrink-0" />
+        <OctagonAlert
+          v-else-if="item.status === 'critical'"
+          :size="18"
+          class="text-danger mt-0.5 shrink-0"
+        />
+        <CircleHelp v-else :size="18" class="text-text-secondary mt-0.5 shrink-0" />
 
         <div class="min-w-0 flex-1">
           <div class="text-text-primary text-[14px] font-semibold">{{ item.label_ru }}</div>
