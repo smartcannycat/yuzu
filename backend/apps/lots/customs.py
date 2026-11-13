@@ -682,12 +682,14 @@ def _turnkey_for_bid(
 def derive_start_bid_from_market(params: StartBidInput) -> StartBidResult:
     """Reverse-calculate the start bid from the Drom market price.
 
-    Finds the highest bid (integer JPY, within the Screen 6 slider bounds)
-    whose turnkey cost still leaves at least ``target_margin_pct`` of the
-    market price as net benefit, then aligns it down to the slider step so
-    the target margin always holds. The turnkey cost is strictly increasing
-    in the bid for every corridor (including value-dependent under-3 and
-    EV duties), so a binary search over the integer bid range is exact.
+    Finds the highest slider-grid bid whose turnkey cost still leaves at
+    least ``target_margin_pct`` of the market price as net benefit. Grid
+    candidates are ``min_bid_jpy + k * step_jpy`` (the actual slider
+    positions), scanned from the top down. A descending scan is used
+    instead of a binary search because the turnkey cost is NOT strictly
+    monotonic in the bid: crossing a combined-duty value bracket (under-3
+    corridor, e.g. 54% -> 48% at 8,500 EUR) can lower the duty when the bid
+    grows, so a binary search may stop on a suboptimal bid.
     """
     if params.min_bid_jpy > params.max_bid_jpy:
         raise ValueError("min_bid_jpy must not exceed max_bid_jpy")
@@ -709,43 +711,24 @@ def derive_start_bid_from_market(params: StartBidInput) -> StartBidResult:
     def turnkey_for(bid_jpy: int) -> int:
         return _turnkey_for_bid(bid_jpy, params, fob_rub, freight_rub)
 
-    # Binary search for the largest integer bid within bounds whose turnkey
-    # cost does not exceed the margin target.
-    lo, hi = params.min_bid_jpy, params.max_bid_jpy
-    if turnkey_for(lo) > target_turnkey_rub:
-        # Even the minimum slider bid breaks the target margin: clamp to the
-        # lowest available bid and report the shortfall.
-        achieved = turnkey_for(lo)
+    def result_for(bid_jpy: int, *, clamped: bool) -> StartBidResult:
+        achieved = turnkey_for(bid_jpy)
         return StartBidResult(
-            bid_jpy=lo,
+            bid_jpy=bid_jpy,
             source="reverse_from_market",
             target_turnkey_rub=target_turnkey_rub,
             achieved_turnkey_rub=achieved,
             achieved_net_benefit_rub=params.market_price_rf_rub - achieved,
-            clamped=True,
+            clamped=clamped,
         )
-    while lo < hi:
-        mid = (lo + hi + 1) // 2
-        if turnkey_for(mid) <= target_turnkey_rub:
-            lo = mid
-        else:
-            hi = mid - 1
 
-    # Align down to the slider step; drop one more step if the aligned bid
-    # still overshoots the margin target (can happen when flooring up-crosses
-    # a duty bracket).
-    aligned = (lo // params.step_jpy) * params.step_jpy
-    aligned = max(aligned, params.min_bid_jpy)
-    if aligned != lo and turnkey_for(aligned) > target_turnkey_rub:
-        aligned -= params.step_jpy
-    aligned = max(min(aligned, params.max_bid_jpy), params.min_bid_jpy)
+    # Slider grid candidates, from the highest position down to the minimum.
+    step_count = (params.max_bid_jpy - params.min_bid_jpy) // params.step_jpy
+    for index in range(step_count, -1, -1):
+        candidate = params.min_bid_jpy + index * params.step_jpy
+        if turnkey_for(candidate) <= target_turnkey_rub:
+            return result_for(candidate, clamped=False)
 
-    achieved = turnkey_for(aligned)
-    return StartBidResult(
-        bid_jpy=aligned,
-        source="reverse_from_market",
-        target_turnkey_rub=target_turnkey_rub,
-        achieved_turnkey_rub=achieved,
-        achieved_net_benefit_rub=params.market_price_rf_rub - achieved,
-        clamped=aligned != lo,
-    )
+    # No slider position keeps the target margin: clamp to the lowest
+    # available bid and report the shortfall.
+    return result_for(params.min_bid_jpy, clamped=True)
