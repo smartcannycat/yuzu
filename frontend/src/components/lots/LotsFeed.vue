@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { FileUp, OctagonAlert, RotateCcw, SearchX } from '@lucide/vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import LotCard from '@/components/lots/LotCard.vue'
 import { CapyMascot } from '@/components/mascot'
 import { BaseButton, BaseCard } from '@/components/ui'
-import type { LotSummary } from '@/types/api'
+import type { LotLifecycleFilter, LotSummary } from '@/types/api'
 
 interface Props {
   items: LotSummary[]
@@ -14,9 +15,16 @@ interface Props {
   hasMore: boolean
   hasAnyActiveFilter: boolean
   errorMessage: string | null
+  lifecycle?: LotLifecycleFilter
+  selectionMode?: boolean
+  selectedIds?: ReadonlySet<string>
 }
 
-defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), {
+  lifecycle: 'active',
+  selectionMode: false,
+  selectedIds: undefined,
+})
 
 const emit = defineEmits<{
   selectLot: [lot: LotSummary]
@@ -24,7 +32,62 @@ const emit = defineEmits<{
   resetFilters: []
   openUpload: []
   loadMore: []
+  toggleArchive: [lot: LotSummary]
+  deleteLot: [lot: LotSummary]
+  startMultiSelect: [lot: LotSummary]
+  toggleSelect: [lotId: string]
 }>()
+
+const openMenuLotId = ref<string | null>(null)
+
+function handleToggleMenu(lotId: string) {
+  openMenuLotId.value = openMenuLotId.value === lotId ? null : lotId
+}
+
+function handleCloseMenu() {
+  openMenuLotId.value = null
+}
+
+function handleDocumentPointerDown(event: PointerEvent) {
+  if (!openMenuLotId.value) return
+  const target = event.target as HTMLElement | null
+  if (target?.closest('[data-lot-menu]')) return
+  openMenuLotId.value = null
+}
+
+function handleDocumentKeyDown(event: KeyboardEvent) {
+  if (event.key === 'Escape' && openMenuLotId.value) {
+    openMenuLotId.value = null
+  }
+}
+
+watch(
+  () => props.selectionMode,
+  (isSelecting) => {
+    if (isSelecting) {
+      openMenuLotId.value = null
+    }
+  },
+)
+
+watch(
+  () => props.items,
+  (nextItems) => {
+    if (openMenuLotId.value && !nextItems.some((item) => item.lot_id === openMenuLotId.value)) {
+      openMenuLotId.value = null
+    }
+  },
+)
+
+onMounted(() => {
+  document.addEventListener('pointerdown', handleDocumentPointerDown)
+  document.addEventListener('keydown', handleDocumentKeyDown)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', handleDocumentPointerDown)
+  document.removeEventListener('keydown', handleDocumentKeyDown)
+})
 </script>
 
 <template>
@@ -110,7 +173,16 @@ const emit = defineEmits<{
           v-for="lot in items"
           :key="lot.lot_id"
           :lot="lot"
+          :menu-open="openMenuLotId === lot.lot_id"
+          :selection-mode="selectionMode"
+          :selected="selectedIds?.has(lot.lot_id) ?? false"
           @select="emit('selectLot', $event)"
+          @toggle-menu="handleToggleMenu"
+          @close-menu="handleCloseMenu"
+          @toggle-archive="emit('toggleArchive', $event)"
+          @delete-lot="emit('deleteLot', $event)"
+          @start-multi-select="emit('startMultiSelect', $event)"
+          @toggle-select="emit('toggleSelect', $event)"
         />
       </div>
 

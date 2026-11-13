@@ -2,9 +2,13 @@ import type {
   AuthTokensResponse,
   BatchCreateResponse,
   BatchProgressResponse,
+  LotBulkDeleteRequest,
+  LotBulkDeleteResponse,
   LotDetailResponse,
+  LotLifecyclePatchRequest,
   LotListQueryParams,
   LotListResponse,
+  LotSummary,
   RecalculateRequest,
   RecalculateResponse,
   TokenRefreshRequest,
@@ -24,6 +28,9 @@ export interface LotsApi {
   list(params?: LotListQueryParams): Promise<LotListResponse>
   getDetail(lotId: string): Promise<LotDetailResponse>
   recalculate(lotId: string, payload: RecalculateRequest): Promise<RecalculateResponse>
+  updateLifecycle(lotId: string, payload: LotLifecyclePatchRequest): Promise<LotSummary>
+  deleteLot(lotId: string): Promise<void>
+  bulkDeleteLots(payload: LotBulkDeleteRequest): Promise<LotBulkDeleteResponse>
   createBatch(files: readonly File[]): Promise<BatchCreateResponse>
   getBatch(batchId: string): Promise<BatchProgressResponse>
   appendBatchItems(batchId: string, files: readonly File[]): Promise<BatchProgressResponse>
