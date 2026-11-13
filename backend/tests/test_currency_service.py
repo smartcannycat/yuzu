@@ -8,7 +8,7 @@ import pytest
 from django.utils import timezone
 
 from apps.core.models import ExternalCache
-from apps.lots.integrations.currency.cache import CACHE_KEY, CurrencyCache
+from apps.lots.integrations.currency.cache import CACHE_KEY, PAUSE_KEY, CurrencyCache
 from apps.lots.integrations.currency.client import CbrfClient
 from apps.lots.integrations.currency.domain import (
     BaseRates,
@@ -142,3 +142,81 @@ class TestLiveFetch:
         result = service.get_currency_rates()
         assert result.origin == RatesOrigin.CACHE
         assert len(calls) == 1
+
+
+@pytest.mark.django_db
+class TestSourceFailure:
+    def test_failure_falls_back_to_stale_db_set(self) -> None:
+        _write_cache(expires_at=timezone.now() - timedelta(seconds=1))
+        service, _calls = _service(_fail_handler())
+        result = service.get_currency_rates()
+        assert result.origin == RatesOrigin.STALE
+        assert result.is_fallback is True
+        assert result.fallback_reason is not None
+        assert result.eur_rub == 95.0
+
+    def test_failure_writes_pause_marker(self) -> None:
+        service, _ = _service(_fail_handler())
+        service.get_currency_rates()
+        assert ExternalCache.objects.filter(key=PAUSE_KEY).exists()
+
+    def test_pause_prevents_http_on_next_call(self) -> None:
+        _write_cache(expires_at=timezone.now() - timedelta(seconds=1))
+        service, calls = _service(_fail_handler())
+        service.get_currency_rates()
+        assert len(calls) == 1
+        # Next call: source still down, but the pause must skip the HTTP attempt.
+        service2, calls2 = _service(_fail_handler())
+        service2.get_currency_rates()
+        assert calls2 == []
+
+    def test_pause_expires_after_60_seconds(self) -> None:
+        cache = CurrencyCache()
+        cache.mark_pause(now=timezone.now() - timedelta(seconds=61))
+        service, calls = _service(_ok_handler())
+        result = service.get_currency_rates()
+        assert result.origin == RatesOrigin.LIVE
+        assert len(calls) == 1
+
+    def test_stale_set_older_than_seven_days_is_ignored(self) -> None:
+        _write_cache(
+            expires_at=timezone.now() - timedelta(seconds=1),
+            fetched_at=timezone.now() - timedelta(days=8),
+        )
+        service, _ = _service(_fail_handler())
+        result = service.get_currency_rates()
+        assert result.origin == RatesOrigin.CONFIG
+        assert result.eur_rub == 90.0
+        assert result.cbrf_date == "01.01.2026"
+
+    def test_config_fallback_marks_reason(self) -> None:
+        service, _ = _service(_fail_handler())
+        result = service.get_currency_rates()
+        assert result.origin == RatesOrigin.CONFIG
+        assert result.is_fallback is True
+        assert result.fallback_reason is not None
+
+    def test_active_pause_returns_config_without_http(self) -> None:
+        cache = CurrencyCache()
+        cache.mark_pause()
+        service, calls = _service(_ok_handler(), cache=cache)
+        result = service.get_currency_rates()
+        assert result.origin == RatesOrigin.CONFIG
+        assert calls == []
+        assert cache.is_paused()
+
+    def test_refresh_bypasses_pause_and_cache(self) -> None:
+        _write_cache()
+        cache = CurrencyCache()
+        cache.mark_pause()
+        service, calls = _service(_ok_handler(), cache=cache)
+        result = service.refresh()
+        assert result.origin == RatesOrigin.LIVE
+        assert len(calls) == 1
+        assert not ExternalCache.objects.filter(key=PAUSE_KEY).exists()
+
+    def test_refresh_failure_returns_stale(self) -> None:
+        _write_cache(expires_at=timezone.now() - timedelta(seconds=1))
+        service, _ = _service(_fail_handler())
+        result = service.refresh()
+        assert result.origin == RatesOrigin.STALE
