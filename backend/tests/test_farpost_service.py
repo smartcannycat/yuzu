@@ -1,14 +1,20 @@
 """Repair calculation, cache provenance and atomic pipeline persistence."""
 
+import time
 from dataclasses import replace
+from datetime import timedelta
 from unittest.mock import Mock
 
 import pytest
+from django.utils import timezone
 
-from apps.core.enums import FuelType, WorkType
+from apps.core.enums import ExternalCacheSource, FuelType, WorkType
+from apps.core.models import ExternalCache
 from apps.lots.integrations.farpost.client import FarpostFetchError, PartCriteria, PartOffer
 from apps.lots.integrations.farpost.service import (
+    _cache_key,
     estimate_repair,
+    search_cached,
 )
 from apps.lots.models import Lot, LotDefect
 
@@ -137,3 +143,42 @@ def test_no_defects_and_missing_identity_do_not_query(lot):
     defect(lot, "X")
     assert estimate_repair(lot, client=client).parts[0].is_statistical_fallback
     client.search.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_cache_ttl_negative_marker_and_stale_age():
+    deadline = time.monotonic() + 20
+    assert search_cached(source(), CRITERIA, deadline=deadline) == ([OFFER], False)
+    assert search_cached(source(error=True), CRITERIA, deadline=deadline) == ([OFFER], False)
+    key = _cache_key(CRITERIA)
+    entry = ExternalCache.objects.get(key=key)
+    assert timedelta(minutes=59) < entry.expires_at - timezone.now() <= timedelta(hours=1)
+    ExternalCache.objects.filter(key=key).update(expires_at=timezone.now() - timedelta(seconds=1))
+    assert search_cached(source([]), CRITERIA, deadline=deadline) == ([], False)
+    assert ExternalCache.objects.get(key=key).payload["offers"][0]["price_rub"] == 18000
+    marker = ExternalCache.objects.get(key=key + ":empty")
+    assert timedelta(minutes=9) < marker.expires_at - timezone.now() <= timedelta(minutes=10)
+    assert search_cached(source(error=True), CRITERIA, deadline=deadline) == ([], False)
+    ExternalCache.objects.filter(key=key + ":empty").update(
+        expires_at=timezone.now() - timedelta(seconds=1)
+    )
+    assert search_cached(source(error=True), CRITERIA, deadline=deadline) == ([OFFER], True)
+    ExternalCache.objects.filter(key=key).update(updated_at=timezone.now() - timedelta(days=2))
+    assert search_cached(source(error=True), CRITERIA, deadline=deadline) == ([], True)
+    ExternalCache.objects.filter(key=key).update(payload={"offers": [{"price_rub": "bad"}]})
+    assert search_cached(source(error=True), CRITERIA, deadline=deadline) == ([], True)
+
+
+@pytest.mark.django_db
+def test_cached_fallback_does_not_claim_stock_or_color(lot):
+    defect(lot, "X")
+    estimate_repair(lot, client=source())
+    ExternalCache.objects.filter(source=ExternalCacheSource.FARPOST).update(
+        expires_at=timezone.now() - timedelta(seconds=1)
+    )
+    result = estimate_repair(lot, client=source(error=True))
+    assert result.parts[0].price_from_rub == 18000
+    assert not result.parts[0].in_stock_vladivostok
+    assert result.parts[0].is_statistical_fallback
+    assert not result.has_color_matched_parts
+    assert result.total_works_rub == 12500
