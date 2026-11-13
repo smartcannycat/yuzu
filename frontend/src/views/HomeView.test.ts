@@ -307,4 +307,122 @@ describe('HomeView in-progress placement & auto-expand behavior', () => {
       params: { batchId: 'batch-mobile-42' },
     })
   })
+
+  it('supports card ··· menu (no chevron arrow), 5-sec Undo delete toast, and multi-select bulk delete', async () => {
+    localStorage.clear()
+    const { host, lotsStore } = await mountHomeView(0)
+    const fetchPromise = lotsStore.fetchLots()
+    await vi.advanceTimersByTimeAsync(400)
+    await fetchPromise
+    // Prevent background polling of batches left over by earlier tests in this file from injecting new lots mid-test
+    vi.spyOn(lotsStore, 'refreshLotsSilently').mockResolvedValue()
+    await flushUi()
+
+    // ChevronRight arrow was removed from LotCard
+    expect(host.querySelector('main article .lucide-chevron-right')).toBeNull()
+
+    const initialCount = lotsStore.items.length
+    expect(initialCount).toBeGreaterThanOrEqual(2)
+    const firstLot = lotsStore.items[0]!
+    const secondLot = lotsStore.items[1]!
+
+    // Spy on deleteLot / bulkDeleteLots / setLotArchived
+    const archiveSpy = vi.spyOn(lotsStore, 'setLotArchived').mockResolvedValue(firstLot)
+    const deleteSpy = vi.spyOn(lotsStore, 'deleteLot').mockResolvedValue()
+    const bulkDeleteSpy = vi.spyOn(lotsStore, 'bulkDeleteLots').mockResolvedValue({
+      deleted_ids: [firstLot.lot_id, secondLot.lot_id],
+      not_found_ids: [],
+      deleted_count: 2,
+    })
+
+    // Open ··· menu on first card and click "В архив"
+    const menuTriggers = Array.from(
+      host.querySelectorAll('button[aria-label="Действия с лотом"]'),
+    ) as HTMLButtonElement[]
+    expect(menuTriggers.length).toBe(initialCount)
+
+    menuTriggers[0]!.click()
+    await flushUi()
+
+    const archiveMenuItem = Array.from(host.querySelectorAll('[role="menuitem"]')).find((el) =>
+      el.textContent?.includes('В архив'),
+    ) as HTMLButtonElement | undefined
+    expect(archiveMenuItem).toBeTruthy()
+    archiveMenuItem!.click()
+    await flushUi()
+    expect(archiveSpy).toHaveBeenCalledWith(firstLot.lot_id, true)
+
+    // Open ··· menu and click "Удалить" -> Undo toast appears, clicking "Отменить" cancels deletion
+    menuTriggers[0]!.click()
+    await flushUi()
+    const deleteMenuItem = Array.from(host.querySelectorAll('[role="menuitem"]')).find((el) =>
+      el.textContent?.includes('Удалить'),
+    ) as HTMLButtonElement | undefined
+    deleteMenuItem!.click()
+    await flushUi()
+
+    const toast = host.querySelector('[role="status"]')
+    expect(toast?.textContent).toContain('удалён')
+    expect(deleteSpy).not.toHaveBeenCalled()
+
+    const undoButton = Array.from(toast?.querySelectorAll('button') ?? []).find((b) =>
+      b.textContent?.includes('Отменить'),
+    ) as HTMLButtonElement | undefined
+    expect(undoButton).toBeTruthy()
+    undoButton!.click()
+    await vi.advanceTimersByTimeAsync(5000)
+    await flushUi()
+    expect(deleteSpy).not.toHaveBeenCalled()
+
+    // Delete again and let 5-second timer expire -> deleteLot is committed
+    const freshTriggers = Array.from(
+      host.querySelectorAll('button[aria-label="Действия с лотом"]'),
+    ) as HTMLButtonElement[]
+    freshTriggers[0]!.click()
+    await flushUi()
+    const deleteAgain = Array.from(host.querySelectorAll('[role="menuitem"]')).find((el) =>
+      el.textContent?.includes('Удалить'),
+    ) as HTMLButtonElement
+    deleteAgain.click()
+    await flushUi()
+
+    await vi.advanceTimersByTimeAsync(5000)
+    await flushUi()
+    expect(deleteSpy).toHaveBeenCalledWith(firstLot.lot_id)
+
+    // Enter multi-select via "Выбрать несколько" -> select 2nd lot -> bulk delete
+    const triggersForBulk = Array.from(
+      host.querySelectorAll('button[aria-label="Действия с лотом"]'),
+    ) as HTMLButtonElement[]
+    triggersForBulk[0]!.click()
+    await flushUi()
+
+    const multiSelectItem = Array.from(host.querySelectorAll('[role="menuitem"]')).find((el) =>
+      el.textContent?.includes('Выбрать несколько'),
+    ) as HTMLButtonElement
+    multiSelectItem.click()
+    await flushUi()
+
+    const bulkBar = host.querySelector('[aria-label="Массовые действия с лотами"]')
+    expect(bulkBar?.textContent).toContain('Выбрано: 1')
+
+    const selectableCards = Array.from(
+      host.querySelectorAll('main article [role="button"][aria-pressed]'),
+    ) as HTMLElement[]
+    expect(selectableCards.length).toBeGreaterThanOrEqual(2)
+    expect(selectableCards[0]?.getAttribute('aria-pressed')).toBe('true')
+    expect(selectableCards[1]?.getAttribute('aria-pressed')).toBe('false')
+    selectableCards[1]!.click()
+    await flushUi()
+    expect(selectableCards[1]?.getAttribute('aria-pressed')).toBe('true')
+    expect(bulkBar?.textContent).toContain('Выбрано: 2')
+
+    const bulkDeleteBtn = Array.from(bulkBar?.querySelectorAll('button') ?? []).find((b) =>
+      b.textContent?.includes('Удалить (2)'),
+    ) as HTMLButtonElement
+    bulkDeleteBtn.click()
+    await flushUi()
+
+    expect(bulkDeleteSpy).toHaveBeenCalledWith([firstLot.lot_id, secondLot.lot_id])
+  })
 })

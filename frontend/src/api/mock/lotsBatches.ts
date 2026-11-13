@@ -1,4 +1,9 @@
 import { createMockProblem, generateUuid } from '@/api/mock/helpers'
+import {
+  applyLotExpiry,
+  computeLotExpiresAt,
+  formatJstAuctionDateWithOffset,
+} from '@/api/mock/lotLifecycle'
 import { MOCK_IN_PROGRESS_SUMMARY, SEEDED_MOCK_LOTS } from '@/api/mock/lotsSeed'
 import type {
   BatchCreateResponse,
@@ -7,6 +12,7 @@ import type {
   BatchStatus,
   InProgressItemPreview,
   InProgressSummary,
+  LotBulkDeleteResponse,
   LotSummary,
   MascotState,
   TaskStep,
@@ -222,6 +228,7 @@ function buildLotSummaryFromTemplate(
   createdAtIso: string,
 ): LotSummary {
   const numericSuffix = String(100000 + ((sequenceSuffix * 7919) % 899999))
+  const auctionDate = formatJstAuctionDateWithOffset(1, Date.parse(createdAtIso) || Date.now())
   return {
     lot_id: lotId,
     make: seed.make,
@@ -242,6 +249,11 @@ function buildLotSummaryFromTemplate(
     has_anomaly: seed.has_anomaly,
     anomaly_text: seed.anomaly_text,
     thumbnail_url: null,
+    auction_date: auctionDate,
+    is_archived: false,
+    archived_at: null,
+    archived_reason: null,
+    expires_at: computeLotExpiresAt(createdAtIso, auctionDate),
     created_at: createdAtIso,
   }
 }
@@ -255,7 +267,11 @@ function pickTemplateForFilename(filename: string, fallbackIndex: number): JdmTe
   return JDM_TEMPLATES[0]!
 }
 
-function resolveItemSnapshot(item: MockBatchItemRecord, nowMs: number): BatchItemStatus {
+function resolveItemSnapshot(
+  item: MockBatchItemRecord,
+  nowMs: number,
+  deletedLotIds: ReadonlySet<string>,
+): BatchItemStatus {
   const elapsed = nowMs - item.enqueuedAtMs - item.startDelayMs
   if (elapsed < 0) {
     return {
@@ -276,15 +292,16 @@ function resolveItemSnapshot(item: MockBatchItemRecord, nowMs: number): BatchIte
 
   const stepIndex = item.initialStepIndex + Math.floor(elapsed / STEP_DURATION_MS)
   if (stepIndex >= DAG_STEPS.length) {
+    const isDeleted = deletedLotIds.has(item.lotId)
     return {
-      lot_id: item.lotId,
+      lot_id: isDeleted ? null : item.lotId,
       file_index: item.fileIndex,
       original_filename: item.originalFilename,
       preview_title: `${item.template.make} ${item.template.model} #${item.template.lot_number}`,
       status: 'ready',
       current_step: 'completed',
       error_message: null,
-      summary: item.template,
+      summary: isDeleted ? null : item.template,
     }
   }
 
@@ -371,10 +388,13 @@ function validateUploadFilesForMock(files: readonly File[], instancePath: string
   }
 }
 
-export const MOCK_WORKSPACE_STORAGE_KEY = 'yuzu.mock.workspace.v1'
+export const MOCK_WORKSPACE_STORAGE_KEY = 'yuzu.mock.workspace.v2'
 
 export interface MockLotsWorkspace {
   getFeedSnapshot(): { lots: LotSummary[]; inProgress: InProgressSummary }
+  updateLotLifecycle(lotId: string, isArchived: boolean): LotSummary
+  deleteLot(lotId: string): void
+  bulkDeleteLots(lotIds: readonly string[]): LotBulkDeleteResponse
   createBatch(files: readonly File[]): BatchCreateResponse
   getBatch(batchId: string): BatchProgressResponse
   appendBatchItems(batchId: string, files: readonly File[]): BatchProgressResponse
@@ -387,6 +407,8 @@ export interface MockLotsWorkspaceOptions {
 interface PersistedWorkspaceState {
   feedLots: LotSummary[]
   promotedLotIds: string[]
+  deletedLotIds: string[]
+  suppressedAutoArchiveIds: string[]
   batches: Array<[string, MockBatchRecord]>
   sequenceCounter: number
 }
@@ -425,6 +447,10 @@ function loadPersistedWorkspace(): PersistedWorkspaceState | null {
     return {
       feedLots: parsed.feedLots,
       promotedLotIds: parsed.promotedLotIds,
+      deletedLotIds: Array.isArray(parsed.deletedLotIds) ? parsed.deletedLotIds : [],
+      suppressedAutoArchiveIds: Array.isArray(parsed.suppressedAutoArchiveIds)
+        ? parsed.suppressedAutoArchiveIds
+        : [],
       batches: parsed.batches,
       sequenceCounter: parsed.sequenceCounter,
     }
@@ -441,6 +467,10 @@ export function createMockLotsWorkspace(options: MockLotsWorkspaceOptions = {}):
   const promotedLotIds = new Set<string>(
     persisted ? persisted.promotedLotIds : feedLots.map((lot) => lot.lot_id),
   )
+  const deletedLotIds = new Set<string>(persisted ? persisted.deletedLotIds : [])
+  const suppressedAutoArchiveIds = new Set<string>(
+    persisted ? persisted.suppressedAutoArchiveIds : [],
+  )
   const batches = new Map<string, MockBatchRecord>(persisted ? persisted.batches : [])
   let sequenceCounter = persisted ? persisted.sequenceCounter : 10
 
@@ -450,6 +480,8 @@ export function createMockLotsWorkspace(options: MockLotsWorkspaceOptions = {}):
       const payload: PersistedWorkspaceState = {
         feedLots,
         promotedLotIds: Array.from(promotedLotIds),
+        deletedLotIds: Array.from(deletedLotIds),
+        suppressedAutoArchiveIds: Array.from(suppressedAutoArchiveIds),
         batches: Array.from(batches.entries()),
         sequenceCounter,
       }
@@ -496,7 +528,7 @@ export function createMockLotsWorkspace(options: MockLotsWorkspaceOptions = {}):
     record: MockBatchRecord,
     nowMs: number,
   ): BatchProgressResponse {
-    const snapshots = record.items.map((item) => resolveItemSnapshot(item, nowMs))
+    const snapshots = record.items.map((item) => resolveItemSnapshot(item, nowMs, deletedLotIds))
     const readyCount = snapshots.filter((item) => item.status === 'ready').length
     const failedCount = snapshots.filter((item) => item.status === 'failed').length
     const processedCount = readyCount + failedCount
@@ -529,7 +561,12 @@ export function createMockLotsWorkspace(options: MockLotsWorkspaceOptions = {}):
   function promoteReadyItems(progress: BatchProgressResponse): boolean {
     let didPromote = false
     for (const item of progress.items) {
-      if (item.status === 'ready' && item.summary && !promotedLotIds.has(item.summary.lot_id)) {
+      if (
+        item.status === 'ready' &&
+        item.summary &&
+        !promotedLotIds.has(item.summary.lot_id) &&
+        !deletedLotIds.has(item.summary.lot_id)
+      ) {
         promotedLotIds.add(item.summary.lot_id)
         feedLots.unshift(item.summary)
         didPromote = true
@@ -538,10 +575,33 @@ export function createMockLotsWorkspace(options: MockLotsWorkspaceOptions = {}):
     return didPromote
   }
 
+  function syncAutoArchive(nowMs: number): boolean {
+    let didMutate = false
+    for (let i = 0; i < feedLots.length; i += 1) {
+      const lot = feedLots[i]!
+      const result = applyLotExpiry(lot, nowMs, suppressedAutoArchiveIds)
+      if (result.didChange) {
+        feedLots[i] = result.lot
+        didMutate = true
+      }
+    }
+    return didMutate
+  }
+
+  function syncBatchItemTemplate(updated: LotSummary): void {
+    for (const record of batches.values()) {
+      for (const item of record.items) {
+        if (item.lotId === updated.lot_id) {
+          item.template = updated
+        }
+      }
+    }
+  }
+
   function advanceAllBatches(nowMs: number): InProgressSummary {
     let activeBatchesCount = 0
     const activeItems: InProgressItemPreview[] = []
-    let didMutateFeed = false
+    let didMutateFeed = syncAutoArchive(nowMs)
 
     for (const record of batches.values()) {
       const progress = buildBatchProgressSnapshot(record, nowMs)
@@ -582,6 +642,103 @@ export function createMockLotsWorkspace(options: MockLotsWorkspaceOptions = {}):
       return {
         lots: [...feedLots],
         inProgress,
+      }
+    },
+
+    updateLotLifecycle(lotId: string, isArchived: boolean): LotSummary {
+      const nowMs = Date.now()
+      advanceAllBatches(nowMs)
+
+      const index = feedLots.findIndex((item) => item.lot_id === lotId)
+      if (index === -1 || deletedLotIds.has(lotId)) {
+        throw createMockProblem({
+          slug: 'lot-not-found',
+          title: 'Лот не найден',
+          status: 404,
+          detail: 'Лот не найден или был удалён.',
+          instance: `/api/v1/lots/${lotId}`,
+        })
+      }
+
+      const current = feedLots[index]!
+      const updated: LotSummary = isArchived
+        ? {
+            ...current,
+            is_archived: true,
+            archived_at:
+              current.is_archived && current.archived_at
+                ? current.archived_at
+                : new Date(nowMs).toISOString(),
+            archived_reason:
+              current.is_archived && current.archived_reason ? current.archived_reason : 'manual',
+          }
+        : {
+            ...current,
+            is_archived: false,
+            archived_at: null,
+            archived_reason: null,
+            expires_at: null,
+          }
+
+      if (isArchived) {
+        suppressedAutoArchiveIds.delete(lotId)
+      } else {
+        suppressedAutoArchiveIds.add(lotId)
+      }
+
+      feedLots[index] = updated
+      syncBatchItemTemplate(updated)
+      saveWorkspace()
+      return { ...updated }
+    },
+
+    deleteLot(lotId: string): void {
+      advanceAllBatches(Date.now())
+      const index = feedLots.findIndex((item) => item.lot_id === lotId)
+      if (index === -1 || deletedLotIds.has(lotId)) {
+        throw createMockProblem({
+          slug: 'lot-not-found',
+          title: 'Лот не найден',
+          status: 404,
+          detail: 'Лот не найден или уже был удалён.',
+          instance: `/api/v1/lots/${lotId}`,
+        })
+      }
+
+      feedLots.splice(index, 1)
+      deletedLotIds.add(lotId)
+      suppressedAutoArchiveIds.delete(lotId)
+      saveWorkspace()
+    },
+
+    bulkDeleteLots(lotIds: readonly string[]): LotBulkDeleteResponse {
+      advanceAllBatches(Date.now())
+      const deletedIds: string[] = []
+      const notFoundIds: string[] = []
+      const seen = new Set<string>()
+
+      for (const lotId of lotIds) {
+        if (seen.has(lotId)) continue
+        seen.add(lotId)
+        const index = feedLots.findIndex((item) => item.lot_id === lotId)
+        if (index === -1 || deletedLotIds.has(lotId)) {
+          notFoundIds.push(lotId)
+          continue
+        }
+        feedLots.splice(index, 1)
+        deletedLotIds.add(lotId)
+        suppressedAutoArchiveIds.delete(lotId)
+        deletedIds.push(lotId)
+      }
+
+      if (deletedIds.length > 0) {
+        saveWorkspace()
+      }
+
+      return {
+        deleted_ids: deletedIds,
+        not_found_ids: notFoundIds,
+        deleted_count: deletedIds.length,
       }
     },
 

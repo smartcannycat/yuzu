@@ -3,9 +3,13 @@ import type { LotsApi } from '@/api/types'
 import type {
   BatchCreateResponse,
   BatchProgressResponse,
+  LotBulkDeleteRequest,
+  LotBulkDeleteResponse,
   LotDetailResponse,
+  LotLifecyclePatchRequest,
   LotListQueryParams,
   LotListResponse,
+  LotSummary,
   RecalculateRequest,
   RecalculateResponse,
 } from '@/types/api'
@@ -21,6 +25,7 @@ function sanitizeLotQuery(
   if (params.model?.trim()) cleaned.model = params.model.trim()
   if (params.verdict) cleaned.verdict = params.verdict
   if (typeof params.has_anomaly === 'boolean') cleaned.has_anomaly = params.has_anomaly
+  if (params.lifecycle) cleaned.lifecycle = params.lifecycle
   if (typeof params.page === 'number') cleaned.page = params.page
   if (typeof params.page_size === 'number') cleaned.page_size = params.page_size
   if (params.sort_by) cleaned.sort_by = params.sort_by
@@ -54,6 +59,26 @@ export function createHttpLotsApi(request: HttpRequestFn): LotsApi {
 
     recalculate(lotId: string, payload: RecalculateRequest): Promise<RecalculateResponse> {
       return request<RecalculateResponse>(`/lots/${encodeURIComponent(lotId)}/recalculate`, {
+        method: 'POST',
+        body: payload,
+      })
+    },
+
+    updateLifecycle(lotId: string, payload: LotLifecyclePatchRequest): Promise<LotSummary> {
+      return request<LotSummary>(`/lots/${encodeURIComponent(lotId)}`, {
+        method: 'PATCH',
+        body: payload,
+      })
+    },
+
+    deleteLot(lotId: string): Promise<void> {
+      return request<void>(`/lots/${encodeURIComponent(lotId)}`, {
+        method: 'DELETE',
+      })
+    },
+
+    bulkDeleteLots(payload: LotBulkDeleteRequest): Promise<LotBulkDeleteResponse> {
+      return request<LotBulkDeleteResponse>('/lots/bulk-delete', {
         method: 'POST',
         body: payload,
       })

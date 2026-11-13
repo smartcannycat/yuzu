@@ -9,9 +9,16 @@ import {
   SegmentedControl,
   type SegmentOption,
 } from '@/components/ui'
-import type { AvailableFilters, LotSortBy, LotSortOrder, TrafficLightColor } from '@/types/api'
+import type {
+  AvailableFilters,
+  LotLifecycleFilter,
+  LotSortBy,
+  LotSortOrder,
+  TrafficLightColor,
+} from '@/types/api'
 
 export interface LotFilterDraft {
+  lifecycle: LotLifecycleFilter
   make: string | null
   verdict: TrafficLightColor | null
   onlyAnomalies: boolean
@@ -21,6 +28,7 @@ export interface LotFilterDraft {
 
 interface Props {
   availableFilters: AvailableFilters
+  lifecycle: LotLifecycleFilter
   make: string | null
   verdict: TrafficLightColor | null
   onlyAnomalies: boolean
@@ -38,6 +46,7 @@ const emit = defineEmits<{
   reset: []
 }>()
 
+const draftLifecycle = ref<LotLifecycleFilter>(props.lifecycle)
 const draftMake = ref<string | null>(props.make)
 const draftVerdict = ref<TrafficLightColor | null>(props.verdict)
 const draftOnlyAnomalies = ref(props.onlyAnomalies)
@@ -51,6 +60,7 @@ watch(
   (isOpen) => {
     if (!isOpen) return
     previewRequestSeq += 1
+    draftLifecycle.value = props.lifecycle
     draftMake.value = props.make
     draftVerdict.value = props.verdict
     draftOnlyAnomalies.value = props.onlyAnomalies
@@ -70,10 +80,11 @@ watch(
   },
 )
 
-watch([draftMake, draftVerdict, draftOnlyAnomalies], async () => {
+watch([draftLifecycle, draftMake, draftVerdict, draftOnlyAnomalies], async () => {
   if (!open.value || !props.previewFilters) return
   const seq = ++previewRequestSeq
   const next = await props.previewFilters({
+    lifecycle: draftLifecycle.value,
     make: draftMake.value,
     verdict: draftVerdict.value,
     onlyAnomalies: draftOnlyAnomalies.value,
@@ -84,6 +95,17 @@ watch([draftMake, draftVerdict, draftOnlyAnomalies], async () => {
     liveFilters.value = next
   }
 })
+
+const LIFECYCLE_OPTIONS = computed<SegmentOption<LotLifecycleFilter>[]>(() => [
+  { value: 'active', label: 'Активные' },
+  {
+    value: 'archived',
+    label: 'Архив',
+    badge:
+      liveFilters.value.archived_lots_count > 0 ? liveFilters.value.archived_lots_count : undefined,
+  },
+  { value: 'all', label: 'Все' },
+])
 
 const SORT_OPTIONS: SegmentOption<LotSortBy>[] = [
   { value: 'created_at', label: 'Новые' },
@@ -134,6 +156,7 @@ function toggleMake(value: string) {
 
 function handleApply() {
   emit('apply', {
+    lifecycle: draftLifecycle.value,
     make: draftMake.value,
     verdict: draftVerdict.value,
     onlyAnomalies: draftOnlyAnomalies.value,
@@ -144,6 +167,7 @@ function handleApply() {
 }
 
 function handleReset() {
+  draftLifecycle.value = 'active'
   draftMake.value = null
   draftVerdict.value = null
   draftOnlyAnomalies.value = false
@@ -158,11 +182,22 @@ function handleReset() {
   <BottomSheet
     v-model:open="open"
     title="Фильтры и сортировка"
-    subtitle="Уточните выборку лотов по вердикту, марке и рискам"
+    subtitle="Уточните выборку лотов по статусу, вердикту и рискам"
     placement="right"
     max-width="md"
   >
     <div class="flex flex-col gap-5">
+      <section class="flex flex-col gap-2">
+        <span class="text-text-secondary text-[13px] font-medium">Жизненный цикл</span>
+        <SegmentedControl
+          v-model="draftLifecycle"
+          :options="LIFECYCLE_OPTIONS"
+          ariaLabel="Жизненный цикл лотов"
+          full-width
+          size="sm"
+        />
+      </section>
+
       <section class="flex flex-col gap-2">
         <span class="text-text-secondary text-[13px] font-medium">Вердикт</span>
         <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">

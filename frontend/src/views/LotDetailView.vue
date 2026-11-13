@@ -1,5 +1,14 @@
 <script setup lang="ts">
-import { ArrowLeft, OctagonAlert, Printer, RotateCcw } from '@lucide/vue'
+import {
+  Archive,
+  ArchiveRestore,
+  ArrowLeft,
+  OctagonAlert,
+  Printer,
+  RotateCcw,
+  Trash2,
+  X,
+} from '@lucide/vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -12,7 +21,14 @@ import LotStickyDangerAlert from '@/components/lots/detail/LotStickyDangerAlert.
 import LotTabEconomics from '@/components/lots/detail/LotTabEconomics.vue'
 import LotTabGeneral from '@/components/lots/detail/LotTabGeneral.vue'
 import LotTabTech from '@/components/lots/detail/LotTabTech.vue'
-import { BaseButton, BaseCard, SegmentedControl, type SegmentOption } from '@/components/ui'
+import {
+  BaseBadge,
+  BaseButton,
+  BaseCard,
+  BottomSheet,
+  SegmentedControl,
+  type SegmentOption,
+} from '@/components/ui'
 import { useLotsStore } from '@/stores/lots'
 import type { RecalculateRequest } from '@/types/api'
 
@@ -159,6 +175,56 @@ function handlePrintPdf(): void {
   }
   window.print()
 }
+
+const isUpdatingLifecycle = ref(false)
+const isDeleteConfirmOpen = ref(false)
+const isDeletingLot = ref(false)
+const lifecycleError = ref<string | null>(null)
+
+const archiveBadgeLabel = computed(() => {
+  if (!detail.value?.is_archived) return null
+  return detail.value.archived_reason === 'expired' ? 'Торги прошли' : 'В архиве'
+})
+
+watch(lotId, () => {
+  lifecycleError.value = null
+  isDeleteConfirmOpen.value = false
+})
+
+async function handleToggleArchive(): Promise<void> {
+  if (!detail.value || isUpdatingLifecycle.value || isDeletingLot.value) return
+  lifecycleError.value = null
+  isUpdatingLifecycle.value = true
+  try {
+    await lotsStore.setLotArchived(detail.value.lot_id, !detail.value.is_archived)
+  } catch (err) {
+    lifecycleError.value =
+      err instanceof Error && err.message ? err.message : 'Не удалось обновить статус архива'
+  } finally {
+    isUpdatingLifecycle.value = false
+  }
+}
+
+function handleOpenDeleteConfirm(): void {
+  lifecycleError.value = null
+  isDeleteConfirmOpen.value = true
+}
+
+async function handleConfirmDelete(): Promise<void> {
+  if (!detail.value || isDeletingLot.value) return
+  lifecycleError.value = null
+  isDeletingLot.value = true
+  try {
+    await lotsStore.deleteLot(detail.value.lot_id)
+    isDeleteConfirmOpen.value = false
+    await router.replace({ name: 'home' })
+  } catch (err) {
+    lifecycleError.value =
+      err instanceof Error && err.message ? err.message : 'Не удалось удалить лот'
+  } finally {
+    isDeletingLot.value = false
+  }
+}
 </script>
 
 <template>
@@ -177,7 +243,7 @@ function handlePrintPdf(): void {
           <span>Назад</span>
         </button>
 
-        <div v-if="detail" class="flex items-center gap-2">
+        <div v-if="detail" class="flex flex-wrap items-center gap-2">
           <BaseButton
             v-if="lotsStore.isSimulationModified"
             variant="ghost"
@@ -191,6 +257,35 @@ function handlePrintPdf(): void {
             Сбросить ставку
           </BaseButton>
 
+          <BaseButton
+            variant="secondary"
+            size="sm"
+            pill
+            :loading="isUpdatingLifecycle"
+            :disabled="isDeletingLot"
+            @click="handleToggleArchive"
+          >
+            <template #icon-left>
+              <ArchiveRestore v-if="detail.is_archived" :size="15" />
+              <Archive v-else :size="15" />
+            </template>
+            {{ detail.is_archived ? 'Из архива' : 'В архив' }}
+          </BaseButton>
+
+          <BaseButton
+            variant="secondary"
+            size="sm"
+            pill
+            :disabled="isUpdatingLifecycle || isDeletingLot"
+            class="!text-danger hover:!border-danger/30 hover:!bg-danger-subtle"
+            @click="handleOpenDeleteConfirm"
+          >
+            <template #icon-left>
+              <Trash2 :size="15" />
+            </template>
+            Удалить
+          </BaseButton>
+
           <BaseButton variant="secondary" size="sm" pill @click="handlePrintPdf">
             <template #icon-left>
               <Printer :size="15" />
@@ -199,6 +294,25 @@ function handlePrintPdf(): void {
           </BaseButton>
         </div>
       </header>
+
+      <div
+        v-if="lifecycleError && !isDeleteConfirmOpen"
+        role="alert"
+        class="bg-danger-subtle border-danger/25 text-danger mt-3 flex items-center justify-between gap-3 rounded-md border px-3.5 py-2.5 text-[13px] font-medium"
+      >
+        <div class="flex items-center gap-2">
+          <OctagonAlert :size="16" class="shrink-0" />
+          <span>{{ lifecycleError }}</span>
+        </div>
+        <button
+          type="button"
+          aria-label="Скрыть ошибку"
+          class="text-danger/80 hover:text-danger shrink-0 cursor-pointer rounded-full p-1"
+          @click="lifecycleError = null"
+        >
+          <X :size="15" />
+        </button>
+      </div>
 
       <!-- Initial Loading Skeleton -->
       <div v-if="lotsStore.isLoadingDetail && !detail" class="mt-4 flex flex-col gap-4">
@@ -267,6 +381,14 @@ function handlePrintPdf(): void {
               <span v-if="detail.passport.trim" class="text-text-secondary text-[15px] font-medium">
                 {{ detail.passport.trim }}
               </span>
+              <BaseBadge
+                v-if="archiveBadgeLabel"
+                variant="neutral"
+                size="sm"
+                class="border-border bg-surface self-center border"
+              >
+                {{ archiveBadgeLabel }}
+              </BaseBadge>
             </div>
             <p class="text-text-secondary text-[13px] sm:text-[14px]">
               {{ headerSubtitle }}
@@ -316,6 +438,54 @@ function handlePrintPdf(): void {
         </main>
 
         <LotDetailSheets v-model:active-sheet="activeSheet" :detail="detail" />
+
+        <BottomSheet
+          v-model:open="isDeleteConfirmOpen"
+          title="Удалить лот?"
+          max-width="sm"
+          close-label="Отменить удаление"
+          :persistent="isDeletingLot"
+        >
+          <div class="flex flex-col gap-4">
+            <p class="text-text-secondary text-[14px] leading-relaxed">
+              Лот «{{ detail.passport.make }} {{ detail.passport.model }}» будет убран из списка и
+              фильтров.
+            </p>
+
+            <div
+              v-if="lifecycleError"
+              role="alert"
+              class="bg-danger-subtle border-danger/25 text-danger flex items-center gap-2 rounded-md border px-3 py-2 text-[13px] font-medium"
+            >
+              <OctagonAlert :size="15" class="shrink-0" />
+              <span>{{ lifecycleError }}</span>
+            </div>
+
+            <div class="flex items-center justify-end gap-2 pt-1">
+              <BaseButton
+                variant="secondary"
+                size="md"
+                pill
+                :disabled="isDeletingLot"
+                @click="isDeleteConfirmOpen = false"
+              >
+                Отмена
+              </BaseButton>
+              <BaseButton
+                variant="destructive"
+                size="md"
+                pill
+                :loading="isDeletingLot"
+                @click="handleConfirmDelete"
+              >
+                <template #icon-left>
+                  <Trash2 :size="15" />
+                </template>
+                Удалить лот
+              </BaseButton>
+            </div>
+          </div>
+        </BottomSheet>
       </template>
     </div>
 

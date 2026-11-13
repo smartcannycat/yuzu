@@ -211,6 +211,7 @@ export function buildMockLotDetail(summary: LotSummary): LotDetailResponse {
     lot_number: summary.lot_number,
     auction_house: summary.auction_house,
     auction_branch: preset?.auctionBranch ?? `${summary.auction_house} Japan`,
+    auction_date: summary.auction_date,
     auction_strictness_index: preset?.strictness ?? 0.8,
     make: summary.make,
     model: summary.model,
@@ -366,7 +367,11 @@ export function buildMockLotDetail(summary: LotSummary): LotDetailResponse {
   return {
     lot_id: summary.lot_id,
     created_at: summary.created_at,
-    updated_at: '2026-11-13T10:15:00Z',
+    updated_at: summary.archived_at ?? summary.created_at,
+    is_archived: summary.is_archived,
+    archived_at: summary.archived_at,
+    archived_reason: summary.archived_reason,
+    expires_at: summary.expires_at,
     passport,
     verdict,
     market: {

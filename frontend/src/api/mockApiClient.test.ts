@@ -172,4 +172,57 @@ describe('mockApiClient', () => {
       status: 404,
     })
   })
+
+  it('supports lifecycle filtering, manual archive/unarchive without re-expiry, and single/bulk soft-delete', async () => {
+    localStorage.clear()
+    const client = createMockApiClient({ delayMs: 0 })
+
+    const active = await client.lots.list({ lifecycle: 'active' })
+    expect(active.items).toHaveLength(6)
+    expect(active.available_filters.archived_lots_count).toBe(2)
+
+    const archived = await client.lots.list({ lifecycle: 'archived' })
+    expect(archived.items).toHaveLength(2)
+    expect(archived.items.some((item) => item.archived_reason === 'expired')).toBe(true)
+    expect(archived.items.some((item) => item.archived_reason === 'manual')).toBe(true)
+
+    const all = await client.lots.list({ lifecycle: 'all' })
+    expect(all.items).toHaveLength(8)
+
+    // Unarchiving an expired lot suppresses automatic re-archival
+    const expiredLot = archived.items.find((item) => item.archived_reason === 'expired')!
+    const restored = await client.lots.updateLifecycle(expiredLot.lot_id, { is_archived: false })
+    expect(restored.is_archived).toBe(false)
+    expect(restored.archived_reason).toBeNull()
+    expect(restored.expires_at).toBeNull()
+
+    const activeAfterRestore = await client.lots.list({ lifecycle: 'active' })
+    expect(activeAfterRestore.items.some((item) => item.lot_id === expiredLot.lot_id)).toBe(true)
+    expect(activeAfterRestore.available_filters.archived_lots_count).toBe(1)
+
+    // Manual archive + single soft-delete + 404 afterwards
+    const manualArchived = await client.lots.updateLifecycle(expiredLot.lot_id, {
+      is_archived: true,
+    })
+    expect(manualArchived.is_archived).toBe(true)
+    expect(manualArchived.archived_reason).toBe('manual')
+
+    await expect(client.lots.deleteLot(expiredLot.lot_id)).resolves.toBeUndefined()
+    await expect(client.lots.getDetail(expiredLot.lot_id)).rejects.toMatchObject({ status: 404 })
+    await expect(client.lots.deleteLot(expiredLot.lot_id)).rejects.toMatchObject({ status: 404 })
+
+    // Bulk soft-delete removes multiple remaining active lots
+    const bulkTargets = activeAfterRestore.items
+      .filter((item) => item.lot_id !== expiredLot.lot_id)
+      .slice(0, 2)
+      .map((item) => item.lot_id)
+
+    const bulkRes = await client.lots.bulkDeleteLots({ lot_ids: bulkTargets })
+    expect(bulkRes.deleted_ids).toEqual(bulkTargets)
+
+    const remainingAll = await client.lots.list({ lifecycle: 'all' })
+    for (const id of bulkTargets) {
+      expect(remainingAll.items.some((item) => item.lot_id === id)).toBe(false)
+    }
+  })
 })

@@ -99,6 +99,22 @@ export function formatShortDateRu(isoDate: string): string {
 }
 
 /**
+ * Formats auction date "DD.MM.YYYY" as compact "Торги DD.MM", falling back to created_at date.
+ */
+export function formatCardDateLabel(
+  auctionDate: string | null | undefined,
+  createdAtIso: string,
+): string {
+  if (auctionDate) {
+    const match = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(auctionDate.trim())
+    if (match) {
+      return `Торги ${match[1]}.${match[2]}`
+    }
+  }
+  return formatShortDateRu(createdAtIso)
+}
+
+/**
  * Strips leading traffic-light emoji glyphs or decorative bullets that backend strings may include.
  */
 export function cleanVerdictText(headline: string): string {

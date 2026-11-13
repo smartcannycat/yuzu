@@ -1,11 +1,16 @@
 <script setup lang="ts">
 import {
   AlertTriangle,
+  Archive,
+  ArchiveRestore,
+  Check,
   CheckCircle2,
-  ChevronRight,
+  CheckSquare,
   FileText,
+  MoreHorizontal,
   OctagonAlert,
   ShieldAlert,
+  Trash2,
 } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 
@@ -13,22 +18,35 @@ import { BaseBadge, BaseCard, type BadgeVariant } from '@/components/ui'
 import type { LotSummary, TrafficLightColor } from '@/types/api'
 import {
   cleanVerdictText,
+  formatCardDateLabel,
   formatEngineLiters,
   formatMileageKm,
   formatRub,
-  formatShortDateRu,
   formatVerdictLabelRu,
 } from '@/utils/formatters'
 import { sanitizeImageUrl } from '@/utils/url'
 
 interface Props {
   lot: LotSummary
+  menuOpen?: boolean
+  selectionMode?: boolean
+  selected?: boolean
 }
 
-const props = defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), {
+  menuOpen: false,
+  selectionMode: false,
+  selected: false,
+})
 
 const emit = defineEmits<{
   select: [lot: LotSummary]
+  toggleMenu: [lotId: string]
+  closeMenu: []
+  toggleArchive: [lot: LotSummary]
+  deleteLot: [lot: LotSummary]
+  startMultiSelect: [lot: LotSummary]
+  toggleSelect: [lotId: string]
 }>()
 
 const imageError = ref(false)
@@ -54,6 +72,10 @@ const verdictLabel = computed(() => formatVerdictLabelRu(props.lot.verdict))
 const cleanedHeadline = computed(() => cleanVerdictText(props.lot.verdict_headline))
 const safeThumbnailUrl = computed(() => sanitizeImageUrl(props.lot.thumbnail_url))
 const hasThumbnail = computed(() => Boolean(safeThumbnailUrl.value) && !imageError.value)
+const dateLabel = computed(() => formatCardDateLabel(props.lot.auction_date, props.lot.created_at))
+const archiveBadgeLabel = computed(() =>
+  props.lot.archived_reason === 'expired' ? 'Торги прошли' : 'В архиве',
+)
 
 const benefitClass = computed(() => {
   if (props.lot.net_benefit_rub > 0) return 'text-success'
@@ -70,6 +92,29 @@ const specsLine = computed(() => {
   if (props.lot.overall_grade) parts.push(`Оценка ${props.lot.overall_grade}`)
   return parts.join(' · ')
 })
+
+function handleCardActivate(): void {
+  if (props.selectionMode) {
+    emit('toggleSelect', props.lot.lot_id)
+    return
+  }
+  emit('select', props.lot)
+}
+
+function handleArchiveAction(): void {
+  emit('closeMenu')
+  emit('toggleArchive', props.lot)
+}
+
+function handleMultiSelectAction(): void {
+  emit('closeMenu')
+  emit('startMultiSelect', props.lot)
+}
+
+function handleDeleteAction(): void {
+  emit('closeMenu')
+  emit('deleteLot', props.lot)
+}
 </script>
 
 <template>
@@ -78,12 +123,20 @@ const specsLine = computed(() => {
     variant="surface"
     padding="none"
     interactive
-    class="group h-full overflow-hidden"
+    class="group relative h-full overflow-visible transition-shadow"
+    :class="[
+      menuOpen ? 'z-20' : '',
+      selectionMode && selected ? 'ring-accent border-accent ring-2' : '',
+    ]"
   >
-    <button
-      type="button"
-      class="flex h-full w-full cursor-pointer flex-col justify-between text-left outline-none focus:outline-none focus-visible:outline-none"
-      @click="emit('select', lot)"
+    <div
+      role="button"
+      tabindex="0"
+      :aria-pressed="selectionMode ? selected : undefined"
+      class="focus-visible:outline-accent flex h-full w-full cursor-pointer flex-col justify-between rounded-md text-left outline-none focus-visible:outline-2 focus-visible:outline-offset-2"
+      @click="handleCardActivate"
+      @keydown.enter.prevent="handleCardActivate"
+      @keydown.space.prevent="handleCardActivate"
     >
       <div class="flex items-start gap-3.5 p-4 sm:gap-4 sm:p-4">
         <div
@@ -119,10 +172,77 @@ const specsLine = computed(() => {
               </p>
             </div>
 
-            <ChevronRight
-              :size="18"
-              class="text-text-tertiary group-hover:text-accent mt-0.5 shrink-0 transition-transform duration-150 group-hover:translate-x-0.5"
-            />
+            <div
+              data-lot-menu
+              class="relative shrink-0"
+              @click="!selectionMode && $event.stopPropagation()"
+            >
+              <span
+                v-if="selectionMode"
+                aria-hidden="true"
+                class="inline-flex h-6 w-6 items-center justify-center rounded-full border transition-colors"
+                :class="
+                  selected
+                    ? 'bg-accent border-accent text-text-on-accent'
+                    : 'bg-surface border-border-strong text-transparent'
+                "
+              >
+                <Check :size="14" :stroke-width="2.5" />
+              </span>
+
+              <button
+                v-else
+                type="button"
+                aria-label="Действия с лотом"
+                :aria-expanded="menuOpen"
+                aria-haspopup="menu"
+                class="text-text-tertiary hover:text-text-primary hover:bg-surface-inset -mt-1 -mr-1 inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-full transition-colors"
+                @click.stop="emit('toggleMenu', lot.lot_id)"
+              >
+                <MoreHorizontal :size="18" :stroke-width="2" />
+              </button>
+
+              <div
+                v-if="menuOpen && !selectionMode"
+                role="menu"
+                aria-label="Действия с лотом"
+                class="bg-surface border-border shadow-sheet absolute top-8 right-0 z-30 min-w-[196px] overflow-hidden rounded-md border py-1"
+                @click.stop
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="text-text-primary hover:bg-surface-hover flex w-full cursor-pointer items-center gap-2.5 px-3.5 py-2 text-left text-[13px] font-medium transition-colors"
+                  @click="handleArchiveAction"
+                >
+                  <ArchiveRestore v-if="lot.is_archived" :size="15" :stroke-width="1.9" />
+                  <Archive v-else :size="15" :stroke-width="1.9" />
+                  <span>{{ lot.is_archived ? 'Вернуть в активные' : 'В архив' }}</span>
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="text-text-primary hover:bg-surface-hover flex w-full cursor-pointer items-center gap-2.5 px-3.5 py-2 text-left text-[13px] font-medium transition-colors"
+                  @click="handleMultiSelectAction"
+                >
+                  <CheckSquare :size="15" :stroke-width="1.9" />
+                  <span>Выбрать несколько</span>
+                </button>
+
+                <div class="border-border my-1 border-t" />
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="text-danger hover:bg-danger-bg flex w-full cursor-pointer items-center gap-2.5 px-3.5 py-2 text-left text-[13px] font-medium transition-colors"
+                  @click="handleDeleteAction"
+                >
+                  <Trash2 :size="15" :stroke-width="1.9" />
+                  <span>Удалить</span>
+                </button>
+              </div>
+            </div>
           </div>
 
           <div class="flex flex-wrap items-center gap-1.5">
@@ -131,6 +251,10 @@ const specsLine = computed(() => {
                 <component :is="verdictMeta.icon" :size="12" :stroke-width="2" />
               </template>
               {{ verdictLabel }}
+            </BaseBadge>
+
+            <BaseBadge v-if="lot.is_archived" variant="neutral" size="sm">
+              {{ archiveBadgeLabel }}
             </BaseBadge>
 
             <BaseBadge v-if="lot.meti_sanction_risk" variant="warning" size="sm">
@@ -164,7 +288,7 @@ const specsLine = computed(() => {
                 {{ formatRub(lot.net_benefit_rub, { signed: true }) }}
               </div>
               <div class="text-text-tertiary mt-0.5 text-[11px] leading-tight">
-                {{ formatShortDateRu(lot.created_at) }}
+                {{ dateLabel }}
               </div>
             </div>
           </div>
@@ -180,11 +304,11 @@ const specsLine = computed(() => {
 
       <div
         v-if="lot.has_anomaly && lot.anomaly_text"
-        class="bg-danger-bg text-danger border-danger/10 flex items-start gap-2 border-t px-4 py-2 text-[12px] leading-snug"
+        class="bg-danger-bg text-danger border-danger/10 flex items-start gap-2 rounded-b-md border-t px-4 py-2 text-[12px] leading-snug"
       >
         <AlertTriangle :size="14" :stroke-width="2" class="mt-0.5 shrink-0" />
         <span class="line-clamp-2 font-medium">{{ lot.anomaly_text }}</span>
       </div>
-    </button>
+    </div>
   </BaseCard>
 </template>

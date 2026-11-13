@@ -210,4 +210,79 @@ describe('LotDetailView (Screens 4, 5, 6)', () => {
     expect(dialog?.querySelector('img')).toBeNull()
     expect(dialog?.textContent).toContain('Скан аукционного листа недоступен')
   })
+
+  it('toggles archive status from header and deletes lot after confirmation redirecting to home', async () => {
+    const { host, lotsStore, router } = await mountLotDetail('892b4e10-3a2c-411f-a801-019283746501')
+    const replaceSpy = vi.spyOn(router, 'replace')
+    const archiveSpy = vi
+      .spyOn(lotsStore, 'setLotArchived')
+      .mockImplementation(async (id, arch) => {
+        lotsStore.currentLotDetail = {
+          ...lotsStore.currentLotDetail!,
+          lot_id: id,
+          is_archived: arch,
+          archived_at: arch ? '2026-11-13T10:00:00Z' : null,
+          archived_reason: arch ? 'manual' : null,
+        }
+        return {
+          lot_id: id,
+          make: 'Toyota',
+          model: 'Corolla Touring',
+          year: 2021,
+          engine_cc: 1797,
+          frame_id: 'ZWE211-1234567',
+          auction_house: 'USS',
+          lot_number: '1001',
+          overall_grade: '4.5',
+          mileage_km: 32000,
+          turnkey_cost_rub: 1850000,
+          market_price_rf_rub: 2150000,
+          verdict: 'green',
+          verdict_headline: 'Хороший лот',
+          net_benefit_rub: 300000,
+          meti_sanction_risk: false,
+          has_anomaly: false,
+          anomaly_text: null,
+          thumbnail_url: null,
+          auction_date: null,
+          is_archived: arch,
+          archived_at: arch ? '2026-11-13T10:00:00Z' : null,
+          archived_reason: arch ? 'manual' : null,
+          expires_at: null,
+          created_at: '2026-11-10T10:00:00Z',
+        }
+      })
+    const deleteSpy = vi.spyOn(lotsStore, 'deleteLot').mockResolvedValue()
+
+    const archiveButton = Array.from(host.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('В архив'),
+    )
+    expect(archiveButton).toBeTruthy()
+    archiveButton!.click()
+    await flushUi()
+
+    expect(archiveSpy).toHaveBeenCalledWith('892b4e10-3a2c-411f-a801-019283746501', true)
+    expect(host.textContent).toContain('В архиве')
+    expect(host.textContent).toContain('Из архива')
+
+    const deleteButton = Array.from(host.querySelectorAll('button')).find(
+      (b) => b.textContent?.trim() === 'Удалить',
+    )
+    expect(deleteButton).toBeTruthy()
+    deleteButton!.click()
+    await flushUi()
+
+    const dialog = document.body.querySelector('[role="dialog"]')
+    expect(dialog?.textContent).toContain('Удалить лот?')
+
+    const confirmButton = Array.from(dialog?.querySelectorAll('button') ?? []).find((b) =>
+      b.textContent?.includes('Удалить лот'),
+    )
+    expect(confirmButton).toBeTruthy()
+    confirmButton!.click()
+    await flushUi()
+
+    expect(deleteSpy).toHaveBeenCalledWith('892b4e10-3a2c-411f-a801-019283746501')
+    expect(replaceSpy).toHaveBeenCalledWith({ name: 'home' })
+  })
 })

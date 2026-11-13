@@ -7,7 +7,9 @@ import {
   ApiError,
   type AvailableFilters,
   type InProgressSummary,
+  type LotBulkDeleteResponse,
   type LotDetailResponse,
+  type LotLifecycleFilter,
   type LotListQueryParams,
   type LotSortBy,
   type LotSortOrder,
@@ -19,6 +21,7 @@ import {
 } from '@/types/api'
 
 const DEFAULT_PAGE_SIZE = 20
+const BULK_DELETE_CHUNK_SIZE = 100
 
 function createEmptyInProgress(): InProgressSummary {
   return {
@@ -40,6 +43,7 @@ function createEmptyPagination(): PaginationMeta {
 function createEmptyFilters(): AvailableFilters {
   return {
     total_lots_count: 0,
+    archived_lots_count: 0,
     makes: [],
     models: [],
     counts_by_verdict: {},
@@ -57,6 +61,7 @@ export const useLotsStore = defineStore('lots', () => {
   const selectedModel = ref<string | null>(null)
   const selectedVerdict = ref<TrafficLightColor | null>(null)
   const onlyAnomalies = ref(false)
+  const lifecycle = ref<LotLifecycleFilter>('active')
   const sortBy = ref<LotSortBy>('created_at')
   const sortOrder = ref<LotSortOrder>('desc')
 
@@ -102,6 +107,7 @@ export const useLotsStore = defineStore('lots', () => {
     if (selectedModel.value) count += 1
     if (selectedVerdict.value) count += 1
     if (onlyAnomalies.value) count += 1
+    if (lifecycle.value !== 'active') count += 1
     if (sortBy.value !== 'created_at' || sortOrder.value !== 'desc') count += 1
     return count
   })
@@ -121,6 +127,7 @@ export const useLotsStore = defineStore('lots', () => {
       model: selectedModel.value || undefined,
       verdict: selectedVerdict.value || undefined,
       has_anomaly: onlyAnomalies.value ? true : undefined,
+      lifecycle: lifecycle.value,
       sort_by: sortBy.value,
       sort_order: sortOrder.value,
       page,
@@ -214,6 +221,7 @@ export const useLotsStore = defineStore('lots', () => {
 
     try {
       const response = await client.lots.list({
+        lifecycle: lifecycle.value,
         ...overrides,
         page: 1,
         page_size: 1,
@@ -321,12 +329,114 @@ export const useLotsStore = defineStore('lots', () => {
     }
   }
 
+  function applyLifecycleToDetail(
+    detail: LotDetailResponse | undefined,
+    updated: LotSummary,
+  ): LotDetailResponse | undefined {
+    if (!detail) return undefined
+    return {
+      ...detail,
+      is_archived: updated.is_archived,
+      archived_at: updated.archived_at,
+      archived_reason: updated.archived_reason,
+      expires_at: updated.expires_at,
+    }
+  }
+
+  async function setLotArchived(
+    lotId: string,
+    isArchived: boolean,
+    client: ApiClient = apiClient,
+  ): Promise<LotSummary> {
+    const updated = await client.lots.updateLifecycle(lotId, { is_archived: isArchived })
+
+    const updatedCurrent = applyLifecycleToDetail(
+      currentLotDetail.value?.lot_id === lotId ? currentLotDetail.value : undefined,
+      updated,
+    )
+    if (updatedCurrent) {
+      currentLotDetail.value = updatedCurrent
+    }
+
+    const updatedBaseline = applyLifecycleToDetail(baselineLotDetailsById.value[lotId], updated)
+    if (updatedBaseline) {
+      baselineLotDetailsById.value[lotId] = updatedBaseline
+    }
+
+    const matchesCurrentScope =
+      lifecycle.value === 'all' ||
+      (lifecycle.value === 'active' && !updated.is_archived) ||
+      (lifecycle.value === 'archived' && updated.is_archived)
+
+    if (matchesCurrentScope) {
+      items.value = items.value.map((item) => (item.lot_id === lotId ? updated : item))
+    } else {
+      items.value = items.value.filter((item) => item.lot_id !== lotId)
+    }
+
+    if (hasLoadedOnce.value) {
+      await refreshLotsSilently(client)
+    }
+
+    return updated
+  }
+
+  function removeLotsLocally(lotIds: ReadonlySet<string>): void {
+    items.value = items.value.filter((item) => !lotIds.has(item.lot_id))
+    for (const id of lotIds) {
+      delete baselineLotDetailsById.value[id]
+    }
+    if (currentLotDetail.value && lotIds.has(currentLotDetail.value.lot_id)) {
+      currentLotDetail.value = null
+    }
+  }
+
+  async function deleteLot(lotId: string, client: ApiClient = apiClient): Promise<void> {
+    await client.lots.deleteLot(lotId)
+    removeLotsLocally(new Set([lotId]))
+    if (hasLoadedOnce.value) {
+      await refreshLotsSilently(client)
+    }
+  }
+
+  async function bulkDeleteLots(
+    lotIds: readonly string[],
+    client: ApiClient = apiClient,
+  ): Promise<LotBulkDeleteResponse> {
+    const uniqueIds = Array.from(new Set(lotIds))
+    if (uniqueIds.length === 0) {
+      return { deleted_ids: [], not_found_ids: [], deleted_count: 0 }
+    }
+
+    const deletedIds: string[] = []
+    const notFoundIds: string[] = []
+
+    for (let offset = 0; offset < uniqueIds.length; offset += BULK_DELETE_CHUNK_SIZE) {
+      const chunk = uniqueIds.slice(offset, offset + BULK_DELETE_CHUNK_SIZE)
+      const res = await client.lots.bulkDeleteLots({ lot_ids: chunk })
+      deletedIds.push(...res.deleted_ids)
+      notFoundIds.push(...res.not_found_ids)
+    }
+
+    removeLotsLocally(new Set([...deletedIds, ...notFoundIds]))
+    if (hasLoadedOnce.value) {
+      await refreshLotsSilently(client)
+    }
+
+    return {
+      deleted_ids: deletedIds,
+      not_found_ids: notFoundIds,
+      deleted_count: deletedIds.length,
+    }
+  }
+
   function resetFilters(): void {
     query.value = ''
     selectedMake.value = null
     selectedModel.value = null
     selectedVerdict.value = null
     onlyAnomalies.value = false
+    lifecycle.value = 'active'
     sortBy.value = 'created_at'
     sortOrder.value = 'desc'
   }
@@ -366,6 +476,7 @@ export const useLotsStore = defineStore('lots', () => {
     selectedModel,
     selectedVerdict,
     onlyAnomalies,
+    lifecycle,
     sortBy,
     sortOrder,
     isLoading,
@@ -389,6 +500,9 @@ export const useLotsStore = defineStore('lots', () => {
     fetchLotDetail,
     recalculateLot,
     resetLotSimulation,
+    setLotArchived,
+    deleteLot,
+    bulkDeleteLots,
     resetFilters,
     clear,
   }
