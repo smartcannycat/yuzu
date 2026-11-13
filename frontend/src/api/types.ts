@@ -2,6 +2,7 @@ import type {
   AuthTokensResponse,
   LotListQueryParams,
   LotListResponse,
+  TokenLogoutRequest,
   TokenRefreshRequest,
   UserLoginRequest,
   UserProfileResponse,
@@ -12,6 +13,7 @@ export interface AuthApi {
   register(payload: UserRegisterRequest): Promise<AuthTokensResponse>
   login(payload: UserLoginRequest): Promise<AuthTokensResponse>
   refresh(payload: TokenRefreshRequest): Promise<AuthTokensResponse>
+  logout(payload: TokenLogoutRequest): Promise<void>
   me(): Promise<UserProfileResponse>
 }
 

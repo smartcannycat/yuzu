@@ -102,7 +102,7 @@ async function handleResetAllFilters() {
 
 async function handleLogout(): Promise<void> {
   isProfileOpen.value = false
-  authStore.logout()
+  await authStore.logout()
   await router.replace({ name: 'auth' })
 }
 </script>
