@@ -104,7 +104,7 @@ def refresh_user_tokens(payload: TokenRefreshRequest) -> AuthTokensResponse:
         )
 
     try:
-        user = User.objects.filter(id=user_id, is_active=True).first()
+        user = User.objects.select_for_update().filter(id=user_id, is_active=True).first()
     except (ValueError, DjangoValidationError) as exc:
         raise UnauthorizedProblemError(
             "Токен содержит некорректный идентификатор пользователя",
