@@ -19,6 +19,7 @@ import dataclasses
 import math
 from dataclasses import dataclass, field
 from datetime import date
+from decimal import Decimal
 from enum import StrEnum
 
 from apps.core.enums import (
@@ -671,7 +672,8 @@ def _turnkey_for_bid(
             rates=params.rates,
             customs=customs,
             market_price_rf_rub=params.market_price_rf_rub,
-            broker_rub=params.broker_rub if params.broker_rub is not None else None,
+            japan_fob_jpy=params.japan_fob_jpy,
+            broker_rub=params.broker_rub,
             repair_total_rub=params.repair_total_rub,
             include_repairs=params.include_repairs,
         )
@@ -705,7 +707,7 @@ def derive_start_bid_from_market(params: StartBidInput) -> StartBidResult:
         freight_rub = math.floor(DEFAULT_FREIGHT_USD * rates.usd_rub + 0.5)
 
     target_turnkey_rub = math.floor(
-        params.market_price_rf_rub * (1 - params.target_margin_pct / 100) + 0.5
+        params.market_price_rf_rub * (1 - Decimal(str(params.target_margin_pct)) / 100)
     )
 
     def turnkey_for(bid_jpy: int) -> int:

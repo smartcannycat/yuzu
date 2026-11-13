@@ -1752,7 +1752,7 @@ def recompute_lot_economics(
         lot.save(update_fields=lot_update_fields)
 
 
-def _resolve_start_bid_jpy(lot: Lot, *, persist: bool = True) -> int | None:
+def _resolve_start_bid_jpy(lot: Lot) -> int | None:
     """Start bid for a new lot, by priority (see BE-09 start bid spec):
 
     1. Sheet data: the bid captured by the OCR pipeline (``auction_bid_jpy``).
@@ -1761,33 +1761,24 @@ def _resolve_start_bid_jpy(lot: Lot, *, persist: bool = True) -> int | None:
     3. Reverse calculation from the Drom market price: the highest slider
        step bid whose turnkey cost leaves a 15% target margin.
 
-    The resolved (slider-clamped) bid is stored back on the lot for every
-    source, so the base bid used by the recalculation endpoint and the PDF
-    report never falls outside the slider bounds.
     """
     min_bid = lot.bid_slider_min_jpy or 300_000
     max_bid = lot.bid_slider_max_jpy or 2_500_000
     step_bid = lot.bid_slider_step_jpy or 10_000
 
-    def apply(bid_jpy: int) -> int:
-        if persist and lot.auction_bid_jpy != bid_jpy:
-            lot.auction_bid_jpy = bid_jpy
-            lot.save(update_fields=["auction_bid_jpy", "updated_at"])
-        return bid_jpy
-
     def clamp(bid_jpy: int) -> int:
         return max(min_bid, min(max_bid, bid_jpy))
 
     if lot.auction_bid_jpy:
-        return apply(clamp(lot.auction_bid_jpy))
+        return clamp(lot.auction_bid_jpy)
 
     record = (
-        PastAuctionRecord.objects.filter(audit__lot=lot, closing_price_jpy__isnull=False)
+        PastAuctionRecord.objects.filter(audit__lot=lot, closing_price_jpy__gt=0)
         .order_by("-auction_date", "-id")
         .first()
     )
     if record is not None:
-        return apply(clamp(record.closing_price_jpy))
+        return clamp(record.closing_price_jpy)
 
     if not lot.market_price_rf_rub:
         return None
@@ -1829,16 +1820,16 @@ def _resolve_start_bid_jpy(lot: Lot, *, persist: bool = True) -> int | None:
             ),
             broker_rub=customs_model.broker_svh_sbkts_rub if customs_model else None,
             repair_total_rub=repair.grand_total_repair_rub if repair else 0,
-            include_repairs=True,
+            include_repairs=lot.is_repairs_included,
             step_jpy=step_bid,
             min_bid_jpy=min_bid,
             max_bid_jpy=max_bid,
         )
     )
-    return apply(result.bid_jpy)
+    return result.bid_jpy
 
 
-def _missing_customs_inputs(lot: Lot) -> list[str]:
+def _missing_customs_inputs(lot: Lot, bid_jpy: int | None) -> list[str]:
     """Mandatory inputs for the customs_calc pipeline step (Russian labels)."""
     missing: list[str] = []
     if lot.fuel_type != FuelType.EV and not lot.engine_cc:
@@ -1847,8 +1838,7 @@ def _missing_customs_inputs(lot: Lot) -> list[str]:
         missing.append("дата первой регистрации")
     if not lot.power_hp and lot.fuel_type == FuelType.EV:
         missing.append("мощность двигателя (для акциза EV)")
-    ladder = WiseCostLadder.objects.filter(lot=lot).first()
-    if not (ladder.car_bid_jpy if ladder is not None else lot.auction_bid_jpy):
+    if bid_jpy is None:
         missing.append("ставка на аукционе")
     if lot.market_price_rf_rub is None:
         missing.append("рыночная цена в РФ")
@@ -1868,12 +1858,13 @@ def _step_customs_calc(item: BatchItem) -> bool:
     # from the Drom price) before checking the remaining inputs, so a new
     # lot without an explicit bid still gets its economics built.
     try:
-        _resolve_start_bid_jpy(lot)
+        ladder = WiseCostLadder.objects.filter(lot=lot).first()
+        bid_jpy = ladder.car_bid_jpy if ladder is not None else _resolve_start_bid_jpy(lot)
     except Exception:
         logger.exception("Start bid derivation failed for lot %s", lot.pk)
         _fail_item(item, TaskStep.FAILED, "Не удалось определить стартовую ставку лота")
         return False
-    missing = _missing_customs_inputs(lot)
+    missing = _missing_customs_inputs(lot, bid_jpy)
     if missing:
         _fail_item(
             item,
@@ -1882,7 +1873,7 @@ def _step_customs_calc(item: BatchItem) -> bool:
         )
         return False
     try:
-        recompute_lot_economics(lot)
+        recompute_lot_economics(lot, bid_jpy=bid_jpy)
         lot.refresh_from_db()
     except Exception:
         logger.exception("Customs recomputation failed for lot %s", lot.pk)
