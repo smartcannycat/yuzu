@@ -210,9 +210,9 @@ const POSES: Record<CapyState, PoseRecord> = {
     wYellow: 0,
     wRed: 0,
     wError: 0,
-    sit: 0.85,
+    sit: 0.35,
     headX: 96,
-    headY: 75,
+    headY: 82,
     tilt: -3,
     ear: -4,
     eyeOpen: 1,
@@ -230,11 +230,11 @@ const POSES: Record<CapyState, PoseRecord> = {
     caution: 0,
     signal: 0,
     shrug: 0,
-    shadowW: 136,
+    shadowW: 146,
     pawLX: 68,
     pawLY: 142,
     pawRX: 132,
-    pawRY: 125,
+    pawRY: 126,
     pawChin: 0,
   },
   green: {
@@ -350,9 +350,9 @@ const POSES: Record<CapyState, PoseRecord> = {
     wYellow: 0,
     wRed: 0,
     wError: 1,
-    sit: 0.85,
+    sit: 0.35,
     headX: 98,
-    headY: 79,
+    headY: 84,
     tilt: -7,
     ear: 20,
     eyeOpen: 1,
@@ -370,11 +370,11 @@ const POSES: Record<CapyState, PoseRecord> = {
     caution: 0,
     signal: 0,
     shrug: 1,
-    shadowW: 136,
-    pawLX: 48,
-    pawLY: 117,
-    pawRX: 148,
-    pawRY: 114,
+    shadowW: 146,
+    pawLX: 44,
+    pawLY: 122,
+    pawRX: 152,
+    pawRY: 119,
     pawChin: 0,
   },
 }
@@ -532,10 +532,10 @@ const p = computed(() => {
   const b = breath(t)
   const bLate = breath(t - 150)
 
-  // Body: loaf (sit=0) <-> sitting inspector (sit=1), volume kept while breathing
+  // Body: stays a cozy round loaf in all moods, volume kept while breathing
   const sit = c('sit')
-  const W0 = mix(126, 98, sit)
-  const H0 = mix(56, 70, sit)
+  const W0 = mix(126, 114, sit)
+  const H0 = mix(56, 61, sit)
   const sy = 1 + 0.026 * b
   const sx = 1 / Math.pow(sy, 0.6)
   const bodyW = W0 * sx
@@ -592,8 +592,8 @@ const p = computed(() => {
   const lidRightExtra = c('lidRightExtra') + 0.38 * thinkZoom
   const sadTilt = c('sadTilt')
 
-  const baseLidClose = 30 * 0.82 * (1 - open)
-  const lowH = 30 * 0.18 * (1 - open) + 0.6 + 5 * thinkZoom * 0.5
+  const baseLidClose = 32 * 0.9 * (1 - open)
+  const lowH = 32 * 0.26 * (1 - open) + 1.2 + 5 * thinkZoom * 0.5
   const closedOp = clamp01((0.28 - open) / 0.28)
   const closedY = EYE_Y + 9 - 4 * happy
   const closedCurve = mix(4, -9, happy)
@@ -601,7 +601,7 @@ const p = computed(() => {
   const eyes = EYES.map((cx, idx) => {
     const extraTop = idx === 1 ? 30 * lidRightExtra : 0
     const flatTop = 30 * lidFlat
-    const lidH = Math.min(28, Math.max(baseLidClose, flatTop, extraTop) + 0.8)
+    const lidH = Math.min(34, Math.max(baseLidClose, flatTop, extraTop) + 2)
     // Outward downward slant for sad/apologetic error state (no eyebrows needed)
     const lidAngle = sadTilt * (idx === 0 ? -14 : 14)
     return {
@@ -728,6 +728,7 @@ const p = computed(() => {
     headTf: `translate(${hx} ${hy}) rotate(${tilt} 0 30)`,
     earL,
     earR,
+    open,
     eyes,
     lowH,
     closedOp,
@@ -869,21 +870,23 @@ const p = computed(() => {
 
           <!-- Live eyes: white pills, clipped pupils, clipped skin lids +2 larger -->
           <g v-for="(e, i) in p.eyes" :key="`eye${i}`">
-            <rect :x="e.cx - 10" :y="EYE_Y - 13" width="20" height="26" rx="10" :fill="C.white" />
-            <g :clip-path="`url(#${uid}-eye${i})`">
-              <rect :x="e.pupilX" :y="e.pupilY" width="10" height="15" rx="5" :fill="C.pupil" />
-              <circle :cx="e.pupilX + 3.5" :cy="e.pupilY + 4" r="2.2" :fill="C.white" />
-            </g>
-            <g :clip-path="`url(#${uid}-lid${i})`">
-              <rect
-                :x="e.cx - 14"
-                :y="EYE_Y - 17"
-                width="28"
-                :height="e.lidH"
-                :fill="C.skin"
-                :transform="e.lidTf"
-              />
-              <rect :x="e.cx - 12" :y="e.lowY" width="24" :height="p.lowH" :fill="C.skin" />
+            <g v-show="p.open > 0.04">
+              <rect :x="e.cx - 10" :y="EYE_Y - 13" width="20" height="26" rx="10" :fill="C.white" />
+              <g :clip-path="`url(#${uid}-eye${i})`">
+                <rect :x="e.pupilX" :y="e.pupilY" width="10" height="15" rx="5" :fill="C.pupil" />
+                <circle :cx="e.pupilX + 3.5" :cy="e.pupilY + 4" r="2.2" :fill="C.white" />
+              </g>
+              <g :clip-path="`url(#${uid}-lid${i})`">
+                <rect
+                  :x="e.cx - 14"
+                  :y="EYE_Y - 17"
+                  width="28"
+                  :height="e.lidH"
+                  :fill="C.skin"
+                  :transform="e.lidTf"
+                />
+                <rect :x="e.cx - 12" :y="e.lowY" width="24" :height="p.lowH" :fill="C.skin" />
+              </g>
             </g>
             <path
               v-show="p.closedOp > 0.01"
@@ -945,10 +948,9 @@ const p = computed(() => {
 
         <!-- Prop 2: Green Verdict Flag with Yuzu Citrus Finial (GREEN) -->
         <g v-if="p.flagOp > 0.01" :opacity="p.flagOp" :transform="p.flagTf">
-          <!-- Flag cloth (two-tone flat shade) -->
+          <!-- Flag cloth -->
           <g transform="translate(2 -80)">
             <rect x="0" y="0" width="50" height="35" rx="9" :fill="C.leaf" />
-            <rect x="0" y="25" width="50" height="10" rx="5" :fill="C.leafShade" />
             <!-- White Checkmark -->
             <path
               d="M 15 17.5 L 22.5 24.5 L 36.5 11"
@@ -961,8 +963,8 @@ const p = computed(() => {
           </g>
           <!-- Flagpole -->
           <rect x="-3.5" y="-84" width="7" height="94" rx="3.5" :fill="C.feature" />
-          <!-- Signature Yuzu Citrus Finial at pole tip -->
-          <g :transform="`translate(0 -90) rotate(${p.yuzuRock})`">
+          <!-- Signature Yuzu Citrus Finial seated directly on pole tip -->
+          <g :transform="`translate(0 -84) rotate(${p.yuzuRock})`">
             <rect
               x="1"
               y="-13"
@@ -984,10 +986,9 @@ const p = computed(() => {
           <rect x="-3.5" y="-68" width="7" height="78" rx="3.5" :fill="C.feature" />
           <!-- Rounded Caution Sign Box -->
           <rect x="-20" y="-88" width="40" height="40" rx="12" :fill="C.yuzu" />
-          <rect x="-20" y="-58" width="40" height="10" rx="5" :fill="C.yuzuShade" />
           <!-- Exclamation Mark (!) -->
-          <rect x="-3" y="-80" width="6" height="15" rx="3" :fill="C.pupil" />
-          <circle cx="0" cy="-58" r="3.4" :fill="C.pupil" />
+          <rect x="-3" y="-79" width="6" height="16" rx="3" :fill="C.pupil" />
+          <circle cx="0" cy="-56" r="3.4" :fill="C.pupil" />
           <!-- Subtle attention rays -->
           <g v-if="p.cautionPulse > 0.02" :opacity="p.cautionPulse">
             <path
@@ -1006,7 +1007,6 @@ const p = computed(() => {
           <rect x="-4" y="-32" width="8" height="46" rx="4" :fill="C.feature" />
           <!-- Traffic Light Housing -->
           <rect x="-22" y="-102" width="44" height="76" rx="17" :fill="C.housing" />
-          <rect x="-22" y="-42" width="44" height="16" rx="8" :fill="C.housingShade" />
           <!-- Inactive lower lamps -->
           <circle cx="0" cy="-63" r="9.5" :fill="C.lampOff" />
           <circle cx="0" cy="-42" r="9.5" :fill="C.lampOff" />
