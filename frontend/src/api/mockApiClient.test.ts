@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { createMockApiClient, DEMO_ACCOUNT_CREDENTIALS } from '@/api/mockApiClient'
+import { createMockApiClient, DEMO_ACCOUNT_CREDENTIALS, resetMockUsers } from '@/api/mockApiClient'
 import { tokenStorage } from '@/api/tokenStorage'
 import { ApiError } from '@/types/api'
 
 describe('mockApiClient', () => {
   beforeEach(() => {
+    tokenStorage.clear()
+    resetMockUsers()
     window.localStorage.clear()
   })
 

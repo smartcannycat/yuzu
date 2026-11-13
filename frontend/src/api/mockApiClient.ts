@@ -1,3 +1,5 @@
+import { useStorage, type Serializer } from '@vueuse/core'
+
 import { tokenStorage } from '@/api/tokenStorage'
 import type { ApiClient } from '@/api/types'
 import {
@@ -11,7 +13,7 @@ import {
 } from '@/types/api'
 import { NAME_MAX_LENGTH, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@/utils/validation'
 
-const MOCK_USERS_STORAGE_KEY = 'yuzu.mock.users'
+export const MOCK_USERS_STORAGE_KEY = 'yuzu.mock.users'
 const ACCESS_TOKEN_PREFIX = 'mock-access:'
 const REFRESH_TOKEN_PREFIX = 'mock-refresh:'
 
@@ -72,37 +74,42 @@ function isValidMockUser(value: unknown): value is MockUserRecord {
   )
 }
 
-function loadMockUsers(): MockUserRecord[] {
-  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') {
-    return [DEFAULT_DEMO_USER]
-  }
-  try {
-    const raw = window.localStorage.getItem(MOCK_USERS_STORAGE_KEY)
-    if (!raw) {
-      saveMockUsers([DEFAULT_DEMO_USER])
-      return [DEFAULT_DEMO_USER]
-    }
-    const parsed: unknown = JSON.parse(raw)
-    if (Array.isArray(parsed)) {
-      const validUsers = parsed.filter(isValidMockUser)
-      if (validUsers.length > 0) {
-        return validUsers
+const mockUsersSerializer: Serializer<MockUserRecord[]> = {
+  read(raw: string): MockUserRecord[] {
+    try {
+      const parsed: unknown = JSON.parse(raw)
+      if (Array.isArray(parsed)) {
+        const validUsers = parsed.filter(isValidMockUser)
+        if (validUsers.length > 0) {
+          return validUsers
+        }
       }
+    } catch {
+      // Fallback to seeded demo user if storage payload is corrupted.
     }
-  } catch {
-    // Fallback to seeded user if localStorage payload is corrupted.
-  }
-  saveMockUsers([DEFAULT_DEMO_USER])
-  return [DEFAULT_DEMO_USER]
+    return [DEFAULT_DEMO_USER]
+  },
+  write(value: MockUserRecord[]): string {
+    return JSON.stringify(value)
+  },
 }
 
-function saveMockUsers(users: MockUserRecord[]): void {
-  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') return
-  try {
-    window.localStorage.setItem(MOCK_USERS_STORAGE_KEY, JSON.stringify(users))
-  } catch {
-    // Ignore storage quota errors.
-  }
+const mockUsersStorage = useStorage<MockUserRecord[]>(
+  MOCK_USERS_STORAGE_KEY,
+  () => [DEFAULT_DEMO_USER],
+  undefined,
+  {
+    flush: 'sync',
+    writeDefaults: false,
+    serializer: mockUsersSerializer,
+    onError: () => {
+      // Ignore storage quota errors.
+    },
+  },
+)
+
+export function resetMockUsers(): void {
+  mockUsersStorage.value = [DEFAULT_DEMO_USER]
 }
 
 function toPublicProfile(record: MockUserRecord): UserProfileResponse {
@@ -180,7 +187,7 @@ export function createMockApiClient(options: MockClientOptions = {}): ApiClient 
           })
         }
 
-        const users = loadMockUsers()
+        const users = mockUsersStorage.value
         const exists = users.some((user) => user.email.toLowerCase() === email)
         if (exists) {
           throw new ApiError({
@@ -206,14 +213,14 @@ export function createMockApiClient(options: MockClientOptions = {}): ApiClient 
           name,
           created_at: new Date().toISOString(),
         }
-        saveMockUsers([...users, newUser])
+        mockUsersStorage.value = [...users, newUser]
         return createTokensResponse(newUser)
       },
 
       async login(payload: UserLoginRequest): Promise<AuthTokensResponse> {
         await delay(defaultDelay)
         const email = payload.email.trim().toLowerCase()
-        const users = loadMockUsers()
+        const users = mockUsersStorage.value
         const matched = users.find(
           (user) => user.email.toLowerCase() === email && user.password === payload.password,
         )
@@ -236,7 +243,7 @@ export function createMockApiClient(options: MockClientOptions = {}): ApiClient 
       async refresh(payload: TokenRefreshRequest): Promise<AuthTokensResponse> {
         await delay(Math.min(defaultDelay, 120))
         const userId = extractUserIdFromToken(payload.refresh_token, REFRESH_TOKEN_PREFIX)
-        const users = loadMockUsers()
+        const users = mockUsersStorage.value
         const matched = userId ? users.find((user) => user.user_id === userId) : undefined
 
         if (!matched) {
@@ -257,7 +264,7 @@ export function createMockApiClient(options: MockClientOptions = {}): ApiClient 
       async me(): Promise<UserProfileResponse> {
         await delay(Math.min(defaultDelay, 120))
         const accessToken = tokenStorage.getAccessToken()
-        const users = loadMockUsers()
+        const users = mockUsersStorage.value
         const userId = accessToken ? extractUserIdFromToken(accessToken, ACCESS_TOKEN_PREFIX) : null
         const matched = userId ? users.find((user) => user.user_id === userId) : undefined
 

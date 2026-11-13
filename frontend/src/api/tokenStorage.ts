@@ -1,15 +1,13 @@
+import { useStorage, type Serializer } from '@vueuse/core'
+
 import type { AuthTokensResponse, UserProfileResponse } from '@/types/api'
 
-const SESSION_STORAGE_KEY = 'yuzu.auth.session'
+export const SESSION_STORAGE_KEY = 'yuzu.auth.session'
 
 export interface StoredSession {
   accessToken: string
   refreshToken: string
   user: UserProfileResponse
-}
-
-function canUseStorage(): boolean {
-  return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined'
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -28,77 +26,83 @@ function isValidUserProfile(value: unknown): value is UserProfileResponse {
   )
 }
 
-export const tokenStorage = {
-  getSession(): StoredSession | null {
-    if (!canUseStorage()) return null
-    try {
-      const raw = window.localStorage.getItem(SESSION_STORAGE_KEY)
-      if (!raw) return null
-      const parsed: unknown = JSON.parse(raw)
-      if (!isPlainRecord(parsed)) return null
+function parseSessionObject(parsed: unknown): StoredSession | null {
+  if (!isPlainRecord(parsed)) return null
+  const { accessToken, refreshToken, user } = parsed
+  if (
+    typeof accessToken === 'string' &&
+    accessToken.length > 0 &&
+    typeof refreshToken === 'string' &&
+    refreshToken.length > 0 &&
+    isValidUserProfile(user)
+  ) {
+    return {
+      accessToken,
+      refreshToken,
+      user,
+    }
+  }
+  return null
+}
 
-      const { accessToken, refreshToken, user } = parsed
-      if (
-        typeof accessToken === 'string' &&
-        accessToken.length > 0 &&
-        typeof refreshToken === 'string' &&
-        refreshToken.length > 0 &&
-        isValidUserProfile(user)
-      ) {
-        return {
-          accessToken,
-          refreshToken,
-          user,
-        }
-      }
-      return null
+const sessionSerializer: Serializer<StoredSession | null> = {
+  read(raw: string): StoredSession | null {
+    try {
+      return parseSessionObject(JSON.parse(raw))
     } catch {
       return null
     }
   },
+  write(value: StoredSession | null): string {
+    return JSON.stringify(value)
+  },
+}
+
+const session = useStorage<StoredSession | null>(SESSION_STORAGE_KEY, null, undefined, {
+  flush: 'sync',
+  writeDefaults: false,
+  serializer: sessionSerializer,
+  onError: () => {
+    // Ignore storage quota errors in restricted browser contexts.
+  },
+})
+
+export const tokenStorage = {
+  session,
+
+  getSession(): StoredSession | null {
+    return session.value
+  },
 
   getAccessToken(): string | null {
-    return this.getSession()?.accessToken ?? null
+    return session.value?.accessToken ?? null
   },
 
   getRefreshToken(): string | null {
-    return this.getSession()?.refreshToken ?? null
+    return session.value?.refreshToken ?? null
   },
 
   getUser(): UserProfileResponse | null {
-    return this.getSession()?.user ?? null
+    return session.value?.user ?? null
   },
 
   setFromAuthResponse(response: AuthTokensResponse): void {
-    if (!canUseStorage()) return
-    const session: StoredSession = {
+    session.value = {
       accessToken: response.access_token,
       refreshToken: response.refresh_token,
       user: response.user,
     }
-    try {
-      window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session))
-    } catch {
-      // Ignore storage quota errors in restricted browser contexts.
-    }
   },
 
   setUser(user: UserProfileResponse): void {
-    const current = this.getSession()
-    if (!current || !canUseStorage()) return
-    try {
-      window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ ...current, user }))
-    } catch {
-      // Ignore storage quota errors in restricted browser contexts.
+    if (!session.value) return
+    session.value = {
+      ...session.value,
+      user,
     }
   },
 
   clear(): void {
-    if (!canUseStorage()) return
-    try {
-      window.localStorage.removeItem(SESSION_STORAGE_KEY)
-    } catch {
-      // Ignore storage errors.
-    }
+    session.value = null
   },
 }

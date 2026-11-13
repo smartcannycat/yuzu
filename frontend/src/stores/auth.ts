@@ -10,16 +10,17 @@ import type {
 } from '@/types/api'
 
 export const useAuthStore = defineStore('auth', () => {
-  const initialAccessToken = tokenStorage.getAccessToken()
-  const user = ref<UserProfileResponse | null>(initialAccessToken ? tokenStorage.getUser() : null)
-  const hasSessionToken = ref(Boolean(initialAccessToken))
   const isInitialized = ref(false)
   const isSubmitting = ref(false)
 
   let initPromise: Promise<void> | null = null
   let sessionEpoch = 0
 
-  const isAuthenticated = computed(() => Boolean(user.value && hasSessionToken.value))
+  const user = computed<UserProfileResponse | null>(() => tokenStorage.session.value?.user ?? null)
+
+  const isAuthenticated = computed(() =>
+    Boolean(tokenStorage.session.value?.accessToken && tokenStorage.session.value?.user),
+  )
 
   const displayName = computed(() => {
     const trimmedName = user.value?.name?.trim()
@@ -40,8 +41,6 @@ export const useAuthStore = defineStore('auth', () => {
   function applyAuthTokens(response: AuthTokensResponse): UserProfileResponse {
     sessionEpoch += 1
     tokenStorage.setFromAuthResponse(response)
-    hasSessionToken.value = true
-    user.value = response.user
     isInitialized.value = true
     return response.user
   }
@@ -49,8 +48,6 @@ export const useAuthStore = defineStore('auth', () => {
   function clearSession(): void {
     sessionEpoch += 1
     tokenStorage.clear()
-    hasSessionToken.value = false
-    user.value = null
   }
 
   async function initialize(): Promise<void> {
@@ -71,8 +68,6 @@ export const useAuthStore = defineStore('auth', () => {
         const profile = await apiClient.auth.me()
         if (sessionEpoch !== epochAtStart) return
 
-        user.value = profile
-        hasSessionToken.value = Boolean(tokenStorage.getAccessToken())
         tokenStorage.setUser(profile)
       } catch {
         if (sessionEpoch === epochAtStart) {

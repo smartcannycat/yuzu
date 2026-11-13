@@ -2,11 +2,15 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { apiClient, DEMO_ACCOUNT_CREDENTIALS, tokenStorage } from '@/api'
+import { resetMockUsers } from '@/api/mockApiClient'
+import { SESSION_STORAGE_KEY } from '@/api/tokenStorage'
 import { useAuthStore } from '@/stores/auth'
 import { ApiError } from '@/types/api'
 
 describe('useAuthStore', () => {
   beforeEach(() => {
+    tokenStorage.clear()
+    resetMockUsers()
     window.localStorage.clear()
     setActivePinia(createPinia())
   })
@@ -56,15 +60,14 @@ describe('useAuthStore', () => {
     expect(created.email).toBe('fresh@example.com')
     expect(store.initials).toBe('ИП')
 
-    // Corrupt stored tokens and verify initialize clears session cleanly.
-    window.localStorage.setItem(
-      'yuzu.auth.session',
-      JSON.stringify({
-        accessToken: 'invalid-token',
-        refreshToken: 'invalid-refresh',
-        user: created,
-      }),
-    )
+    // Inject invalid tokens and verify initialize clears session cleanly.
+    tokenStorage.setFromAuthResponse({
+      access_token: 'invalid-token',
+      refresh_token: 'invalid-refresh',
+      token_type: 'bearer',
+      expires_in_sec: 3600,
+      user: created,
+    })
 
     setActivePinia(createPinia())
     const brokenStore = useAuthStore()
@@ -73,20 +76,39 @@ describe('useAuthStore', () => {
     expect(tokenStorage.getSession()).toBeNull()
   })
 
-  it('does not let stale initialize() failure wipe a newer login() session', async () => {
-    window.localStorage.setItem(
-      'yuzu.auth.session',
-      JSON.stringify({
-        accessToken: 'stale-access',
-        refreshToken: 'stale-refresh',
-        user: {
-          user_id: '00000000-0000-4000-8000-000000000000',
-          email: 'stale@example.com',
-          name: null,
-          created_at: '2026-11-13T08:00:00Z',
-        },
+  it('syncs cross-tab logout via VueUse useStorage StorageEvent', async () => {
+    const store = useAuthStore()
+    await store.login({
+      email: DEMO_ACCOUNT_CREDENTIALS.email,
+      password: DEMO_ACCOUNT_CREDENTIALS.password,
+    })
+    expect(store.isAuthenticated).toBe(true)
+
+    window.dispatchEvent(
+      new StorageEvent('storage', {
+        key: SESSION_STORAGE_KEY,
+        newValue: null,
+        storageArea: window.localStorage,
       }),
     )
+
+    expect(store.isAuthenticated).toBe(false)
+    expect(store.user).toBeNull()
+  })
+
+  it('does not let stale initialize() failure wipe a newer login() session', async () => {
+    tokenStorage.setFromAuthResponse({
+      access_token: 'stale-access',
+      refresh_token: 'stale-refresh',
+      token_type: 'bearer',
+      expires_in_sec: 3600,
+      user: {
+        user_id: '00000000-0000-4000-8000-000000000000',
+        email: 'stale@example.com',
+        name: null,
+        created_at: '2026-11-13T08:00:00Z',
+      },
+    })
 
     let rejectMe!: (err: unknown) => void
     const meSpy = vi.spyOn(apiClient.auth, 'me').mockImplementation(

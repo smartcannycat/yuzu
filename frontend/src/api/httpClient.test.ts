@@ -36,6 +36,7 @@ function extractAuthHeader(input: RequestInfo | URL, init?: RequestInit): string
 
 describe('httpClient (ofetch)', () => {
   beforeEach(() => {
+    tokenStorage.clear()
     window.localStorage.clear()
     setHttpUnauthorizedHandler(null)
   })
