@@ -1,6 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
+import {
+  BODY_PANEL_PIN_COORDS,
+  BODY_PANEL_SHAPES,
+  getDefectTone,
+  getTonePanelColors,
+  getTonePinFill,
+} from '@/components/lots/detail/lotDefects'
 import type { BodyPanel, NormalizedDefect } from '@/types/api'
 
 interface Props {
@@ -14,31 +21,7 @@ const emit = defineEmits<{
   'update:selectedPanel': [panel: BodyPanel | null]
 }>()
 
-interface PanelPinCoord {
-  x: number
-  y: number
-}
-
-const PANEL_COORDS: Record<BodyPanel, PanelPinCoord> = {
-  front_bumper: { x: 140, y: 38 },
-  hood: { x: 140, y: 92 },
-  windshield: { x: 140, y: 145 },
-  roof: { x: 140, y: 220 },
-  tailgate: { x: 140, y: 310 },
-  rear_bumper: { x: 140, y: 364 },
-  front_left_fender: { x: 55, y: 92 },
-  front_right_fender: { x: 225, y: 92 },
-  front_left_door: { x: 60, y: 169 },
-  front_right_door: { x: 220, y: 169 },
-  rear_left_door: { x: 60, y: 251 },
-  rear_right_door: { x: 220, y: 251 },
-  rear_left_quarter: { x: 60, y: 318 },
-  rear_right_quarter: { x: 220, y: 318 },
-  left_sill: { x: 26, y: 208 },
-  right_sill: { x: 254, y: 208 },
-}
-
-const DEFECT_BY_PANEL = computed(() => {
+const defectByPanel = computed(() => {
   const map = new Map<BodyPanel, NormalizedDefect>()
   for (const defect of props.defects) {
     if (!map.has(defect.panel_id)) {
@@ -48,47 +31,12 @@ const DEFECT_BY_PANEL = computed(() => {
   return map
 })
 
-const uniquePinDefects = computed(() => Array.from(DEFECT_BY_PANEL.value.values()))
+const uniquePinDefects = computed(() => Array.from(defectByPanel.value.values()))
 
-function getPinTone(defect: NormalizedDefect): 'danger' | 'warning' | 'info' {
-  const code = defect.raw_code.toUpperCase()
-  if (code.includes('XX') || code.includes('X') || (defect.severity ?? 0) >= 3) {
-    return 'danger'
-  }
-  if (code.includes('W') || code.includes('S') || (defect.severity ?? 0) === 2) {
-    return 'warning'
-  }
-  return 'info'
-}
-
-function getToneFill(tone: 'danger' | 'warning' | 'info'): string {
-  if (tone === 'danger') return '#B91C1C'
-  if (tone === 'warning') return '#B45309'
-  return '#1D4ED8'
-}
-
-function getPanelFill(panelId: BodyPanel): string {
-  if (props.selectedPanel === panelId) {
-    return '#FFF4ED'
-  }
-  const defect = DEFECT_BY_PANEL.value.get(panelId)
-  if (!defect) return '#F8F8FA'
-  const tone = getPinTone(defect)
-  if (tone === 'danger') return '#FEF2F2'
-  if (tone === 'warning') return '#FFFBEB'
-  return '#EFF6FF'
-}
-
-function getPanelStroke(panelId: BodyPanel): string {
-  if (props.selectedPanel === panelId) {
-    return '#FF6B00'
-  }
-  const defect = DEFECT_BY_PANEL.value.get(panelId)
-  if (!defect) return '#D1D1D6'
-  const tone = getPinTone(defect)
-  if (tone === 'danger') return '#EF4444'
-  if (tone === 'warning') return '#F59E0B'
-  return '#3B82F6'
+function getPanelColors(panelId: BodyPanel) {
+  const defect = defectByPanel.value.get(panelId)
+  const tone = defect ? getDefectTone(defect) : null
+  return getTonePanelColors(tone, props.selectedPanel === panelId)
 }
 
 function togglePanel(panelId: BodyPanel): void {
@@ -104,185 +52,31 @@ function togglePanel(panelId: BodyPanel): void {
       aria-label="Схема дефектов кузова автомобиля сверху"
       class="h-auto w-full max-w-[232px] select-none sm:max-w-[244px]"
     >
-      <!-- Outer Sills (left/right side skirts) -->
-      <rect
-        x="18"
-        y="124"
-        width="16"
-        height="168"
-        rx="6"
-        :fill="getPanelFill('left_sill')"
-        :stroke="getPanelStroke('left_sill')"
-        stroke-width="1.5"
-        class="cursor-pointer transition-colors"
-        @click="togglePanel('left_sill')"
-      />
-      <rect
-        x="246"
-        y="124"
-        width="16"
-        height="168"
-        rx="6"
-        :fill="getPanelFill('right_sill')"
-        :stroke="getPanelStroke('right_sill')"
-        stroke-width="1.5"
-        class="cursor-pointer transition-colors"
-        @click="togglePanel('right_sill')"
-      />
+      <template v-for="shape in BODY_PANEL_SHAPES" :key="shape.id">
+        <rect
+          v-if="shape.kind === 'rect'"
+          :x="shape.x"
+          :y="shape.y"
+          :width="shape.width"
+          :height="shape.height"
+          :rx="shape.rx"
+          :fill="getPanelColors(shape.id).fill"
+          :stroke="getPanelColors(shape.id).stroke"
+          stroke-width="1.5"
+          class="cursor-pointer transition-colors"
+          @click="togglePanel(shape.id)"
+        />
+        <path
+          v-else
+          :d="shape.d"
+          :fill="getPanelColors(shape.id).fill"
+          :stroke="getPanelColors(shape.id).stroke"
+          stroke-width="1.5"
+          class="cursor-pointer transition-colors"
+          @click="togglePanel(shape.id)"
+        />
+      </template>
 
-      <!-- Front Bumper -->
-      <path
-        d="M 64 46 C 64 26, 98 18, 140 18 C 182 18, 216 26, 216 46 L 210 58 L 70 58 Z"
-        :fill="getPanelFill('front_bumper')"
-        :stroke="getPanelStroke('front_bumper')"
-        stroke-width="1.5"
-        class="cursor-pointer transition-colors"
-        @click="togglePanel('front_bumper')"
-      />
-
-      <!-- Front Fenders -->
-      <path
-        d="M 42 56 L 70 58 L 72 126 L 38 126 L 38 72 C 38 62, 40 57, 42 56 Z"
-        :fill="getPanelFill('front_left_fender')"
-        :stroke="getPanelStroke('front_left_fender')"
-        stroke-width="1.5"
-        class="cursor-pointer transition-colors"
-        @click="togglePanel('front_left_fender')"
-      />
-      <path
-        d="M 238 56 L 210 58 L 208 126 L 242 126 L 242 72 C 242 62, 240 57, 238 56 Z"
-        :fill="getPanelFill('front_right_fender')"
-        :stroke="getPanelStroke('front_right_fender')"
-        stroke-width="1.5"
-        class="cursor-pointer transition-colors"
-        @click="togglePanel('front_right_fender')"
-      />
-
-      <!-- Hood -->
-      <path
-        d="M 72 60 L 208 60 L 204 124 L 76 124 Z"
-        :fill="getPanelFill('hood')"
-        :stroke="getPanelStroke('hood')"
-        stroke-width="1.5"
-        class="cursor-pointer transition-colors"
-        @click="togglePanel('hood')"
-      />
-
-      <!-- Windshield -->
-      <path
-        d="M 76 126 L 204 126 L 194 164 L 86 164 Z"
-        :fill="getPanelFill('windshield')"
-        :stroke="getPanelStroke('windshield')"
-        stroke-width="1.5"
-        class="cursor-pointer transition-colors"
-        @click="togglePanel('windshield')"
-      />
-
-      <!-- Roof -->
-      <rect
-        x="86"
-        y="166"
-        width="108"
-        height="108"
-        rx="10"
-        :fill="getPanelFill('roof')"
-        :stroke="getPanelStroke('roof')"
-        stroke-width="1.5"
-        class="cursor-pointer transition-colors"
-        @click="togglePanel('roof')"
-      />
-
-      <!-- Front Doors -->
-      <rect
-        x="38"
-        y="128"
-        width="44"
-        height="82"
-        rx="4"
-        :fill="getPanelFill('front_left_door')"
-        :stroke="getPanelStroke('front_left_door')"
-        stroke-width="1.5"
-        class="cursor-pointer transition-colors"
-        @click="togglePanel('front_left_door')"
-      />
-      <rect
-        x="198"
-        y="128"
-        width="44"
-        height="82"
-        rx="4"
-        :fill="getPanelFill('front_right_door')"
-        :stroke="getPanelStroke('front_right_door')"
-        stroke-width="1.5"
-        class="cursor-pointer transition-colors"
-        @click="togglePanel('front_right_door')"
-      />
-
-      <!-- Rear Doors -->
-      <rect
-        x="38"
-        y="212"
-        width="44"
-        height="78"
-        rx="4"
-        :fill="getPanelFill('rear_left_door')"
-        :stroke="getPanelStroke('rear_left_door')"
-        stroke-width="1.5"
-        class="cursor-pointer transition-colors"
-        @click="togglePanel('rear_left_door')"
-      />
-      <rect
-        x="198"
-        y="212"
-        width="44"
-        height="78"
-        rx="4"
-        :fill="getPanelFill('rear_right_door')"
-        :stroke="getPanelStroke('rear_right_door')"
-        stroke-width="1.5"
-        class="cursor-pointer transition-colors"
-        @click="togglePanel('rear_right_door')"
-      />
-
-      <!-- Rear Quarters -->
-      <path
-        d="M 38 292 L 82 292 L 74 344 L 44 342 C 40 336, 38 324, 38 292 Z"
-        :fill="getPanelFill('rear_left_quarter')"
-        :stroke="getPanelStroke('rear_left_quarter')"
-        stroke-width="1.5"
-        class="cursor-pointer transition-colors"
-        @click="togglePanel('rear_left_quarter')"
-      />
-      <path
-        d="M 198 292 L 242 292 C 242 324, 240 336, 236 342 L 206 344 Z"
-        :fill="getPanelFill('rear_right_quarter')"
-        :stroke="getPanelStroke('rear_right_quarter')"
-        stroke-width="1.5"
-        class="cursor-pointer transition-colors"
-        @click="togglePanel('rear_right_quarter')"
-      />
-
-      <!-- Tailgate / Trunk -->
-      <path
-        d="M 86 276 L 194 276 L 204 344 L 76 344 Z"
-        :fill="getPanelFill('tailgate')"
-        :stroke="getPanelStroke('tailgate')"
-        stroke-width="1.5"
-        class="cursor-pointer transition-colors"
-        @click="togglePanel('tailgate')"
-      />
-
-      <!-- Rear Bumper -->
-      <path
-        d="M 70 346 L 210 346 L 214 362 C 214 374, 180 382, 140 382 C 100 382, 66 374, 66 362 Z"
-        :fill="getPanelFill('rear_bumper')"
-        :stroke="getPanelStroke('rear_bumper')"
-        stroke-width="1.5"
-        class="cursor-pointer transition-colors"
-        @click="togglePanel('rear_bumper')"
-      />
-
-      <!-- Subtle orientation labels -->
       <text
         x="140"
         y="12"
@@ -320,23 +114,23 @@ function togglePanel(panelId: BodyPanel): void {
         @keydown.space.prevent="togglePanel(defect.panel_id)"
       >
         <circle
-          :cx="PANEL_COORDS[defect.panel_id].x"
-          :cy="PANEL_COORDS[defect.panel_id].y"
+          :cx="BODY_PANEL_PIN_COORDS[defect.panel_id].x"
+          :cy="BODY_PANEL_PIN_COORDS[defect.panel_id].y"
           :r="selectedPanel === defect.panel_id ? 19 : 16"
-          :fill="getToneFill(getPinTone(defect))"
+          :fill="getTonePinFill(getDefectTone(defect))"
           :stroke="selectedPanel === defect.panel_id ? '#FF6B00' : '#FFFFFF'"
           :stroke-width="selectedPanel === defect.panel_id ? 3 : 2"
         />
         <text
-          :x="PANEL_COORDS[defect.panel_id].x"
-          :y="PANEL_COORDS[defect.panel_id].y + 4"
+          :x="BODY_PANEL_PIN_COORDS[defect.panel_id].x"
+          :y="BODY_PANEL_PIN_COORDS[defect.panel_id].y + 3.5"
           text-anchor="middle"
-          font-size="10.5"
+          :font-size="defect.raw_code.length > 3 ? 9 : 10.5"
           font-weight="700"
           fill="#FFFFFF"
           style="font-family: ui-monospace, monospace"
         >
-          {{ defect.raw_code.slice(0, 4) }}
+          {{ defect.raw_code.slice(0, 5) }}
         </text>
       </g>
     </svg>

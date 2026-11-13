@@ -3,8 +3,9 @@ import { CheckCircle2, FileText, ShieldAlert, ShieldCheck, Wrench } from '@lucid
 import { computed, ref, watch } from 'vue'
 
 import LotBodyDiagram from '@/components/lots/detail/LotBodyDiagram.vue'
+import { getDefectTone } from '@/components/lots/detail/lotDefects'
 import { BaseBadge, BaseCard, InsetListGroup, InsetListItem } from '@/components/ui'
-import type { BodyPanel, LotDetailResponse, NormalizedDefect } from '@/types/api'
+import type { BodyPanel, LotDetailResponse } from '@/types/api'
 import { formatRub } from '@/utils/formatters'
 
 interface Props {
@@ -27,17 +28,6 @@ watch(
     selectedPanel.value = null
   },
 )
-
-function getDefectBadgeVariant(defect: NormalizedDefect): 'danger' | 'warning' | 'info' {
-  const code = defect.raw_code.toUpperCase()
-  if (code.includes('XX') || code.includes('X') || (defect.severity ?? 0) >= 3) {
-    return 'danger'
-  }
-  if (code.includes('W') || code.includes('S') || (defect.severity ?? 0) === 2) {
-    return 'warning'
-  }
-  return 'info'
-}
 
 const repairValueText = computed(() => {
   const total = props.detail.economics.farpost_repair.grand_total_repair_rub
@@ -129,7 +119,7 @@ function toggleDefectRow(panelId: BodyPanel): void {
                   {{ defect.description_ru }}
                 </p>
               </div>
-              <BaseBadge :variant="getDefectBadgeVariant(defect)" class="shrink-0 font-mono">
+              <BaseBadge :variant="getDefectTone(defect)" class="shrink-0 font-mono">
                 {{ defect.raw_code }}
               </BaseBadge>
             </button>
