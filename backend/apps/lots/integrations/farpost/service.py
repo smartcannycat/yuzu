@@ -4,7 +4,8 @@ import hashlib
 import json
 import logging
 import re
-from dataclasses import asdict
+import time
+from dataclasses import asdict, replace
 from datetime import timedelta
 from functools import lru_cache
 from pathlib import Path
@@ -20,6 +21,8 @@ from apps.lots.integrations.farpost.client import (
     PartOffer,
 )
 from apps.lots.models import Lot
+from apps.lots.schemas import FarpostRepairSummary as RepairSchema
+from config.settings.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -169,3 +172,90 @@ def _operations(codes: set[str], matrix: dict) -> dict[str, int]:
         work[WorkType.BODYWORK] = max(work[WorkType.BODYWORK], work.pop(WorkType.PAINT, 0))
         work.pop(WorkType.PDR_AND_POLISH, None)
     return work
+
+
+def estimate_repair(lot: Lot, *, client: FarpostClient | None = None) -> RepairSchema:
+    settings = get_settings()
+    client = client or FarpostClient(timeout_sec=settings.FARPOST_TIMEOUT_SEC)
+    deadline = time.monotonic() + settings.FARPOST_BUDGET_SEC
+    matrix = repair_matrix()
+    parts, works = [], []
+    has_color_matched_parts = False
+    for panel, codes in sorted(_panel_codes(list(lot.defects.all())).items()):
+        name = FIXED_PANELS.get(panel, PANELS.get(panel, (panel,))[0])
+        is_replacement = bool(codes & {"X", "XX"})
+        if is_replacement and panel in FIXED_PANELS:
+            operations = {WorkType.BODYWORK: matrix["bodywork"]}
+        elif is_replacement and panel in PANELS:
+            _, part_name, side, position = PANELS[panel]
+            criteria = PartCriteria(
+                lot.make or "",
+                lot.model or "",
+                _body_code(lot),
+                panel,
+                part_name,
+                side,
+                position,
+                (lot.paint_code or "").strip().upper(),
+            )
+            offers, stale = [], False
+            if criteria.make and criteria.model and criteria.body_code:
+                offers, stale = search_cached(client, criteria, deadline=deadline)
+                if not offers and criteria.paint_code and not stale:
+                    criteria = replace(criteria, paint_code="")
+                    offers, stale = search_cached(client, criteria, deadline=deadline)
+            offer = min(offers, key=lambda item: item.price_rub) if offers else None
+            matched = bool(offer and offer.color_matched and not stale)
+            has_color_matched_parts |= matched
+            if offer and not stale:
+                subtitle = (
+                    f"Контрактная деталь в заводской цвет {lot.paint_code}"
+                    if matched
+                    else "Контрактная деталь; цвет не подтверждён, требуется окраска"
+                )
+            elif offer:
+                subtitle = "Предварительная цена из кэша; наличие и цвет не подтверждены"
+            else:
+                subtitle = "Статистическая оценка; наличие и цвет не подтверждены"
+            parts.append(
+                {
+                    "panel_id": panel,
+                    "defect_code": "XX" if "XX" in codes else "X",
+                    "part_name_ru": name,
+                    "subtitle_ru": subtitle,
+                    "price_from_rub": offer.price_rub
+                    if offer
+                    else matrix["parts"].get(panel, matrix["parts"]["default"]),
+                    "in_stock_vladivostok": bool(offer and not stale),
+                    "is_statistical_fallback": not bool(offer) or stale,
+                }
+            )
+            operations = {WorkType.MOUNT_DISMOUNT: matrix["mount_dismount"]}
+            if panel != "windshield":
+                operations[WorkType.PAINT] = 0 if matched else matrix["paint"]
+        else:
+            operations = _operations(codes, matrix)
+        for kind, amount in operations.items():
+            works.append(
+                {
+                    "work_type": kind,
+                    "label_ru": f"{LABELS[kind]}: {name} (оценка по матрице)",
+                    "amount_rub": amount,
+                    "zero_cost_reason_ru": "не требуется"
+                    if kind == WorkType.PAINT and amount == 0
+                    else None,
+                }
+            )
+    total_parts = sum(part["price_from_rub"] for part in parts)
+    total_works = sum(work["amount_rub"] for work in works)
+    return RepairSchema(
+        parts=parts,
+        service_works=works,
+        total_parts_from_rub=total_parts,
+        total_works_rub=total_works,
+        grand_total_repair_rub=total_parts + total_works,
+        has_color_matched_parts=has_color_matched_parts,
+        included_in_turnkey_hint_ru=(
+            "Оценка ремонта; включение в стоимость под ключ определяется расчётом экономики"
+        ),
+    )
