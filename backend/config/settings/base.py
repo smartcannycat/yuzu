@@ -9,6 +9,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 app_settings = get_settings()
 LOT_PARSER_BACKEND = app_settings.LOT_PARSER_BACKEND
+ML_SERVICE_URL = app_settings.ML_SERVICE_URL
+ML_SERVICE_TIMEOUT_SEC = app_settings.ML_SERVICE_TIMEOUT_SEC
+ML_SERVICE_API_KEY = app_settings.ML_SERVICE_API_KEY
 
 SECRET_KEY = app_settings.SECRET_KEY
 DEBUG = app_settings.DEBUG

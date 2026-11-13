@@ -51,6 +51,7 @@ class AppSettings(BaseSettings):
     # External Services
     ML_SERVICE_URL: str = "http://127.0.0.1:8001"
     ML_SERVICE_TIMEOUT_SEC: float = 30.0
+    ML_SERVICE_API_KEY: str = ""
     CBRF_API_URL: str = "https://www.cbr-xml-daily.ru/daily_json.js"
     HTTP_CLIENT_TIMEOUT_SEC: float = 10.0
 
