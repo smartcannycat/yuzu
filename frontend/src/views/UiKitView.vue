@@ -51,6 +51,11 @@ const yearMonthInput = ref('2018/13')
 const isSheetOpen = ref(false)
 const activeSheetTopic = ref<'auction' | 'farpost'>('auction')
 const demoMascotState = ref<CapyState>('sleeping')
+const logoBoopCount = ref(0)
+
+function handleLogoBoop(count: number): void {
+  logoBoopCount.value = count
+}
 
 const mascotDemoOptions: Array<{
   state: CapyState
@@ -612,12 +617,20 @@ function goHome() {
     <!-- 8. Brand Identity & Unified Logo Lockups -->
     <BaseCard as="section" padding="lg" class="flex flex-col gap-6">
       <div class="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 class="text-text-primary text-[19px] leading-snug font-semibold">
-          8. Логотип и айдентика («YUZU Identity»)
-        </h2>
-        <span class="text-text-muted text-[13px]"
-          >Единый риг Капибары Юдзу • 2 варианта (с маскотом / текстовый) • Lockup-компоновки</span
-        >
+        <div class="flex flex-col gap-0.5">
+          <h2 class="text-text-primary text-[19px] leading-snug font-semibold">
+            8. Логотип и айдентика («YUZU Identity»)
+          </h2>
+          <span class="text-text-secondary text-[13px]">
+            Живое дыхание, моргание и интерактивная реакция по клику на Капибару Юдзу («Boop»)
+          </span>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <BaseBadge v-if="logoBoopCount > 0" variant="success" size="sm">
+            Поглаживаний Юдзу: {{ logoBoopCount }}
+          </BaseBadge>
+          <span class="text-text-muted text-[12px]">Нажмите на капибару в любом логотипе ниже</span>
+        </div>
       </div>
 
       <!-- Primary Two Variants Comparison: Mascot Lockup vs Wordmark Lockup -->
@@ -627,12 +640,12 @@ function goHome() {
             <span class="text-text-secondary text-[12px] font-medium">
               Вариант 1: С Капибарой Юдзу (<code>variant="mascot"</code>)
             </span>
-            <BaseBadge variant="warning" size="sm">Основной</BaseBadge>
+            <BaseBadge variant="warning" size="sm">Основной • Интерактивный</BaseBadge>
           </div>
           <div class="border-border bg-surface flex flex-col gap-4 rounded-sm border p-4">
-            <BrandLogo layout="auth" variant="mascot" />
+            <BrandLogo layout="auth" variant="mascot" @boop="handleLogoBoop" />
             <div class="border-border border-t pt-3">
-              <BrandLogo layout="header" variant="mascot" />
+              <BrandLogo layout="header" variant="mascot" @boop="handleLogoBoop" />
             </div>
           </div>
         </BaseCard>
@@ -669,23 +682,23 @@ function goHome() {
 
         <div class="border-border bg-surface flex flex-wrap items-end gap-6 rounded-sm border p-5">
           <div class="flex flex-col items-center gap-1.5">
-            <BrandLogo layout="mark" :size="28" />
+            <BrandLogo layout="mark" :size="28" @boop="handleLogoBoop" />
             <span class="text-text-muted font-mono text-[11px]">28px</span>
           </div>
           <div class="flex flex-col items-center gap-1.5">
-            <BrandLogo layout="mark" :size="40" />
+            <BrandLogo layout="mark" :size="40" @boop="handleLogoBoop" />
             <span class="text-text-muted font-mono text-[11px]">40px</span>
           </div>
           <div class="flex flex-col items-center gap-1.5">
-            <BrandLogo layout="mark" :size="54" />
+            <BrandLogo layout="mark" :size="54" @boop="handleLogoBoop" />
             <span class="text-text-muted font-mono text-[11px]">54px</span>
           </div>
           <div class="flex flex-col items-center gap-1.5">
-            <BrandLogo layout="mark" :size="72" />
+            <BrandLogo layout="mark" :size="72" @boop="handleLogoBoop" />
             <span class="text-text-muted font-mono text-[11px]">72px</span>
           </div>
           <div class="flex flex-col items-center gap-1.5">
-            <BrandLogo layout="mark" :size="96" />
+            <BrandLogo layout="mark" :size="96" @boop="handleLogoBoop" />
             <span class="text-text-muted font-mono text-[11px]">96px</span>
           </div>
         </div>
