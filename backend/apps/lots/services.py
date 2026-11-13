@@ -1569,82 +1569,93 @@ def recompute_lot_economics(
     include_repairs: bool | None = None,
     custom_power_hp: int | None = None,
     custom_freight_rub: int | None = None,
+    on_date: date | None = None,
 ) -> None:
-    """Recompute customs, Wise Cost Ladder and lot totals via the BE-09 engine.
+    """(Re)compute customs, Wise Cost Ladder and lot totals via the BE-09 engine.
 
-    Requires the lot to already carry a customs calculation with a currency
-    rates snapshot (seeded fixtures or a future BE-05 rates provider); the
-    stored age corridor and freight are preserved, everything else is
-    recalculated from the engine grids. This is the shared backend for the
-    pipeline ``customs_calc`` step and the interactive recalculation.
+    Requires a currency rates snapshot (seeded fixtures or the BE-05 gateway).
+    The age corridor is resolved from the vehicle registration dates against
+    the declaration/calculation date. The utilization fee mode selected by
+    the user is kept separately from the applied one: a personal selection
+    is only downgraded to the commercial grid while power is unknown or
+    above 160 hp, and is restored automatically once ``custom_power_hp``
+    confirms the privilege. All writes (including the manual power override)
+    happen in a single transaction.
     """
-    customs_model = CustomsCalculation.objects.select_related("rates_snapshot").get(lot=lot)
-    rates_model = customs_model.rates_snapshot
-    if rates_model is None:
-        raise ValueError("Отсутствует снимок курсов валют для расчёта таможни")
-    rates = CurrencyRatesInput(
-        jpy_rub=rates_model.jpy_rub_bank,
-        eur_rub=rates_model.eur_rub_cbrf,
-        usd_rub=rates_model.usd_rub_cbrf,
-    )
-
-    ladder = WiseCostLadder.objects.get(lot=lot)
-    applied_bid_jpy = bid_jpy if bid_jpy is not None else ladder.car_bid_jpy
-    bid_rub = math.floor(applied_bid_jpy * rates.jpy_rub + 0.5)
-    fob_rub = math.floor(DEFAULT_JAPAN_FOB_JPY * rates.jpy_rub + 0.5)
-    freight_rub = (
-        custom_freight_rub
-        if custom_freight_rub is not None
-        else customs_model.freight_vladivostok_rub
-    )
-
-    if custom_power_hp is not None:
-        lot.power_hp = custom_power_hp
-        lot.power_hp_source = PowerHpSource.MANUAL
-        lot.is_under_160_hp = custom_power_hp <= 160
-        lot.save(update_fields=["power_hp", "power_hp_source", "is_under_160_hp"])
-
-    power_hp = custom_power_hp if custom_power_hp is not None else lot.power_hp
-    commercial_util = (
-        is_commercial_util if is_commercial_util is not None else customs_model.is_commercial_util
-    )
-    customs_value_rub = bid_rub + fob_rub + freight_rub
-
-    result = calculate_customs(
-        CustomsInput(
-            engine_cc=lot.engine_cc,
-            fuel_type=lot.fuel_type,
-            power_hp=power_hp,
-            first_reg_year=lot.first_reg_year,
-            first_reg_month=lot.first_reg_month,
-            age_corridor=customs_model.age_corridor,
-            is_commercial_util=commercial_util,
-            customs_value_rub=customs_value_rub,
-            freight_rub=freight_rub,
-            broker_rub=customs_model.broker_svh_sbkts_rub,
-        ),
-        rates,
-        on_date=timezone.now().date(),
-    )
-
-    repairs_included = include_repairs if include_repairs is not None else lot.is_repairs_included
-    repair = FarpostRepairSummary.objects.filter(lot=lot).first()
-    repair_total_rub = repair.grand_total_repair_rub if repair else 0
-    market_price_rub = lot.market_price_rf_rub
-
-    ladder_result = build_wise_cost_ladder(
-        LadderInput(
-            bid_jpy=applied_bid_jpy,
-            rates=rates,
-            customs=result,
-            market_price_rf_rub=market_price_rub,
-            broker_rub=customs_model.broker_svh_sbkts_rub,
-            repair_total_rub=repair_total_rub,
-            include_repairs=repairs_included,
-        )
-    )
+    calculation_date = on_date if on_date is not None else timezone.now().date()
 
     with transaction.atomic():
+        customs_model = CustomsCalculation.objects.select_related("rates_snapshot").get(lot=lot)
+        rates_model = customs_model.rates_snapshot
+        if rates_model is None:
+            raise ValueError("Отсутствует снимок курсов валют для расчёта таможни")
+        rates = CurrencyRatesInput(
+            jpy_rub=rates_model.jpy_rub_bank,
+            eur_rub=rates_model.eur_rub_cbrf,
+            usd_rub=rates_model.usd_rub_cbrf,
+        )
+
+        ladder = WiseCostLadder.objects.get(lot=lot)
+        applied_bid_jpy = bid_jpy if bid_jpy is not None else ladder.car_bid_jpy
+        bid_rub = math.floor(applied_bid_jpy * rates.jpy_rub + 0.5)
+        fob_rub = math.floor(DEFAULT_JAPAN_FOB_JPY * rates.jpy_rub + 0.5)
+        freight_rub = (
+            custom_freight_rub
+            if custom_freight_rub is not None
+            else customs_model.freight_vladivostok_rub
+        )
+
+        selected_commercial = (
+            is_commercial_util
+            if is_commercial_util is not None
+            else customs_model.util_mode_selected_commercial
+        )
+
+        lot_update_fields: list[str] = []
+        if custom_power_hp is not None:
+            lot.power_hp = custom_power_hp
+            lot.power_hp_source = PowerHpSource.MANUAL
+            lot.is_under_160_hp = custom_power_hp <= 160
+            lot_update_fields += ["power_hp", "power_hp_source", "is_under_160_hp"]
+
+        power_hp = custom_power_hp if custom_power_hp is not None else lot.power_hp
+        customs_value_rub = bid_rub + fob_rub + freight_rub
+
+        result = calculate_customs(
+            CustomsInput(
+                engine_cc=lot.engine_cc,
+                fuel_type=lot.fuel_type,
+                power_hp=power_hp,
+                first_reg_year=lot.first_reg_year,
+                first_reg_month=lot.first_reg_month,
+                is_commercial_util=selected_commercial,
+                customs_value_rub=customs_value_rub,
+                freight_rub=freight_rub,
+                broker_rub=customs_model.broker_svh_sbkts_rub,
+            ),
+            rates,
+            on_date=calculation_date,
+        )
+
+        repairs_included = (
+            include_repairs if include_repairs is not None else lot.is_repairs_included
+        )
+        repair = FarpostRepairSummary.objects.filter(lot=lot).first()
+        repair_total_rub = repair.grand_total_repair_rub if repair else 0
+        market_price_rub = lot.market_price_rf_rub
+
+        ladder_result = build_wise_cost_ladder(
+            LadderInput(
+                bid_jpy=applied_bid_jpy,
+                rates=rates,
+                customs=result,
+                market_price_rf_rub=market_price_rub,
+                broker_rub=customs_model.broker_svh_sbkts_rub,
+                repair_total_rub=repair_total_rub,
+                include_repairs=repairs_included,
+            )
+        )
+
         customs_model.age_corridor = result.age_corridor
         customs_model.duty_calculation_mode = result.duty_calculation_mode
         customs_model.engine_cc = result.engine_cc
@@ -1652,7 +1663,10 @@ def recompute_lot_economics(
         customs_model.effective_duty_pct = result.effective_duty_pct
         customs_model.customs_duty_eur = result.customs_duty_eur
         customs_model.customs_duty_rub = result.customs_duty_rub
+        customs_model.excise_rub = result.excise_rub
+        customs_model.import_vat_rub = result.import_vat_rub
         customs_model.is_under_160_hp = result.is_under_160_hp
+        customs_model.util_mode_selected_commercial = selected_commercial
         customs_model.is_commercial_util = result.is_commercial_util
         customs_model.utilization_fee_rub = result.utilization_fee_rub
         customs_model.customs_clearance_fee_rub = result.customs_clearance_fee_rub
@@ -1687,33 +1701,56 @@ def recompute_lot_economics(
         lot.benefit_percentage = ladder_result.benefit_percentage
         lot.is_repairs_included = repairs_included
         lot.meti_sanction_risk = result.meti_sanction_risk
-        lot.save(
-            update_fields=[
-                "turnkey_cost_rub",
-                "net_benefit_rub",
-                "benefit_percentage",
-                "is_repairs_included",
-                "meti_sanction_risk",
-                "updated_at",
-            ]
-        )
+        lot_update_fields += [
+            "turnkey_cost_rub",
+            "net_benefit_rub",
+            "benefit_percentage",
+            "is_repairs_included",
+            "meti_sanction_risk",
+            "updated_at",
+        ]
+        lot.save(update_fields=lot_update_fields)
+
+
+def _missing_customs_inputs(lot: Lot) -> list[str]:
+    """Mandatory inputs for the customs_calc pipeline step (Russian labels)."""
+    missing: list[str] = []
+    if lot.fuel_type != FuelType.EV and not lot.engine_cc:
+        missing.append("объём двигателя")
+    if not lot.first_reg_year:
+        missing.append("дата первой регистрации")
+    if not lot.power_hp and lot.fuel_type == FuelType.EV:
+        missing.append("мощность двигателя (для акциза EV)")
+    ladder = WiseCostLadder.objects.filter(lot=lot).first()
+    if ladder is None or not ladder.car_bid_jpy:
+        missing.append("ставка на аукционе")
+    if not lot.market_price_rf_rub:
+        missing.append("рыночная цена в РФ")
+    customs = CustomsCalculation.objects.select_related("rates_snapshot").filter(lot=lot).first()
+    if customs is None or customs.rates_snapshot is None:
+        missing.append("снимок курсов валют (шлюз ЦБ РФ)")
+    return missing
 
 
 def _step_customs_calc(item: BatchItem) -> bool:
     _advance_step(item, TaskStep.CUSTOMS_CALC)
     lot = item.lot
-    if lot is None or not lot.engine_cc or not lot.first_reg_year:
-        # Engine inputs arrive from the OCR pipeline; the rates snapshot comes
-        # from the currency gateway (BE-05). Recomputation is skipped until
-        # both prerequisites are in place for uploaded lots.
-        return True
-    if not CustomsCalculation.objects.filter(lot=lot).exists():
-        return True
+    if lot is None:
+        _fail_item(item, TaskStep.FAILED, "Лот не привязан к элементу пачки")
+        return False
+    missing = _missing_customs_inputs(lot)
+    if missing:
+        _fail_item(
+            item,
+            TaskStep.FAILED,
+            "Недостаточно данных для расчёта таможни: " + ", ".join(missing),
+        )
+        return False
     try:
         recompute_lot_economics(lot)
     except Exception:
         logger.exception("Customs recomputation failed for lot %s", lot.pk)
-        _fail_item(item, TaskStep.FAILED, "Не удалось рассчитать таможенные платежи")
+        _fail_item(item, TaskStep.FAILED, "Не удалось рассчитать таможные платежи")
         return False
     return True
 
@@ -2154,6 +2191,8 @@ def _build_customs_out(customs: CustomsCalculation) -> schemas.CustomsCalculatio
         effective_duty_pct=customs.effective_duty_pct,
         customs_duty_eur=customs.customs_duty_eur,
         customs_duty_rub=customs.customs_duty_rub,
+        excise_rub=customs.excise_rub,
+        import_vat_rub=customs.import_vat_rub,
         is_under_160_hp=customs.is_under_160_hp,
         is_commercial_util=customs.is_commercial_util,
         utilization_fee_rub=customs.utilization_fee_rub,

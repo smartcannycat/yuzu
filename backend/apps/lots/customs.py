@@ -29,6 +29,7 @@ from apps.core.enums import (
 
 # Sentinel upper bounds for the last (unbounded) tier of each grid.
 _UNBOUNDED_CC = 10**9
+_UNBOUNDED_HP = 10**6
 _UNBOUNDED_VALUE_EUR = 10**9
 _UNBOUNDED_VALUE_RUB = 10**11
 
@@ -116,6 +117,23 @@ _METI_ICE_MAX_ENGINE_CC = 1_900
 # BEV import duty share of the aggregate customs payment (research/02, 1.5).
 _EV_DUTY_PCT = 0.15
 
+# Import excise on passenger cars by engine power, 2026 rates per 1 hp
+# (Tax Code art. 193 as amended by Federal Law No. 425-FZ of 28.11.2025).
+# (upper hp bound inclusive, RUB per 1 hp)
+_EXCISE_2026_RUB_PER_HP: tuple[tuple[int, int], ...] = (
+    (90, 0),
+    (150, 64),
+    (200, 613),
+    (300, 1_004),
+    (400, 1_711),
+    (500, 1_771),
+    (_UNBOUNDED_HP, 1_829),
+)
+
+# Import VAT rate. research/02 (section 1.5) names 20%, but Federal Law
+# No. 425-FZ raised import VAT to 22% from 01.01.2026; the legal rate wins.
+_IMPORT_VAT_PCT = 0.22
+
 # Utilization fee privilege power threshold (Decree No. 1713).
 _UTIL_PRIVILEGED_MAX_HP = 160
 
@@ -180,6 +198,7 @@ class CustomsInput:
     customs_value_rub: int | None = None
     freight_rub: int | None = None
     broker_rub: int | None = None
+    mild_hybrid: bool = False
 
 
 @dataclass(frozen=True)
@@ -201,6 +220,8 @@ class CustomsResult:
     freight_vladivostok_rub: int
     broker_svh_sbkts_rub: int
     meti_sanction_risk: bool
+    excise_rub: int = 0
+    import_vat_rub: int = 0
 
 
 @dataclass(frozen=True)
@@ -340,11 +361,26 @@ def round_eur_to_rub(amount_eur: float, eur_rub: float) -> int:
     return math.floor(amount_eur * eur_rub + 0.5)
 
 
-def meti_sanction_risk(fuel_type: FuelType | str, engine_cc: int | None) -> bool:
-    """METI export restriction: hybrids, EVs and ICE over 1900 cc."""
+def meti_sanction_risk(
+    fuel_type: FuelType | str,
+    engine_cc: int | None,
+    *,
+    mild_hybrid: bool = False,
+) -> bool:
+    """METI export restriction: hybrids, EVs and ICE over 1900 cc.
+
+    ``mild_hybrid`` implements the METI MHEV exemption (directive 750 as
+    amended 11.2024): a hybrid is directly exportable when the confirmation
+    data proves an integrated 12/48V starter-generator, no pure EV traction
+    mode and no high-voltage traction battery. The flag must only be set by
+    the data source that verified those characteristics (catalog/OCR);
+    by default every hybrid is treated as sanctioned.
+    """
     fuel = str(fuel_type)
-    if fuel in (FuelType.HYBRID, FuelType.EV):
+    if fuel == FuelType.EV:
         return True
+    if fuel == FuelType.HYBRID:
+        return not mild_hybrid
     if fuel in (FuelType.GASOLINE, FuelType.DIESEL):
         return engine_cc is not None and engine_cc > _METI_ICE_MAX_ENGINE_CC
     return False
@@ -393,6 +429,20 @@ def calculate_utilization_fee(
     return UtilizationFeeResult(fee_rub=int(fee), fee_type=UtilFeeType.COMMERCIAL)
 
 
+def calculate_excise(power_hp: int) -> int:
+    """Import excise for cars taxed outside the unified EAEU rates (EVs).
+
+    2026 grid per 1 hp by engine power (Tax Code art. 193, Law No. 425-FZ);
+    the bracket rate applies to the whole power figure, not just the excess.
+    """
+    if power_hp < 0:
+        raise ValueError("power_hp must not be negative")
+    for upper_bound, rate in _EXCISE_2026_RUB_PER_HP:
+        if power_hp <= upper_bound:
+            return power_hp * rate
+    raise ValueError("unreachable excise bracket")  # pragma: no cover
+
+
 def calculate_clearance_fee(customs_value_rub: int) -> int:
     """Customs clearance fee by declared value (Decree No. 342 grid)."""
     if customs_value_rub < 0:
@@ -430,18 +480,27 @@ def calculate_customs(
         customs_value_rub = params.customs_value_rub
 
     fuel = str(params.fuel_type)
+    excise_rub = 0
+    import_vat_rub = 0
     if fuel == FuelType.EV:
-        # Battery electric vehicles fall outside the unified EEC No. 107 rates:
-        # the duty part of the aggregate payment is 15% of customs value
-        # (research/02, section 1.5).
+        # Battery electric vehicles fall outside the unified EEC No. 107
+        # rates and pay the aggregate customs payment (research/02, 1.5):
+        # duty 15% + excise (Tax Code art. 193, per 1 hp) + VAT.
+        if params.power_hp is None:
+            raise ValueError("power_hp is required for the EV excise calculation")
         duty_eur = round(customs_value_eur * _EV_DUTY_PCT, 2)
+        duty_rub = round_eur_to_rub(duty_eur, rates.eur_rub)
         duty = DutyResult(
             mode=DutyCalculationMode.PCT_OF_VALUE,
             rate_eur_per_cc=None,
             effective_duty_pct=_EV_DUTY_PCT * 100,
             basis=DutyBasis.AD_VALOREM,
             duty_eur=duty_eur,
-            duty_rub=round_eur_to_rub(duty_eur, rates.eur_rub),
+            duty_rub=duty_rub,
+        )
+        excise_rub = calculate_excise(params.power_hp)
+        import_vat_rub = math.floor(
+            (customs_value_rub + duty_rub + excise_rub) * _IMPORT_VAT_PCT + 0.5
         )
     else:
         duty = calculate_duty(age_corridor, params.engine_cc, customs_value_eur, rates)
@@ -460,6 +519,8 @@ def calculate_customs(
         effective_duty_pct=duty.effective_duty_pct,
         customs_duty_eur=duty.duty_eur,
         customs_duty_rub=duty.duty_rub,
+        excise_rub=excise_rub,
+        import_vat_rub=import_vat_rub,
         is_under_160_hp=is_under_160_hp(params.power_hp),
         is_commercial_util=params.is_commercial_util or util.fee_type == UtilFeeType.COMMERCIAL,
         utilization_fee_rub=util.fee_rub,
@@ -467,7 +528,11 @@ def calculate_customs(
         customs_clearance_fee_rub=calculate_clearance_fee(customs_value_rub),
         freight_vladivostok_rub=freight_rub,
         broker_svh_sbkts_rub=DEFAULT_BROKER_SVH_SBKTS_RUB,
-        meti_sanction_risk=meti_sanction_risk(params.fuel_type, params.engine_cc),
+        meti_sanction_risk=meti_sanction_risk(
+            params.fuel_type,
+            params.engine_cc,
+            mild_hybrid=params.mild_hybrid,
+        ),
     )
 
 
@@ -483,7 +548,15 @@ def build_wise_cost_ladder(params: LadderInput) -> LadderResult:
     bid_rub = math.floor(params.bid_jpy * rates.jpy_rub + 0.5)
     fob_rub = math.floor(params.japan_fob_jpy * rates.jpy_rub + 0.5)
     freight_rub = customs.freight_vladivostok_rub
-    duty_step_rub = customs.customs_duty_rub + customs.customs_clearance_fee_rub
+    # Step 4 carries all state import taxes plus the clearance fee so that
+    # every mandatory payment lands in the turnkey total (EVs additionally
+    # carry the excise and import VAT of the aggregate payment).
+    duty_step_rub = (
+        customs.customs_duty_rub
+        + customs.excise_rub
+        + customs.import_vat_rub
+        + customs.customs_clearance_fee_rub
+    )
     util_rub = customs.utilization_fee_rub
     broker_rub = (
         params.broker_rub if params.broker_rub is not None else customs.broker_svh_sbkts_rub
