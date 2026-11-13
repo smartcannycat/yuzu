@@ -1,4 +1,5 @@
 import logging
+import math
 import threading
 import time
 import uuid
@@ -9,7 +10,8 @@ from pathlib import Path
 from django.conf import settings
 from django.core.files.uploadedfile import UploadedFile
 from django.db import connection, transaction
-from django.db.models import Max
+from django.db.models import CharField, Count, F, Max, Value
+from django.db.models.functions import Coalesce, Concat
 from django.utils import timezone
 from django.utils.module_loading import import_string
 
@@ -39,6 +41,7 @@ from apps.core.exceptions import (
     ConflictProblemError,
     NotFoundProblemError,
 )
+from apps.lots import schemas
 from apps.lots.models import (
     Batch,
     BatchItem,
@@ -415,87 +418,829 @@ _COROLLA_WISE_COST_STEPS: list[dict] = [
     },
 ]
 
-_SIMPLE_STARTER_LOTS: list[dict] = [
+_VEZEL_LOT_FIELDS: dict = {
+    "lot_number": "5094",
+    "auction_house": AuctionHouse.USS,
+    "auction_branch": "USS Tokyo",
+    "auction_strictness_index": 0.85,
+    "make": "Honda",
+    "model": "Vezel",
+    "trim": "Hybrid",
+    "model_code": "RU3",
+    "chassis_number": "RU3-1209412",
+    "frame_id": "RU3-1209412",
+    "frame_id_confidence": FrameIdConfidence.EXACT,
+    "first_reg_year": 2022,
+    "first_reg_month": 3,
+    "first_reg_date_str": "03.2022 (3-5 лет, ЕАЭС)",
+    "is_pass_corridor_3_5": True,
+    "engine_cc": 1496,
+    "power_hp": 131,
+    "power_hp_source": PowerHpSource.DROM_CATALOG,
+    "is_under_160_hp": True,
+    "mileage_km": 45000,
+    "odometer_status": OdometerStatus.CONFIRMED,
+    "transmission": "CVT",
+    "drive_type": DriveType.FOUR_WD,
+    "fuel_type": FuelType.HYBRID,
+    "color_ru": "Серебристый металлик",
+    "paint_code": "NH707M",
+    "overall_grade": "4.0",
+    "exterior_grade": "A",
+    "interior_grade": "A",
+    "recycling_fee_yen": 13200,
+    "recycling_fee_paid": True,
+    "equipment_ru": [
+        "Климат-контроль",
+        "Светодиодная оптика",
+        "Литые диски R17",
+        "Камера заднего вида",
+        "Honda Sensing",
+    ],
+    "inspector_notes_ru": [
+        "Сколы A2 на переднем бампере и вмятина U2 на задней двери",
+        "Салон чистый, без замечаний (оценка A)",
+    ],
+    "inspector_notes_raw": [
+        "前バンパー A2 / 後ドア U2",
+    ],
+    "seller_comments_ru": [
+        "Один владелец, не курили в салоне",
+    ],
+    "year": 2022,
+    "turnkey_cost_rub": 1480000,
+    "market_price_rf_rub": 1600000,
+    "net_benefit_rub": 120000,
+    "benefit_percentage": 8.1,
+    "verdict": TrafficLightColor.YELLOW,
+    "verdict_headline": "🟡 ВНИМАНИЕ: СКОЛЫ A2/U2",
+    "meti_sanction_risk": True,
+    "has_anomaly": False,
+}
+
+_VEZEL_DEFECTS: list[dict] = [
     {
-        "make": "Honda",
-        "model": "Vezel",
-        "trim": "Hybrid",
-        "year": 2019,
-        "frame_id": "RU3-1209412",
-        "chassis_number": "RU3-1209412",
-        "auction_house": AuctionHouse.USS,
-        "overall_grade": "4.0",
-        "fuel_type": FuelType.HYBRID,
-        "meti_sanction_risk": True,
-        "turnkey_cost_rub": 1480000,
-        "market_price_rf_rub": 1600000,
-        "net_benefit_rub": 120000,
-        "benefit_percentage": 8.1,
-        "verdict": TrafficLightColor.YELLOW,
-        "verdict_headline": "🟡 ВНИМАНИЕ: СКОЛЫ A2/U2",
-        "has_anomaly": False,
+        "panel_id": BodyPanel.FRONT_BUMPER,
+        "panel_ru": "Передний бампер",
+        "defect_types": ["A"],
+        "severity": 2,
+        "raw_code": "A2",
+        "description_ru": "Передний бампер — сколы до 10 см",
     },
     {
-        "make": "Nissan",
-        "model": "Note",
-        "trim": "e-Power",
-        "year": 2021,
-        "frame_id": "HE12-389104",
-        "chassis_number": "HE12-389104",
+        "panel_id": BodyPanel.REAR_LEFT_DOOR,
+        "panel_ru": "Задняя левая дверь",
+        "defect_types": ["U"],
+        "severity": 2,
+        "raw_code": "U2",
+        "description_ru": "Задняя левая дверь — вмятина (PDR без покраски)",
+    },
+]
+
+_VEZEL_RISK_FLAGS: dict = dict.fromkeys(
+    (
+        "is_flooded",
+        "airbag_deployed",
+        "hail_damage",
+        "underbody_rust",
+        "underbody_corrosion",
+        "core_support_repair",
+        "pillar_or_frame_repair",
+        "panel_replaced_xx",
+        "panel_needs_replacement_x",
+        "odometer_issue",
+        "color_changed",
+        "windshield_damage",
+        "repaired_grade_r_ra",
+    ),
+    False,
+)
+
+_VEZEL_VERDICT: dict = {
+    "verdict": TrafficLightColor.YELLOW,
+    "headline": "ВНИМАНИЕ: СКОЛЫ A2/U2",
+    "short_verdict_label": "🟡 ВНИМАНИЕ: СКОЛЫ A2/U2",
+    "badge_text": "Выгода: +120 000 ₽",
+    "net_benefit_rub": 120000,
+    "benefit_percentage": 8.1,
+    "body_summary_ru": (
+        "Кузов (оценка A): сколы A2 на бампере и вмятина U2 на двери, "
+        "ремонт PDR без замены деталей."
+    ),
+    "interior_summary_ru": "Салон (оценка A): чистый, без замечаний.",
+    "reasoning_bullets": [
+        "Гибрид Honda Vezel: санкционный риск METI, но мощность 131 л.с. < 160 л.с.",
+        "Оценка 4.0 A/A, родной пробег 45 000 км",
+        "Ремонт ограничен сколами и вмятинами без замены панелей",
+    ],
+}
+
+_VEZEL_MARKET: dict = {
+    "market_price_rf_rub": 1600000,
+    "analogs_count": 8,
+    "price_min_rub": 1450000,
+    "price_max_rub": 1850000,
+    "search_region_ru": "ДФО / Владивосток",
+    "excludes_under_order": True,
+    "filtered_out_under_order_count": 4,
+    "is_fallback": False,
+    "fallback_reason_ru": None,
+    "drom_search_url": "https://vladivostok.drom.ru/honda/vezel/year-2022/engine-1.5/4wd/",
+}
+
+_VEZEL_AUDIT: dict = {
+    "status": CrossAuditStatus.CLEAN,
+    "source_name": "AucJP + AAA Japan / Pravto",
+    "is_archive_available": True,
+    "risk_level": RiskLevel.CLEAN,
+    "has_critical_anomaly": False,
+    "headline_ru": "Аудит истории торгов: нарушений по Frame ID не обнаружено",
+    "times_auctioned": 1,
+}
+
+_VEZEL_AUDIT_HISTORY: list[dict] = [
+    {
+        "auction_date": date(2026, 11, 11),
+        "auction_house": "USS Tokyo",
+        "auction_strictness": 0.85,
+        "lot_number": "5094",
+        "overall_grade": "4.0",
+        "mileage_km": 45000,
+        "defects_summary": "Сколы A2 на бампере, вмятина U2 на двери",
+        "closing_price_jpy": 1700000,
+        "sheet_archive_url": None,
+    },
+]
+
+_VEZEL_SAFETY_CHECKLIST: dict = {
+    "overall_status": ChecklistItemStatus.OK,
+    "overall_label_ru": "В норме",
+}
+
+_VEZEL_SAFETY_ITEMS: list[dict] = [
+    {
+        "system_key": SystemKey.STRUCTURAL_FRAME,
+        "label_ru": "Силовой каркас и лонжероны",
+        "status": ChecklistItemStatus.OK,
+        "detail_ru": "Нарушений геометрии и ремонта несущих элементов не отмечено",
+    },
+    {
+        "system_key": SystemKey.AIRBAGS_SRS,
+        "label_ru": "Подушки безопасности (SRS)",
+        "status": ChecklistItemStatus.OK,
+        "detail_ru": "Отметок о срабатывании или отсутствии подушек нет",
+    },
+    {
+        "system_key": SystemKey.ENGINE_TRANSMISSION,
+        "label_ru": "ДВС и трансмиссия",
+        "status": ChecklistItemStatus.OK,
+        "detail_ru": "Гибридная установка i-MMD без замечаний инспектора",
+    },
+    {
+        "system_key": SystemKey.UNDERBODY_CORROSION,
+        "label_ru": "Днище и пороги",
+        "status": ChecklistItemStatus.OK,
+        "detail_ru": "Сквозная коррозия не отмечена",
+    },
+    {
+        "system_key": SystemKey.FLOOD_OR_FIRE,
+        "label_ru": "Следы затопления / пожара / града",
+        "status": ChecklistItemStatus.OK,
+        "detail_ru": "Стоп-факторов в бланке не зафиксировано",
+    },
+]
+
+_VEZEL_CUSTOMS: dict = {
+    "age_corridor": AgeCorridor.THREE_TO_FIVE_YEARS,
+    "duty_calculation_mode": DutyCalculationMode.EUR_PER_CC,
+    "engine_cc": 1496,
+    "duty_rate_eur_per_cc": 1.7,
+    "effective_duty_pct": None,
+    "customs_duty_eur": 2517.68,
+    "customs_duty_rub": 239180,
+    "is_under_160_hp": True,
+    "is_commercial_util": False,
+    "utilization_fee_rub": 5200,
+    "customs_clearance_fee_rub": 3120,
+    "freight_vladivostok_rub": 95000,
+    "broker_svh_sbkts_rub": 65000,
+    "meti_sanction_risk": True,
+}
+
+_VEZEL_RATES_SNAPSHOT: dict = {
+    "jpy_rub_bank": 0.585,
+    "jpy_rate_source": "ДВ-банк (ориентир)",
+    "eur_rub_cbrf": 95.0,
+    "usd_rub_cbrf": 85.0,
+    "cbrf_date": "12.11.2026",
+}
+
+_VEZEL_FARPOST_SUMMARY: dict = {
+    "total_parts_from_rub": 0,
+    "total_works_rub": 18000,
+    "grand_total_repair_rub": 18000,
+    "has_color_matched_parts": False,
+    "included_in_turnkey_hint_ru": "Сумма уже включена в расчёт под ключ",
+}
+
+_VEZEL_FARPOST_WORKS: list[dict] = [
+    {
+        "work_type": WorkType.PDR_AND_POLISH,
+        "label_ru": "PDR удаление вмятины + полировка сколов",
+        "amount_rub": 18000,
+        "zero_cost_reason_ru": None,
+    },
+]
+
+_VEZEL_WISE_COST_LADDER: dict = {
+    "car_bid_jpy": 1700000,
+    "car_bid_rub": 994500,
+    "turnkey_cost_rub": 1480000,
+    "market_price_rf_rub": 1600000,
+    "net_benefit_rub": 120000,
+    "benefit_percentage": 8.1,
+}
+
+_VEZEL_WISE_COST_STEPS: list[dict] = [
+    {
+        "step_number": 1,
+        "name_ru": "Ставка на аукционе",
+        "amount_rub": 994500,
+        "original_currency": "JPY",
+        "original_amount": 1700000.0,
+        "is_optional": False,
+    },
+    {
+        "step_number": 2,
+        "name_ru": "Расходы в Японии (FOB и сбор)",
+        "amount_rub": 60000,
+        "original_currency": "JPY",
+        "original_amount": 102500.0,
+        "is_optional": False,
+    },
+    {
+        "step_number": 3,
+        "name_ru": "Фрахт Тояма-ВЛК",
+        "amount_rub": 95000,
+        "original_currency": "USD",
+        "original_amount": 1117.0,
+        "is_optional": False,
+    },
+    {
+        "step_number": 4,
+        "name_ru": "Таможенная пошлина ЕАЭС и сбор",
+        "amount_rub": 242300,
+        "original_currency": "EUR",
+        "original_amount": 2517.68,
+        "is_optional": False,
+    },
+    {
+        "step_number": 5,
+        "name_ru": "Утилизационный сбор РФ",
+        "amount_rub": 5200,
+        "original_currency": "RUB",
+        "original_amount": 5200.0,
+        "is_optional": False,
+    },
+    {
+        "step_number": 6,
+        "name_ru": "СВХ, брокер, СБКТС, ЭПТС",
+        "amount_rub": 65000,
+        "original_currency": "RUB",
+        "original_amount": 65000.0,
+        "is_optional": False,
+    },
+    {
+        "step_number": 7,
+        "name_ru": "Запчасти Farpost и ремонт",
+        "amount_rub": 18000,
+        "original_currency": "RUB",
+        "original_amount": 18000.0,
+        "is_optional": True,
+    },
+]
+
+_NOTE_LOT_FIELDS: dict = {
+    "lot_number": "7281",
+    "auction_house": AuctionHouse.CAA,
+    "auction_branch": "CAA Kanto",
+    "auction_strictness_index": 0.80,
+    "make": "Nissan",
+    "model": "Note",
+    "trim": "e-Power",
+    "model_code": "HE12",
+    "chassis_number": "HE12-389104",
+    "frame_id": "HE12-389104",
+    "frame_id_confidence": FrameIdConfidence.EXACT,
+    "first_reg_year": 2024,
+    "first_reg_month": 6,
+    "first_reg_date_str": "06.2024 (до 3 лет, ЕАЭС)",
+    "is_pass_corridor_3_5": False,
+    "engine_cc": 1198,
+    "power_hp": 109,
+    "power_hp_source": PowerHpSource.DROM_CATALOG,
+    "is_under_160_hp": True,
+    "mileage_km": 65000,
+    "odometer_status": OdometerStatus.CONFIRMED,
+    "transmission": "CVT",
+    "drive_type": DriveType.TWO_WD,
+    "fuel_type": FuelType.HYBRID,
+    "color_ru": "Белый перламутр",
+    "paint_code": "WW3",
+    "overall_grade": "4.5",
+    "exterior_grade": "A",
+    "interior_grade": "A",
+    "recycling_fee_yen": 12800,
+    "recycling_fee_paid": True,
+    "equipment_ru": [
+        "Климат-контроль",
+        "Камера заднего вида",
+        "Подогрев сидений",
+        "Nissan Safety Shield",
+    ],
+    "inspector_notes_ru": [
+        "Состояние отличное, мелкие царапины W1 на переднем крыле",
+        "Салон новый, без следов эксплуатации (оценка A)",
+    ],
+    "inspector_notes_raw": [
+        "前フェンダー W1",
+    ],
+    "seller_comments_ru": [
+        "Первый владелец, сервисная история доступна",
+    ],
+    "year": 2024,
+    "turnkey_cost_rub": 980000,
+    "market_price_rf_rub": 1190000,
+    "net_benefit_rub": 210000,
+    "benefit_percentage": 21.4,
+    "verdict": TrafficLightColor.GREEN,
+    "verdict_headline": "🟢 РЕКОМЕНДОВАНО К ПОКУПКЕ",
+    "meti_sanction_risk": True,
+    "has_anomaly": False,
+}
+
+_NOTE_DEFECTS: list[dict] = [
+    {
+        "panel_id": BodyPanel.FRONT_LEFT_FENDER,
+        "panel_ru": "Переднее левое крыло",
+        "defect_types": ["W"],
+        "severity": 1,
+        "raw_code": "W1",
+        "description_ru": "Переднее левое крыло — мелкий вторичный окрас",
+    },
+]
+
+_NOTE_RISK_FLAGS: dict = dict.fromkeys(
+    (
+        "is_flooded",
+        "airbag_deployed",
+        "hail_damage",
+        "underbody_rust",
+        "underbody_corrosion",
+        "core_support_repair",
+        "pillar_or_frame_repair",
+        "panel_replaced_xx",
+        "panel_needs_replacement_x",
+        "odometer_issue",
+        "color_changed",
+        "windshield_damage",
+        "repaired_grade_r_ra",
+    ),
+    False,
+)
+
+_NOTE_VERDICT: dict = {
+    "verdict": TrafficLightColor.GREEN,
+    "headline": "РЕКОМЕНДОВАНО К ПОКУПКЕ",
+    "short_verdict_label": "🟢 РЕКОМЕНДОВАНО К ПОКУПКЕ",
+    "badge_text": "Выгода: +210 000 ₽",
+    "net_benefit_rub": 210000,
+    "benefit_percentage": 21.4,
+    "body_summary_ru": ("Кузов (оценка A): только мелкий вторичный окрас W1 на переднем крыле."),
+    "interior_summary_ru": "Салон (оценка A): новый, без следов эксплуатации.",
+    "reasoning_bullets": [
+        "Nissan Note e-Power: гибрид, санкционный риск METI, но 109 л.с. < 160 л.с.",
+        "Оценка 4.5 A/A, родной пробег 65 000 км",
+        "Льготный утильсбор и коридор до 3 лет, ремонт не требуется",
+    ],
+}
+
+_NOTE_MARKET: dict = {
+    "market_price_rf_rub": 1190000,
+    "analogs_count": 6,
+    "price_min_rub": 1090000,
+    "price_max_rub": 1390000,
+    "search_region_ru": "ДФО / Владивосток",
+    "excludes_under_order": True,
+    "filtered_out_under_order_count": 3,
+    "is_fallback": False,
+    "fallback_reason_ru": None,
+    "drom_search_url": "https://vladivostok.drom.ru/nissan/note/year-2024/engine-1.2/",
+}
+
+_NOTE_AUDIT: dict = {
+    "status": CrossAuditStatus.CLEAN,
+    "source_name": "AucJP + AAA Japan / Pravto",
+    "is_archive_available": True,
+    "risk_level": RiskLevel.CLEAN,
+    "has_critical_anomaly": False,
+    "headline_ru": "Аудит истории торгов: нарушений по Frame ID не обнаружено",
+    "times_auctioned": 1,
+}
+
+_NOTE_AUDIT_HISTORY: list[dict] = [
+    {
+        "auction_date": date(2026, 11, 10),
+        "auction_house": "CAA Kanto",
+        "auction_strictness": 0.80,
+        "lot_number": "7281",
         "overall_grade": "4.5",
-        "fuel_type": FuelType.HYBRID,
-        "meti_sanction_risk": True,
-        "turnkey_cost_rub": 980000,
-        "market_price_rf_rub": 1190000,
-        "net_benefit_rub": 210000,
-        "benefit_percentage": 21.4,
-        "verdict": TrafficLightColor.GREEN,
-        "verdict_headline": "🟢 РЕКОМЕНДОВАНО К ПОКУПКЕ",
-        "has_anomaly": False,
+        "mileage_km": 65000,
+        "defects_summary": "Мелкий вторичный окрас W1 на переднем крыле",
+        "closing_price_jpy": 1200000,
+        "sheet_archive_url": None,
+    },
+]
+
+_NOTE_SAFETY_CHECKLIST: dict = {
+    "overall_status": ChecklistItemStatus.OK,
+    "overall_label_ru": "В норме",
+}
+
+_NOTE_SAFETY_ITEMS: list[dict] = [
+    {
+        "system_key": SystemKey.STRUCTURAL_FRAME,
+        "label_ru": "Силовой каркас и лонжероны",
+        "status": ChecklistItemStatus.OK,
+        "detail_ru": "Нарушений геометрии и ремонта несущих элементов не отмечено",
+    },
+    {
+        "system_key": SystemKey.AIRBAGS_SRS,
+        "label_ru": "Подушки безопасности (SRS)",
+        "status": ChecklistItemStatus.OK,
+        "detail_ru": "Отметок о срабатывании или отсутствии подушек нет",
+    },
+    {
+        "system_key": SystemKey.ENGINE_TRANSMISSION,
+        "label_ru": "ДВС и трансмиссия",
+        "status": ChecklistItemStatus.OK,
+        "detail_ru": "Гибридная установка e-Power без замечаний инспектора",
+    },
+    {
+        "system_key": SystemKey.UNDERBODY_CORROSION,
+        "label_ru": "Днище и пороги",
+        "status": ChecklistItemStatus.OK,
+        "detail_ru": "Сквозная коррозия не отмечена",
+    },
+    {
+        "system_key": SystemKey.FLOOD_OR_FIRE,
+        "label_ru": "Следы затопления / пожара / града",
+        "status": ChecklistItemStatus.OK,
+        "detail_ru": "Стоп-факторов в бланке не зафиксировано",
+    },
+]
+
+_NOTE_CUSTOMS: dict = {
+    "age_corridor": AgeCorridor.UNDER_3_YEARS,
+    "duty_calculation_mode": DutyCalculationMode.PCT_OF_VALUE,
+    "engine_cc": 1198,
+    "duty_rate_eur_per_cc": None,
+    "effective_duty_pct": 48.0,
+    "customs_duty_eur": 576.0,
+    "customs_duty_rub": 54720,
+    "is_under_160_hp": True,
+    "is_commercial_util": False,
+    "utilization_fee_rub": 5200,
+    "customs_clearance_fee_rub": 3100,
+    "freight_vladivostok_rub": 90000,
+    "broker_svh_sbkts_rub": 27980,
+    "meti_sanction_risk": True,
+}
+
+_NOTE_RATES_SNAPSHOT: dict = {
+    "jpy_rub_bank": 0.585,
+    "jpy_rate_source": "ДВ-банк (ориентир)",
+    "eur_rub_cbrf": 95.0,
+    "usd_rub_cbrf": 85.0,
+    "cbrf_date": "12.11.2026",
+}
+
+_NOTE_FARPOST_SUMMARY: dict = {
+    "total_parts_from_rub": 0,
+    "total_works_rub": 0,
+    "grand_total_repair_rub": 0,
+    "has_color_matched_parts": False,
+    "included_in_turnkey_hint_ru": "Сумма уже включена в расчёт под ключ",
+}
+
+_NOTE_WISE_COST_LADDER: dict = {
+    "car_bid_jpy": 1200000,
+    "car_bid_rub": 702000,
+    "turnkey_cost_rub": 980000,
+    "market_price_rf_rub": 1190000,
+    "net_benefit_rub": 210000,
+    "benefit_percentage": 21.4,
+}
+
+_NOTE_WISE_COST_STEPS: list[dict] = [
+    {
+        "step_number": 1,
+        "name_ru": "Ставка на аукционе",
+        "amount_rub": 702000,
+        "original_currency": "JPY",
+        "original_amount": 1200000.0,
+        "is_optional": False,
+    },
+    {
+        "step_number": 2,
+        "name_ru": "Расходы в Японии (FOB и сбор)",
+        "amount_rub": 97000,
+        "original_currency": "JPY",
+        "original_amount": 165800.0,
+        "is_optional": False,
+    },
+    {
+        "step_number": 3,
+        "name_ru": "Фрахт Тояма-ВЛК",
+        "amount_rub": 90000,
+        "original_currency": "USD",
+        "original_amount": 1058.0,
+        "is_optional": False,
+    },
+    {
+        "step_number": 4,
+        "name_ru": "Таможенная пошлина ЕАЭС и сбор",
+        "amount_rub": 57820,
+        "original_currency": "EUR",
+        "original_amount": 576.0,
+        "is_optional": False,
+    },
+    {
+        "step_number": 5,
+        "name_ru": "Утилизационный сбор РФ",
+        "amount_rub": 5200,
+        "original_currency": "RUB",
+        "original_amount": 5200.0,
+        "is_optional": False,
+    },
+    {
+        "step_number": 6,
+        "name_ru": "СВХ, брокер, СБКТС, ЭПТС",
+        "amount_rub": 27980,
+        "original_currency": "RUB",
+        "original_amount": 27980.0,
+        "is_optional": False,
+    },
+    {
+        "step_number": 7,
+        "name_ru": "Запчасти Farpost и ремонт",
+        "amount_rub": 0,
+        "original_currency": "RUB",
+        "original_amount": 0.0,
+        "is_optional": True,
     },
 ]
 
 
-def _seed_corolla(user: User, now) -> Lot:
-    lot = Lot.objects.create(user=user, completed_at=now, **_COROLLA_LOT_FIELDS)
+_STARTER_FIXTURES: dict[tuple[str, str], dict] = {}
 
-    for defect_data in _COROLLA_DEFECTS:
+
+def _register_starter_fixtures() -> None:
+    for lot_fields, kwargs in (
+        (
+            _COROLLA_LOT_FIELDS,
+            {
+                "defects": _COROLLA_DEFECTS,
+                "risk_flags": _COROLLA_RISK_FLAGS,
+                "verdict": _COROLLA_VERDICT,
+                "market": _COROLLA_MARKET,
+                "audit": _COROLLA_AUDIT,
+                "audit_history": _COROLLA_AUDIT_HISTORY,
+                "safety": _COROLLA_SAFETY_CHECKLIST,
+                "safety_items": _COROLLA_SAFETY_ITEMS,
+                "customs": _COROLLA_CUSTOMS,
+                "rates": _COROLLA_RATES_SNAPSHOT,
+                "farpost": _COROLLA_FARPOST_SUMMARY,
+                "farpost_parts": _COROLLA_FARPOST_PARTS,
+                "farpost_works": _COROLLA_FARPOST_WORKS,
+                "wise_cost": _COROLLA_WISE_COST_LADDER,
+                "wise_cost_steps": _COROLLA_WISE_COST_STEPS,
+            },
+        ),
+        (
+            _VEZEL_LOT_FIELDS,
+            {
+                "defects": _VEZEL_DEFECTS,
+                "risk_flags": _VEZEL_RISK_FLAGS,
+                "verdict": _VEZEL_VERDICT,
+                "market": _VEZEL_MARKET,
+                "audit": _VEZEL_AUDIT,
+                "audit_history": _VEZEL_AUDIT_HISTORY,
+                "safety": _VEZEL_SAFETY_CHECKLIST,
+                "safety_items": _VEZEL_SAFETY_ITEMS,
+                "customs": _VEZEL_CUSTOMS,
+                "rates": _VEZEL_RATES_SNAPSHOT,
+                "farpost": _VEZEL_FARPOST_SUMMARY,
+                "farpost_works": _VEZEL_FARPOST_WORKS,
+                "wise_cost": _VEZEL_WISE_COST_LADDER,
+                "wise_cost_steps": _VEZEL_WISE_COST_STEPS,
+            },
+        ),
+        (
+            _NOTE_LOT_FIELDS,
+            {
+                "defects": _NOTE_DEFECTS,
+                "risk_flags": _NOTE_RISK_FLAGS,
+                "verdict": _NOTE_VERDICT,
+                "market": _NOTE_MARKET,
+                "audit": _NOTE_AUDIT,
+                "audit_history": _NOTE_AUDIT_HISTORY,
+                "safety": _NOTE_SAFETY_CHECKLIST,
+                "safety_items": _NOTE_SAFETY_ITEMS,
+                "customs": _NOTE_CUSTOMS,
+                "rates": _NOTE_RATES_SNAPSHOT,
+                "farpost": _NOTE_FARPOST_SUMMARY,
+                "wise_cost": _NOTE_WISE_COST_LADDER,
+                "wise_cost_steps": _NOTE_WISE_COST_STEPS,
+            },
+        ),
+    ):
+        key = (lot_fields["make"], lot_fields["model"])
+        _STARTER_FIXTURES[key] = {"lot_fields": lot_fields, **kwargs}
+
+
+_register_starter_fixtures()
+
+
+def _create_lot_relations(lot: Lot, now, *, fixture: dict) -> None:
+    for defect_data in fixture.get("defects") or []:
         LotDefect.objects.create(lot=lot, **defect_data)
 
-    LotRiskFlags.objects.create(lot=lot, **_COROLLA_RISK_FLAGS)
-    TrafficLightVerdict.objects.create(lot=lot, **_COROLLA_VERDICT)
-    MarketComparisonInfo.objects.create(lot=lot, **_COROLLA_MARKET)
+    LotRiskFlags.objects.create(lot=lot, **fixture["risk_flags"])
+    TrafficLightVerdict.objects.create(lot=lot, **fixture["verdict"])
+    MarketComparisonInfo.objects.create(lot=lot, **fixture["market"])
 
-    audit = CrossAuditReport.objects.create(lot=lot, verified_at=now, **_COROLLA_AUDIT)
-    for history_data in _COROLLA_AUDIT_HISTORY:
-        PastAuctionRecord.objects.create(audit=audit, **history_data)
+    audit_obj = CrossAuditReport.objects.create(lot=lot, verified_at=now, **fixture["audit"])
+    for history_data in fixture.get("audit_history") or []:
+        PastAuctionRecord.objects.create(audit=audit_obj, **history_data)
 
-    checklist = SafetyChecklist.objects.create(lot=lot, **_COROLLA_SAFETY_CHECKLIST)
-    for item_data in _COROLLA_SAFETY_ITEMS:
+    checklist = SafetyChecklist.objects.create(lot=lot, **fixture["safety"])
+    for item_data in fixture.get("safety_items") or []:
         SafetyCheckItem.objects.create(checklist=checklist, **item_data)
 
-    customs = CustomsCalculation.objects.create(lot=lot, **_COROLLA_CUSTOMS)
-    CurrencyRatesSnapshot.objects.create(customs=customs, **_COROLLA_RATES_SNAPSHOT)
+    customs_obj = CustomsCalculation.objects.create(lot=lot, **fixture["customs"])
+    CurrencyRatesSnapshot.objects.create(customs=customs_obj, **fixture["rates"])
 
-    repair = FarpostRepairSummary.objects.create(lot=lot, **_COROLLA_FARPOST_SUMMARY)
-    for part_data in _COROLLA_FARPOST_PARTS:
+    repair = FarpostRepairSummary.objects.create(lot=lot, **fixture["farpost"])
+    for part_data in fixture.get("farpost_parts") or []:
         DamagedPartItem.objects.create(repair=repair, **part_data)
-    for work_data in _COROLLA_FARPOST_WORKS:
+    for work_data in fixture.get("farpost_works") or []:
         ServiceWorkItem.objects.create(repair=repair, **work_data)
 
-    ladder = WiseCostLadder.objects.create(lot=lot, **_COROLLA_WISE_COST_LADDER)
-    for step_data in _COROLLA_WISE_COST_STEPS:
+    ladder = WiseCostLadder.objects.create(lot=lot, **fixture["wise_cost"])
+    for step_data in fixture.get("wise_cost_steps") or []:
         WiseCostStep.objects.create(ladder=ladder, **step_data)
 
+
+def _seed_full_lot(
+    user: User,
+    now,
+    *,
+    lot_fields: dict,
+    defects: list[dict] | None = None,
+    risk_flags: dict,
+    verdict: dict,
+    market: dict,
+    audit: dict,
+    audit_history: list[dict] | None = None,
+    safety: dict,
+    safety_items: list[dict] | None = None,
+    customs: dict,
+    rates: dict,
+    farpost: dict,
+    farpost_parts: list[dict] | None = None,
+    farpost_works: list[dict] | None = None,
+    wise_cost: dict,
+    wise_cost_steps: list[dict] | None = None,
+) -> Lot:
+    lot = Lot.objects.create(user=user, completed_at=now, **lot_fields)
+    fixture = {
+        "lot_fields": lot_fields,
+        "defects": defects,
+        "risk_flags": risk_flags,
+        "verdict": verdict,
+        "market": market,
+        "audit": audit,
+        "audit_history": audit_history,
+        "safety": safety,
+        "safety_items": safety_items,
+        "customs": customs,
+        "rates": rates,
+        "farpost": farpost,
+        "farpost_parts": farpost_parts,
+        "farpost_works": farpost_works,
+        "wise_cost": wise_cost,
+        "wise_cost_steps": wise_cost_steps,
+    }
+    _create_lot_relations(lot, now, fixture=fixture)
     return lot
+
+
+def _seed_corolla(user: User, now) -> Lot:
+    return _seed_full_lot(
+        user,
+        now,
+        lot_fields=_COROLLA_LOT_FIELDS,
+        defects=_COROLLA_DEFECTS,
+        risk_flags=_COROLLA_RISK_FLAGS,
+        verdict=_COROLLA_VERDICT,
+        market=_COROLLA_MARKET,
+        audit=_COROLLA_AUDIT,
+        audit_history=_COROLLA_AUDIT_HISTORY,
+        safety=_COROLLA_SAFETY_CHECKLIST,
+        safety_items=_COROLLA_SAFETY_ITEMS,
+        customs=_COROLLA_CUSTOMS,
+        rates=_COROLLA_RATES_SNAPSHOT,
+        farpost=_COROLLA_FARPOST_SUMMARY,
+        farpost_parts=_COROLLA_FARPOST_PARTS,
+        farpost_works=_COROLLA_FARPOST_WORKS,
+        wise_cost=_COROLLA_WISE_COST_LADDER,
+        wise_cost_steps=_COROLLA_WISE_COST_STEPS,
+    )
+
+
+def _seed_vezel(user: User, now) -> Lot:
+    return _seed_full_lot(
+        user,
+        now,
+        lot_fields=_VEZEL_LOT_FIELDS,
+        defects=_VEZEL_DEFECTS,
+        risk_flags=_VEZEL_RISK_FLAGS,
+        verdict=_VEZEL_VERDICT,
+        market=_VEZEL_MARKET,
+        audit=_VEZEL_AUDIT,
+        audit_history=_VEZEL_AUDIT_HISTORY,
+        safety=_VEZEL_SAFETY_CHECKLIST,
+        safety_items=_VEZEL_SAFETY_ITEMS,
+        customs=_VEZEL_CUSTOMS,
+        rates=_VEZEL_RATES_SNAPSHOT,
+        farpost=_VEZEL_FARPOST_SUMMARY,
+        farpost_works=_VEZEL_FARPOST_WORKS,
+        wise_cost=_VEZEL_WISE_COST_LADDER,
+        wise_cost_steps=_VEZEL_WISE_COST_STEPS,
+    )
+
+
+def _seed_note(user: User, now) -> Lot:
+    return _seed_full_lot(
+        user,
+        now,
+        lot_fields=_NOTE_LOT_FIELDS,
+        defects=_NOTE_DEFECTS,
+        risk_flags=_NOTE_RISK_FLAGS,
+        verdict=_NOTE_VERDICT,
+        market=_NOTE_MARKET,
+        audit=_NOTE_AUDIT,
+        audit_history=_NOTE_AUDIT_HISTORY,
+        safety=_NOTE_SAFETY_CHECKLIST,
+        safety_items=_NOTE_SAFETY_ITEMS,
+        customs=_NOTE_CUSTOMS,
+        rates=_NOTE_RATES_SNAPSHOT,
+        farpost=_NOTE_FARPOST_SUMMARY,
+        wise_cost=_NOTE_WISE_COST_LADDER,
+        wise_cost_steps=_NOTE_WISE_COST_STEPS,
+    )
 
 
 def seed_starter_lots(user: User) -> None:
     """Create benchmark starter lots for a newly registered user."""
     now = timezone.now()
     _seed_corolla(user, now)
-    for lot_data in _SIMPLE_STARTER_LOTS:
-        Lot.objects.create(user=user, completed_at=now, **lot_data)
+    _seed_vezel(user, now)
+    _seed_note(user, now)
+
+
+@transaction.atomic
+def backfill_starter_lots() -> int:
+    now = timezone.now()
+    repaired = 0
+    for fixture in _STARTER_FIXTURES.values():
+        fields = fixture["lot_fields"]
+        lots = Lot.objects.filter(
+            completed_at__isnull=False,
+            batch_item__isnull=True,
+            verdict_detail__isnull=True,
+            make=fields["make"],
+            model=fields["model"],
+            frame_id=fields["frame_id"],
+        )
+        for lot in lots.iterator():
+            for field, value in fields.items():
+                setattr(lot, field, value)
+            lot.save(update_fields=[*fields, "updated_at"])
+            _create_lot_relations(lot, now, fixture=fixture)
+            repaired += 1
+    return repaired
 
 
 _ALLOWED_MIME_TYPES = frozenset(
@@ -747,6 +1492,30 @@ def _fail_item(item: BatchItem, step: TaskStep, message: str) -> None:
     item.save(update_fields=["status", "current_step", "error_message", "updated_at"])
 
 
+_SUMMARY_REQUIRED_FIELDS: tuple[str, ...] = (
+    "make",
+    "model",
+    "frame_id",
+    "auction_house",
+    "lot_number",
+    "overall_grade",
+    "turnkey_cost_rub",
+    "market_price_rf_rub",
+    "verdict",
+    "verdict_headline",
+    "net_benefit_rub",
+)
+
+
+def _missing_summary_fields(lot: Lot) -> list[str]:
+    missing: list[str] = []
+    for name in _SUMMARY_REQUIRED_FIELDS:
+        value = getattr(lot, name, None)
+        if value is None or value == "":
+            missing.append(name)
+    return missing
+
+
 def _complete_item(item: BatchItem) -> None:
     item.status = ItemProcessingStatus.READY
     item.current_step = TaskStep.COMPLETED
@@ -831,6 +1600,25 @@ def _process_item(item: BatchItem) -> None:
         return
     if not _step_scoring(item):
         return
+    if item.lot is None:
+        _fail_item(item, TaskStep.FAILED, "Лот не привязан к элементу пачки")
+        return
+    missing = _missing_summary_fields(item.lot)
+    if missing:
+        _fail_item(
+            item,
+            TaskStep.FAILED,
+            f"Недостаточно данных для карточки лота: {', '.join(missing)}",
+        )
+        return
+    item.lot.refresh_from_db()
+    if not _has_full_detail(item.lot):
+        _fail_item(
+            item,
+            TaskStep.FAILED,
+            "Недостаточно данных для детальной карточки лота",
+        )
+        return
     _complete_item(item)
 
 
@@ -894,3 +1682,387 @@ def recover_batches_on_startup() -> None:
         )
         Batch.objects.filter(id=batch.id).update(status=BatchStatus.QUEUED)
         threading.Thread(target=run_batch_pipeline, args=(batch.id,), daemon=True).start()
+
+
+_SORT_FIELD_MAP: dict[str, str] = {
+    "created_at": "created_at",
+    "net_benefit": "net_benefit_rub",
+    "turnkey_cost": "turnkey_cost_rub",
+}
+
+_ACTIVE_BATCH_STATUSES = frozenset({BatchStatus.QUEUED, BatchStatus.PROCESSING})
+_PROCESSING_ITEM_STATUSES = frozenset(
+    {ItemProcessingStatus.QUEUED, ItemProcessingStatus.PROCESSING}
+)
+
+_DEFAULT_PAGE = 1
+_DEFAULT_PAGE_SIZE = 20
+
+_DETAIL_RELATED_FIELDS = (
+    "risk_flags",
+    "verdict_detail",
+    "market_info",
+    "cross_audit",
+    "safety_checklist",
+    "customs_calc",
+    "customs_calc__rates_snapshot",
+    "farpost_repair",
+    "wise_cost_ladder",
+)
+
+_DETAIL_PREFETCH_FIELDS = (
+    "defects",
+    "cross_audit__anomalies",
+    "cross_audit__history",
+    "safety_checklist__items",
+    "farpost_repair__parts",
+    "farpost_repair__service_works",
+    "wise_cost_ladder__steps",
+)
+
+
+def _apply_search(qs, query: str | None):
+    query = query.strip() if query else ""
+    if not query:
+        return qs
+    return qs.annotate(
+        _search=Concat(
+            Coalesce(F("make"), Value("")),
+            Value(" "),
+            Coalesce(F("model"), Value("")),
+            Value(" "),
+            Coalesce(F("frame_id"), Value("")),
+            Value(" "),
+            Coalesce(F("lot_number"), Value("")),
+            Value(" "),
+            Coalesce(F("auction_house"), Value("")),
+            Value(" "),
+            Coalesce(F("verdict_headline"), Value("")),
+            output_field=CharField(),
+        ),
+    ).filter(_search__icontains=query)
+
+
+def _apply_filters(
+    qs,
+    *,
+    make: str | None,
+    model: str | None,
+    verdict: TrafficLightColor | None,
+    has_anomaly: bool | None,
+):
+    if make:
+        qs = qs.filter(make__iexact=make)
+    if model:
+        qs = qs.filter(model__iexact=model)
+    if verdict:
+        qs = qs.filter(verdict=verdict)
+    if has_anomaly is not None:
+        qs = qs.filter(has_anomaly=has_anomaly)
+    return qs
+
+
+def _apply_sorting(qs, *, sort_by: str, sort_order: str):
+    field = _SORT_FIELD_MAP[sort_by]
+    return qs.order_by(field if sort_order == "asc" else f"-{field}", "pk")
+
+
+def _facet_counts(qs, field: str) -> list[schemas.FilterCountItem]:
+    rows = (
+        qs.exclude(**{f"{field}__isnull": True})
+        .exclude(**{f"{field}": ""})
+        .values(field)
+        .annotate(count=Count("id"))
+        .order_by("-count", field)
+    )
+    return [schemas.FilterCountItem(value=row[field], count=row["count"]) for row in rows]
+
+
+def _build_available_filters(
+    *,
+    make_facet_qs,
+    model_facet_qs,
+    verdict_facet_qs,
+) -> schemas.AvailableFilters:
+    return schemas.AvailableFilters(
+        total_lots_count=make_facet_qs.count(),
+        makes=_facet_counts(make_facet_qs, "make"),
+        models=_facet_counts(model_facet_qs, "model"),
+        counts_by_verdict={
+            row["verdict"]: row["count"]
+            for row in verdict_facet_qs.exclude(verdict__isnull=True)
+            .exclude(verdict="")
+            .values("verdict")
+            .annotate(count=Count("id"))
+        },
+    )
+
+
+def _build_in_progress_item(item: BatchItem) -> schemas.InProgressItemPreview:
+    return schemas.InProgressItemPreview(
+        batch_id=item.batch_id,
+        lot_id=item.lot_id,
+        display_title=item.preview_title or item.original_filename,
+        status=item.status,
+        current_step=item.current_step,
+    )
+
+
+def _build_in_progress(user: User) -> schemas.InProgressSummary:
+    active_batches_count = Batch.objects.filter(
+        user=user,
+        status__in=_ACTIVE_BATCH_STATUSES,
+    ).count()
+    items = list(
+        BatchItem.objects.filter(
+            batch__user=user,
+            batch__status__in=_ACTIVE_BATCH_STATUSES,
+            status__in=_PROCESSING_ITEM_STATUSES,
+        )
+        .select_related("batch")
+        .order_by("-batch__created_at", "file_index"),
+    )
+    return schemas.InProgressSummary(
+        active_batches_count=active_batches_count,
+        total_processing_lots=len(items),
+        items=[_build_in_progress_item(item) for item in items],
+    )
+
+
+def get_lots_list(
+    user: User,
+    *,
+    query: str | None = None,
+    make: str | None = None,
+    model: str | None = None,
+    verdict: TrafficLightColor | None = None,
+    has_anomaly: bool | None = None,
+    page: int = _DEFAULT_PAGE,
+    page_size: int = _DEFAULT_PAGE_SIZE,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+) -> schemas.LotListResponse:
+    base_qs = Lot.objects.filter(user=user, completed_at__isnull=False)
+    searched = _apply_search(base_qs, query)
+    if has_anomaly is not None:
+        searched = searched.filter(has_anomaly=has_anomaly)
+
+    make_facet_qs = _apply_filters(
+        searched, make=None, model=None, verdict=verdict, has_anomaly=None
+    )
+    model_facet_qs = _apply_filters(
+        searched, make=make, model=None, verdict=verdict, has_anomaly=None
+    )
+    verdict_facet_qs = _apply_filters(
+        searched, make=make, model=model, verdict=None, has_anomaly=None
+    )
+
+    filtered = _apply_filters(searched, make=make, model=model, verdict=verdict, has_anomaly=None)
+    sorted_qs = _apply_sorting(filtered, sort_by=sort_by, sort_order=sort_order)
+
+    total_items = sorted_qs.count()
+    total_pages = math.ceil(total_items / page_size) if total_items else 0
+    offset = (page - 1) * page_size
+    page_lots = list(sorted_qs[offset : offset + page_size])
+
+    return schemas.LotListResponse(
+        items=[_build_lot_summary(lot) for lot in page_lots],
+        in_progress=_build_in_progress(user),
+        pagination=schemas.PaginationMeta(
+            total_items=total_items,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages,
+        ),
+        available_filters=_build_available_filters(
+            make_facet_qs=make_facet_qs,
+            model_facet_qs=model_facet_qs,
+            verdict_facet_qs=verdict_facet_qs,
+        ),
+    )
+
+
+def _has_full_detail(lot: Lot) -> bool:
+    required_attrs = (
+        "risk_flags",
+        "verdict_detail",
+        "market_info",
+        "cross_audit",
+        "safety_checklist",
+        "customs_calc",
+        "farpost_repair",
+        "wise_cost_ladder",
+    )
+    if not all(hasattr(lot, name) for name in required_attrs):
+        return False
+    return hasattr(lot.customs_calc, "rates_snapshot")
+
+
+def _build_normalized_sheet(lot: Lot) -> schemas.NormalizedSheet:
+    return schemas.NormalizedSheet(
+        lot_number=lot.lot_number,
+        auction_house=lot.auction_house,
+        auction_branch=lot.auction_branch,
+        auction_strictness_index=lot.auction_strictness_index,
+        make=lot.make,
+        model=lot.model,
+        trim=lot.trim,
+        model_code=lot.model_code,
+        chassis_number=lot.chassis_number,
+        frame_id=lot.frame_id,
+        frame_id_confidence=lot.frame_id_confidence,
+        first_reg_year=lot.first_reg_year,
+        first_reg_month=lot.first_reg_month,
+        first_reg_date_str=lot.first_reg_date_str,
+        is_pass_corridor_3_5=lot.is_pass_corridor_3_5,
+        engine_cc=lot.engine_cc,
+        power_hp=lot.power_hp,
+        power_hp_source=lot.power_hp_source,
+        is_under_160_hp=lot.is_under_160_hp,
+        mileage_km=lot.mileage_km,
+        odometer_status=lot.odometer_status,
+        transmission=lot.transmission,
+        drive_type=lot.drive_type,
+        fuel_type=lot.fuel_type,
+        color_ru=lot.color_ru,
+        paint_code=lot.paint_code,
+        overall_grade=lot.overall_grade,
+        exterior_grade=lot.exterior_grade,
+        interior_grade=lot.interior_grade,
+        shaken_until=lot.shaken_until,
+        recycling_fee_yen=lot.recycling_fee_yen,
+        recycling_fee_paid=lot.recycling_fee_paid,
+        equipment_ru=lot.equipment_ru,
+        defects=[schemas.NormalizedDefect.model_validate(d) for d in lot.defects.all()],
+        risk_flags=schemas.RiskFlags.model_validate(lot.risk_flags),
+        inspector_notes_ru=lot.inspector_notes_ru,
+        inspector_notes_raw=lot.inspector_notes_raw,
+        seller_comments_ru=lot.seller_comments_ru,
+        extra_ru=lot.extra_ru,
+        ocr_warnings=lot.ocr_warnings,
+        low_confidence_fields=lot.low_confidence_fields,
+    )
+
+
+def _build_audit_out(audit: CrossAuditReport) -> schemas.CrossAuditReport:
+    return schemas.CrossAuditReport(
+        status=audit.status,
+        source_name=audit.source_name,
+        is_archive_available=audit.is_archive_available,
+        risk_level=audit.risk_level,
+        has_critical_anomaly=audit.has_critical_anomaly,
+        headline_ru=audit.headline_ru,
+        times_auctioned=audit.times_auctioned,
+        verified_at=audit.verified_at,
+        anomalies=[schemas.AnomalyAlert.model_validate(a) for a in audit.anomalies.all()],
+        history=[schemas.PastAuctionRecord.model_validate(h) for h in audit.history.all()],
+    )
+
+
+def _build_safety_out(checklist: SafetyChecklist) -> schemas.SafetyChecklist:
+    return schemas.SafetyChecklist(
+        overall_status=checklist.overall_status,
+        overall_label_ru=checklist.overall_label_ru,
+        items=[schemas.SafetyCheckItem.model_validate(i) for i in checklist.items.all()],
+    )
+
+
+def _build_customs_out(customs: CustomsCalculation) -> schemas.CustomsCalculation:
+    return schemas.CustomsCalculation(
+        age_corridor=customs.age_corridor,
+        duty_calculation_mode=customs.duty_calculation_mode,
+        engine_cc=customs.engine_cc,
+        duty_rate_eur_per_cc=customs.duty_rate_eur_per_cc,
+        effective_duty_pct=customs.effective_duty_pct,
+        customs_duty_eur=customs.customs_duty_eur,
+        customs_duty_rub=customs.customs_duty_rub,
+        is_under_160_hp=customs.is_under_160_hp,
+        is_commercial_util=customs.is_commercial_util,
+        utilization_fee_rub=customs.utilization_fee_rub,
+        customs_clearance_fee_rub=customs.customs_clearance_fee_rub,
+        freight_vladivostok_rub=customs.freight_vladivostok_rub,
+        broker_svh_sbkts_rub=customs.broker_svh_sbkts_rub,
+        meti_sanction_risk=customs.meti_sanction_risk,
+        rates_snapshot=schemas.CurrencyRates.model_validate(customs.rates_snapshot),
+    )
+
+
+def _build_farpost_out(repair: FarpostRepairSummary) -> schemas.FarpostRepairSummary:
+    return schemas.FarpostRepairSummary(
+        parts=[schemas.DamagedPartItem.model_validate(p) for p in repair.parts.all()],
+        service_works=[
+            schemas.ServiceWorkItem.model_validate(w) for w in repair.service_works.all()
+        ],
+        total_parts_from_rub=repair.total_parts_from_rub,
+        total_works_rub=repair.total_works_rub,
+        grand_total_repair_rub=repair.grand_total_repair_rub,
+        has_color_matched_parts=repair.has_color_matched_parts,
+        included_in_turnkey_hint_ru=repair.included_in_turnkey_hint_ru,
+    )
+
+
+def _build_wise_cost_out(ladder: WiseCostLadder) -> schemas.WiseCostLadder:
+    return schemas.WiseCostLadder(
+        car_bid_jpy=ladder.car_bid_jpy,
+        car_bid_rub=ladder.car_bid_rub,
+        turnkey_cost_rub=ladder.turnkey_cost_rub,
+        market_price_rf_rub=ladder.market_price_rf_rub,
+        net_benefit_rub=ladder.net_benefit_rub,
+        benefit_percentage=ladder.benefit_percentage,
+        steps=[schemas.WiseCostStep.model_validate(s) for s in ladder.steps.all()],
+    )
+
+
+def _build_economics(lot: Lot) -> schemas.EconomicsDetail:
+    return schemas.EconomicsDetail(
+        bid_slider_min_jpy=lot.bid_slider_min_jpy,
+        bid_slider_max_jpy=lot.bid_slider_max_jpy,
+        bid_slider_step_jpy=lot.bid_slider_step_jpy,
+        is_repairs_included=lot.is_repairs_included,
+        customs=_build_customs_out(lot.customs_calc),
+        farpost_repair=_build_farpost_out(lot.farpost_repair),
+        wise_cost_ladder=_build_wise_cost_out(lot.wise_cost_ladder),
+    )
+
+
+def _build_media_links(lot: Lot) -> schemas.LotMediaLinks:
+    return schemas.LotMediaLinks(
+        sheet_thumbnail_url=lot.sheet_thumbnail.url if lot.sheet_thumbnail else "",
+        sheet_scan_url=lot.sheet_scan.url if lot.sheet_scan else "",
+        drom_search_url=lot.market_info.drom_search_url,
+    )
+
+
+def _build_lot_detail(lot: Lot) -> schemas.LotDetailResponse:
+    return schemas.LotDetailResponse(
+        lot_id=lot.id,
+        created_at=lot.created_at,
+        updated_at=lot.updated_at,
+        passport=_build_normalized_sheet(lot),
+        verdict=schemas.TrafficLightVerdict.model_validate(lot.verdict_detail),
+        market=schemas.MarketComparisonInfo.model_validate(lot.market_info),
+        audit=_build_audit_out(lot.cross_audit),
+        safety_checklist=_build_safety_out(lot.safety_checklist),
+        economics=_build_economics(lot),
+        media=_build_media_links(lot),
+    )
+
+
+def get_lot_detail(user: User, lot_id: uuid.UUID) -> schemas.LotDetailResponse:
+    try:
+        lot = (
+            Lot.objects.select_related(*_DETAIL_RELATED_FIELDS)
+            .prefetch_related(*_DETAIL_PREFETCH_FIELDS)
+            .get(id=lot_id, user=user, completed_at__isnull=False)
+        )
+    except Lot.DoesNotExist as exc:
+        raise NotFoundProblemError(
+            "Лот не найден",
+            title="Лот не найден",
+        ) from exc
+    if not _has_full_detail(lot):
+        raise NotFoundProblemError(
+            "Детальная спецификация лота ещё не готова",
+            title="Лот не найден",
+        )
+    return _build_lot_detail(lot)
