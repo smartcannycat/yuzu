@@ -314,3 +314,20 @@ def test_existing_economics_includes_saved_repair_exactly_once(user_factory):
     recompute_lot_economics(vehicle, include_repairs=True)
     vehicle.refresh_from_db()
     assert vehicle.turnkey_cost_rub - without_repairs == summary.grand_total_repair_rub
+
+
+@pytest.mark.django_db
+def test_ml_compound_defects_shared_raw_code_do_not_duplicate_work(lot):
+    first = defect(lot, "A2/W1")
+    first.defect_types = ["A"]
+    first.severity = 2
+    first.save(update_fields=["defect_types", "severity"])
+    second = defect(lot, "A2/W1")
+    second.defect_types = ["W"]
+    second.severity = 1
+    second.save(update_fields=["defect_types", "severity"])
+    client = source()
+    result = estimate_repair(lot, client=client)
+    assert len(result.service_works) == 1
+    assert result.total_works_rub == 10000
+    client.search.assert_not_called()
