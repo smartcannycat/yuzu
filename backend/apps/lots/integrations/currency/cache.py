@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta
 from typing import Any
 
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.core.enums import ExternalCacheSource
@@ -16,6 +17,11 @@ STALE_MAX_AGE = timedelta(days=7)
 # does not turn every calculation into a live HTTP call.
 PAUSE_KEY = "cbrf:currency_rates:pause:v1"
 PAUSE_TTL = timedelta(seconds=60)
+
+# Short DB lease held across a live update so HTTP waits never keep a
+# PostgreSQL transaction or connection open.
+LOCK_KEY = "cbrf:currency_rates:lock:v1"
+LOCK_TTL = timedelta(seconds=30)
 
 
 class CurrencyCache:
@@ -70,6 +76,43 @@ class CurrencyCache:
 
     def clear_pause(self) -> None:
         ExternalCache.objects.filter(key=PAUSE_KEY).delete()
+
+    def try_acquire_lock(
+        self,
+        owner: str,
+        *,
+        ttl: timedelta = LOCK_TTL,
+        now: datetime | None = None,
+    ) -> bool:
+        """Acquire the updater lease without holding a DB transaction across HTTP."""
+        moment = now or timezone.now()
+        lease_expiry = moment + ttl
+        updated = ExternalCache.objects.filter(
+            key=LOCK_KEY,
+            expires_at__lte=moment,
+        ).update(
+            source=ExternalCacheSource.CBRF,
+            payload={"owner": owner},
+            expires_at=lease_expiry,
+            updated_at=moment,
+        )
+        if updated:
+            return True
+        try:
+            with transaction.atomic():
+                ExternalCache.objects.create(
+                    key=LOCK_KEY,
+                    source=ExternalCacheSource.CBRF,
+                    payload={"owner": owner},
+                    expires_at=lease_expiry,
+                )
+            return True
+        except IntegrityError:
+            return False
+
+    def release_lock(self, owner: str) -> None:
+        """Release the updater lease only if this caller still owns it."""
+        ExternalCache.objects.filter(key=LOCK_KEY, payload={"owner": owner}).delete()
 
     def _deserialize_entry(self, entry: ExternalCache) -> tuple[BaseRates, datetime] | None:
         parsed = self._deserialize(entry.payload)

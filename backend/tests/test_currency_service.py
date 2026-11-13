@@ -9,7 +9,7 @@ from django.utils import timezone
 
 from apps.core.enums import ExternalCacheSource
 from apps.core.models import ExternalCache
-from apps.lots.integrations.currency.cache import CACHE_KEY, PAUSE_KEY, CurrencyCache
+from apps.lots.integrations.currency.cache import CACHE_KEY, LOCK_KEY, PAUSE_KEY, CurrencyCache
 from apps.lots.integrations.currency.client import CbrfClient
 from apps.lots.integrations.currency.domain import (
     BaseRates,
@@ -359,6 +359,69 @@ def test_postgres_lock_serializes_updates_across_connections(force) -> None:
         finally:
             finish.set()
         assert updater.result(timeout=10).origin == RatesOrigin.LIVE
-    # The transaction-scoped lock was released and the contender can refresh.
+    # The updater lease was released and the contender can refresh.
     assert contender.refresh().origin == RatesOrigin.LIVE
     assert len(calls) == 1
+
+
+@pytest.mark.django_db(transaction=True)
+def test_http_fetch_runs_without_open_db_transaction() -> None:
+    from django.db import connection
+
+    observed: dict[str, object] = {}
+
+    def inspecting_handler(request: httpx.Request) -> httpx.Response:
+        observed["in_atomic_block"] = connection.in_atomic_block
+        if connection.vendor == "postgresql":
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT count(*) FROM pg_locks "
+                    "WHERE locktype = 'advisory' AND pid = pg_backend_pid()"
+                )
+                observed["advisory_locks"] = cursor.fetchone()[0]
+                cursor.execute("SELECT pg_current_xact_id_if_assigned() IS NOT NULL")
+                observed["has_assigned_xact_id"] = cursor.fetchone()[0]
+        return _ok_handler()(request)
+
+    service, _ = _service(inspecting_handler)
+    result = service.get_currency_rates()
+    assert result.origin == RatesOrigin.LIVE
+    assert observed["in_atomic_block"] is False
+    if connection.vendor == "postgresql":
+        assert observed["advisory_locks"] == 0
+        assert observed["has_assigned_xact_id"] is False
+    assert not ExternalCache.objects.filter(key=LOCK_KEY).exists()
+
+
+@pytest.mark.django_db
+def test_lease_is_released_on_unexpected_error() -> None:
+    def broken_handler(request: httpx.Request) -> httpx.Response:
+        raise RuntimeError("boom")
+
+    service, _ = _service(broken_handler)
+    with pytest.raises(RuntimeError, match="boom"):
+        service.get_currency_rates()
+    assert not ExternalCache.objects.filter(key=LOCK_KEY).exists()
+
+    ok_service, _ = _service(_ok_handler())
+    assert ok_service.refresh().origin == RatesOrigin.LIVE
+
+
+@pytest.mark.django_db
+def test_expired_lease_can_be_reclaimed_and_stale_owner_cannot_release_it() -> None:
+    cache = CurrencyCache()
+    now = timezone.now()
+    assert cache.try_acquire_lock(
+        "dead-worker", ttl=timedelta(seconds=5), now=now - timedelta(seconds=10)
+    )
+    assert not cache.try_acquire_lock(
+        "too-early", ttl=timedelta(seconds=5), now=now - timedelta(seconds=7)
+    )
+    assert cache.try_acquire_lock("new-worker", ttl=timedelta(seconds=30), now=now)
+
+    # Stale owner releasing late must not evict the active owner's lease.
+    cache.release_lock("dead-worker")
+    assert not cache.try_acquire_lock("contender", ttl=timedelta(seconds=30), now=now)
+
+    cache.release_lock("new-worker")
+    assert cache.try_acquire_lock("contender", ttl=timedelta(seconds=30), now=now)

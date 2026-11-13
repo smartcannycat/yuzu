@@ -1,11 +1,13 @@
 """Currency rates gateway with read-through cache and layered fallbacks."""
 
 import logging
+import threading
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from uuid import uuid4
 
 import httpx
-from django.db import connection, transaction
+from django.db import transaction
 
 from apps.lots.integrations.currency.cache import CurrencyCache
 from apps.lots.integrations.currency.client import CbrfClient, CbrfFetchError
@@ -22,15 +24,12 @@ from config.settings.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-# Advisory lock key must fit into PostgreSQL bigint: derived from "cbrf_rates".
-_ADVISORY_LOCK_KEY = 4173548059
-
 
 class CurrencyRatesService:
     """Resolves a single rates set per calculation with provenance metadata.
 
-    Resolution order: fresh cache -> live fetch (single updater under an
-    advisory lock, others fall back immediately) -> last valid DB set no older
+    Resolution order: fresh cache -> live fetch (single updater under a short
+    DB lease, others fall back immediately) -> last valid DB set no older
     than seven days -> configured fallback rates.
     """
 
@@ -48,6 +47,7 @@ class CurrencyRatesService:
         self._fallback_config = fallback_config
         self._spread = spread
         self._ttl = ttl
+        self._lock_state = threading.local()
 
     def get_currency_rates(self) -> CurrencyRatesResult:
         return self._resolve(force=False)
@@ -68,11 +68,10 @@ class CurrencyRatesService:
     def _resolve(self, *, force: bool) -> CurrencyRatesResult:
         if not force and (cached := self._read_cached_result()) is not None:
             return cached
-        # Transaction-scoped locks are released even when an update fails.
-        with transaction.atomic():
-            if not self._try_acquire_updater_lock():
-                return self._from_stale_or_config("another process is updating rates")
-            # A previous updater may have finished between the first read and locking.
+        if not self._try_acquire_updater_lock():
+            return self._from_stale_or_config("another process is updating rates")
+        try:
+            # A previous updater may have finished between the first read and acquiring the lease.
             if not force and (cached := self._read_cached_result()) is not None:
                 return cached
             try:
@@ -81,9 +80,12 @@ class CurrencyRatesService:
                 logger.warning("CBRF fetch failed: %s", exc)
                 self._cache.mark_pause()
                 return self._from_stale_or_config(f"source error: {exc}")
-            self._cache.write(live, fetched_at, ttl=self._ttl)
-            self._cache.clear_pause()
+            with transaction.atomic():
+                self._cache.write(live, fetched_at, ttl=self._ttl)
+                self._cache.clear_pause()
             return self._result(live, RatesOrigin.LIVE, fetched_at, is_fallback=False)
+        finally:
+            self._release_updater_lock()
 
     def _from_stale_or_config(self, reason: str) -> CurrencyRatesResult:
         stale = self._cache.read_stale()
@@ -132,9 +134,18 @@ class CurrencyRatesService:
         )
 
     def _try_acquire_updater_lock(self) -> bool:
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT pg_try_advisory_xact_lock(%s)", [_ADVISORY_LOCK_KEY])
-            return bool(cursor.fetchone()[0])
+        owner = uuid4().hex
+        if self._cache.try_acquire_lock(owner):
+            self._lock_state.owner = owner
+            return True
+        self._lock_state.owner = None
+        return False
+
+    def _release_updater_lock(self) -> None:
+        owner = getattr(self._lock_state, "owner", None)
+        self._lock_state.owner = None
+        if owner is not None:
+            self._cache.release_lock(owner)
 
 
 def to_currency_rates_schema(result: CurrencyRatesResult) -> CurrencyRates:
