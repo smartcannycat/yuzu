@@ -238,6 +238,8 @@ class CustomsCalculation(StrictBaseModel):
     )
     customs_duty_eur: float = Field(..., description="Duty in EUR")
     customs_duty_rub: int = Field(..., description="Duty in RUB")
+    excise_rub: int = Field(0, ge=0, description="Import excise (EVs outside unified EAEU rates)")
+    import_vat_rub: int = Field(0, ge=0, description="Import VAT (EVs outside unified EAEU rates)")
     is_under_160_hp: bool | None = Field(None, description="Power <= 160 hp")
     is_commercial_util: bool = Field(..., description="Commercial utilization fee")
     utilization_fee_rub: int = Field(..., description="RF utilization fee")

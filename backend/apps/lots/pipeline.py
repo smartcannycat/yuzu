@@ -24,8 +24,13 @@ from apps.core.exceptions import (
     ConflictProblemError,
     NotFoundProblemError,
 )
+from apps.lots.economics import (
+    missing_customs_inputs,
+    recompute_lot_economics,
+    resolve_start_bid_jpy,
+)
 from apps.lots.integrations.drom.schemas import DromFetchError, DromMarketResult, DromSearchCriteria
-from apps.lots.models import Batch, BatchItem, Lot, MarketComparisonInfo
+from apps.lots.models import Batch, BatchItem, Lot, MarketComparisonInfo, WiseCostLadder
 from apps.lots.queries import _build_lot_summary, _has_full_detail
 from apps.lots.schemas import (
     BatchCreateResponse,
@@ -34,6 +39,7 @@ from apps.lots.schemas import (
     LotSummary,
     MascotState,
 )
+from apps.lots.scoring import compute_verdict
 from apps.users.models import User
 
 logger = logging.getLogger(__name__)
@@ -376,11 +382,51 @@ def _step_farpost_parts(_item: BatchItem) -> bool:
 
 def _step_customs_calc(item: BatchItem) -> bool:
     _advance_step(item, TaskStep.CUSTOMS_CALC)
+    lot = item.lot
+    if lot is None:
+        _fail_item(item, TaskStep.FAILED, "Лот не привязан к элементу пачки")
+        return False
+    # Fill in the start bid (sheet -> auction history -> reverse calculation
+    # from the Drom price) before checking the remaining inputs, so a new
+    # lot without an explicit bid still gets its economics built.
+    try:
+        ladder = WiseCostLadder.objects.filter(lot=lot).first()
+        bid_jpy = ladder.car_bid_jpy if ladder is not None else resolve_start_bid_jpy(lot)
+    except Exception:
+        logger.exception("Start bid derivation failed for lot %s", lot.pk)
+        _fail_item(item, TaskStep.FAILED, "Не удалось определить стартовую ставку лота")
+        return False
+    missing = missing_customs_inputs(lot, bid_jpy)
+    if missing:
+        _fail_item(
+            item,
+            TaskStep.FAILED,
+            "Недостаточно данных для расчёта таможни: " + ", ".join(missing),
+        )
+        return False
+    try:
+        recompute_lot_economics(lot, bid_jpy=bid_jpy)
+        lot.refresh_from_db()
+    except Exception:
+        logger.exception("Customs recomputation failed for lot %s", lot.pk)
+        _fail_item(item, TaskStep.FAILED, "Не удалось рассчитать таможные платежи")
+        return False
     return True
 
 
 def _step_scoring(item: BatchItem) -> bool:
     _advance_step(item, TaskStep.SCORING)
+    lot = item.lot
+    if lot is None:
+        _fail_item(item, TaskStep.FAILED, "Лот не привязан к элементу пачки")
+        return False
+    lot.refresh_from_db()
+    try:
+        compute_verdict(lot)
+    except Exception:
+        logger.exception("Scoring failed for lot %s", lot.pk)
+        _fail_item(item, TaskStep.FAILED, "Не удалось рассчитать вердикт светофора")
+        return False
     return True
 
 
@@ -537,6 +583,18 @@ def run_batch_pipeline(batch_id: uuid.UUID) -> None:
 def recover_batches_on_startup() -> None:
     """Requeue interrupted batches when the application server starts."""
     if "pytest" in sys.modules:
+        return
+    # Skip when the database schema is not migrated yet (fresh databases,
+    # manage.py migrate itself runs AppConfig.ready() before applying).
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT 1 FROM information_schema.tables WHERE table_name = 'lots_batches'"
+            )
+            if cursor.fetchone() is None:
+                return
+    except Exception:
+        logger.exception("Batch recovery check failed")
         return
     stuck_statuses = [BatchStatus.QUEUED, BatchStatus.PROCESSING]
     batches = Batch.objects.filter(status__in=stuck_statuses)

@@ -14,6 +14,8 @@ from apps.lots.schemas import (
     BatchProgressResponse,
     LotDetailResponse,
     LotListResponse,
+    RecalculateRequest,
+    RecalculateResponse,
 )
 from apps.users.authentication import AppJWTAuth
 from apps.users.models import User
@@ -134,3 +136,22 @@ class LotController(ControllerBase):
     ) -> LotDetailResponse:
         user = self._require_user(request)
         return services.get_lot_detail(user, lot_id)
+
+    @http_post(
+        "/{lot_id}/recalculate",
+        response={
+            200: RecalculateResponse,
+            400: ProblemDetail,
+            401: ProblemDetail,
+            404: ProblemDetail,
+            422: ProblemDetail,
+        },
+    )
+    def recalculate_lot(
+        self,
+        request: HttpRequest,
+        lot_id: UUID4,
+        payload: RecalculateRequest,
+    ) -> RecalculateResponse:
+        user = self._require_user(request)
+        return services.recalculate_lot(user, lot_id, payload)

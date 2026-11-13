@@ -93,6 +93,10 @@ class Lot(models.Model):
     first_reg_date_str = models.CharField(max_length=100, blank=True, null=True)
     is_pass_corridor_3_5 = models.BooleanField(null=True, blank=True)
 
+    auction_bid_jpy = models.PositiveBigIntegerField(null=True, blank=True)
+    customs_rates_input = models.JSONField(null=True, blank=True)
+    is_verified_mild_hybrid = models.BooleanField(default=False)
+
     engine_cc = models.IntegerField(null=True, blank=True)
     power_hp = models.IntegerField(null=True, blank=True)
     power_hp_source = models.CharField(
@@ -455,7 +459,15 @@ class CustomsCalculation(models.Model):
     effective_duty_pct = models.FloatField(null=True, blank=True)
     customs_duty_eur = models.FloatField()
     customs_duty_rub = models.BigIntegerField()
+    # Excise and import VAT apply to cars taxed outside the unified EAEU
+    # rates (battery electric vehicles); zero for ICE/hybrid imports.
+    excise_rub = models.BigIntegerField(default=0)
+    import_vat_rub = models.BigIntegerField(default=0)
     is_under_160_hp = models.BooleanField(null=True, blank=True)
+    # Utilization fee mode selected by the user (personal/commercial switch);
+    # ``is_commercial_util`` stores the mode actually applied, which may be
+    # commercial even for a personal selection when power is unknown or >160 hp.
+    util_mode_selected_commercial = models.BooleanField(default=False)
     is_commercial_util = models.BooleanField(default=False)
     utilization_fee_rub = models.BigIntegerField()
     customs_clearance_fee_rub = models.BigIntegerField()

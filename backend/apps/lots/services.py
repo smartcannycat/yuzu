@@ -15,6 +15,7 @@ from apps.lots.queries import (
     get_lot_detail,
     get_lots_list,
 )
+from apps.lots.recalc import recalculate_lot
 from apps.lots.starter_lots import (
     backfill_starter_lots,
     seed_starter_lots,
@@ -31,6 +32,7 @@ __all__ = [
     "get_batch_progress",
     "get_lot_detail",
     "get_lots_list",
+    "recalculate_lot",
     "recover_batches_on_startup",
     "run_batch_pipeline",
     "seed_starter_lots",
