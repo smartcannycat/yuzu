@@ -1590,6 +1590,11 @@ def recompute_lot_economics(
         calculation_date = on_date
         if calculation_date is None:
             if lot.frame_id == _COROLLA_LOT_FIELDS["frame_id"] and not hasattr(lot, "batch_item"):
+                # TODO(BE-05/BE-11): benchmark freeze. The canonical Corolla
+                # fixture pins the declaration date so the seeded lot keeps
+                # reproducing the "3-5 years" corridor of the API contract
+                # (its real age at the 12.11.2026 rates snapshot is 6 years).
+                # Remove once a real declaration date source exists.
                 calculation_date = date(2025, 10, 15)
             else:
                 calculation_date = timezone.localdate()

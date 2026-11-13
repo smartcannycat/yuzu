@@ -130,7 +130,9 @@ _EXCISE_2026_RUB_PER_HP: tuple[tuple[int, int], ...] = (
     (_UNBOUNDED_HP, 1_829),
 )
 
-_IMPORT_VAT_PCT = 0.20
+# Import VAT rate. research/02 (section 1.5) names 20%, but Federal Law
+# No. 425-FZ raised import VAT to 22% from 01.01.2026; the legal rate wins.
+_IMPORT_VAT_PCT = 0.22
 
 # Utilization fee privilege power threshold (Decree No. 1713).
 _UTIL_PRIVILEGED_MAX_HP = 160
