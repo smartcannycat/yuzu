@@ -12,6 +12,7 @@ interface Props {
   subtitle?: string
   closeLabel?: string
   closeOnBackdrop?: boolean
+  persistent?: boolean
   maxWidth?: 'sm' | 'md' | 'lg'
   placement?: SheetPlacement
 }
@@ -37,6 +38,7 @@ const PANEL_PLACEMENT_CLASSES: Record<SheetPlacement, string> = {
 const props = withDefaults(defineProps<Props>(), {
   closeLabel: 'Закрыть окно',
   closeOnBackdrop: true,
+  persistent: false,
   maxWidth: 'md',
   placement: 'center',
 })
@@ -64,7 +66,7 @@ watch(
 useFocusTrap(panelRef, open)
 
 onKeyStroke('Escape', (event) => {
-  if (!open.value) return
+  if (!open.value || props.persistent) return
   event.preventDefault()
   close()
 })
@@ -74,7 +76,7 @@ const isDragging = ref(false)
 let touchStartY = 0
 
 function onTouchStart(event: TouchEvent) {
-  if (isDesktop.value) return
+  if (isDesktop.value || props.persistent) return
   const touch = event.touches[0]
   if (!touch) return
   touchStartY = touch.clientY
@@ -92,7 +94,7 @@ function onTouchMove(event: TouchEvent) {
 function onTouchEnd() {
   if (!isDragging.value) return
   isDragging.value = false
-  if (dragOffsetY.value > 72) {
+  if (dragOffsetY.value > 72 && !props.persistent) {
     close()
   }
   dragOffsetY.value = 0
@@ -111,11 +113,12 @@ const dragStyle = computed(() => {
 })
 
 function close() {
+  if (props.persistent) return
   open.value = false
 }
 
 function onBackdropClick() {
-  if (props.closeOnBackdrop) {
+  if (props.closeOnBackdrop && !props.persistent) {
     close()
   }
 }
@@ -177,7 +180,9 @@ function onBackdropClick() {
               <button
                 type="button"
                 :aria-label="closeLabel"
-                class="group/close focus-visible:outline-accent -mr-1.5 flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full focus-visible:outline-2 focus-visible:outline-offset-[-4px]"
+                :disabled="persistent"
+                class="group/close focus-visible:outline-accent -mr-1.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-full focus-visible:outline-2 focus-visible:outline-offset-[-4px]"
+                :class="persistent ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'"
                 @click="close"
               >
                 <span

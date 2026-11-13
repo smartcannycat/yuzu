@@ -25,6 +25,7 @@ export const useBatchesStore = defineStore('batches', () => {
   const batchError = ref<string | null>(null)
 
   let latestBatchRequestId = 0
+  let sessionEpoch = 0
 
   const isTerminal = computed(() => {
     const status = activeBatch.value?.status
@@ -40,11 +41,14 @@ export const useBatchesStore = defineStore('batches', () => {
     files: readonly File[],
     client: ApiClient = apiClient,
   ): Promise<BatchCreateResponse> {
+    const epoch = sessionEpoch
     isUploading.value = true
     uploadError.value = null
 
     try {
       const response = await client.lots.createBatch(files)
+      if (epoch !== sessionEpoch) return response
+
       pollIntervalMs.value =
         response.poll_interval_ms > 0 ? response.poll_interval_ms : DEFAULT_POLL_INTERVAL_MS
 
@@ -52,11 +56,14 @@ export const useBatchesStore = defineStore('batches', () => {
       await useLotsStore().refreshLotsSilently(client)
       return response
     } catch (error: unknown) {
-      const message = formatBatchError(error, 'Не удалось загрузить аукционные листы.')
-      uploadError.value = message
+      if (epoch === sessionEpoch) {
+        uploadError.value = formatBatchError(error, 'Не удалось загрузить аукционные листы.')
+      }
       throw error
     } finally {
-      isUploading.value = false
+      if (epoch === sessionEpoch) {
+        isUploading.value = false
+      }
     }
   }
 
@@ -108,23 +115,29 @@ export const useBatchesStore = defineStore('batches', () => {
     files: readonly File[],
     client: ApiClient = apiClient,
   ): Promise<BatchProgressResponse> {
+    const epoch = sessionEpoch
     const requestId = ++latestBatchRequestId
     isAppending.value = true
     uploadError.value = null
 
     try {
       const response = await client.lots.appendBatchItems(batchId, files)
+      if (epoch !== sessionEpoch) return response
+
       if (requestId === latestBatchRequestId) {
         activeBatch.value = response
       }
       await useLotsStore().refreshLotsSilently(client)
       return response
     } catch (error: unknown) {
-      const message = formatBatchError(error, 'Не удалось догрузить листы в текущую очередь.')
-      uploadError.value = message
+      if (epoch === sessionEpoch) {
+        uploadError.value = formatBatchError(error, 'Не удалось догрузить листы в текущую очередь.')
+      }
       throw error
     } finally {
-      isAppending.value = false
+      if (epoch === sessionEpoch) {
+        isAppending.value = false
+      }
     }
   }
 
@@ -134,6 +147,7 @@ export const useBatchesStore = defineStore('batches', () => {
   }
 
   function clear(): void {
+    sessionEpoch += 1
     latestBatchRequestId += 1
     activeBatch.value = null
     pollIntervalMs.value = DEFAULT_POLL_INTERVAL_MS

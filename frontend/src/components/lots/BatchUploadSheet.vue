@@ -244,6 +244,7 @@ function handleSubmit(): void {
     :subtitle="sheetSubtitle"
     max-width="md"
     placement="center"
+    :persistent="isSubmitting"
     :close-on-backdrop="!isSubmitting"
   >
     <div class="flex flex-col gap-4">

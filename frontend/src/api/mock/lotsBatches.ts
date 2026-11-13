@@ -395,8 +395,9 @@ export function createMockLotsWorkspace(): MockLotsWorkspace {
       items: MOCK_IN_PROGRESS_SUMMARY.items.map((seedItem, idx) => {
         const templateSeed = pickTemplateForFilename(seedItem.display_title, idx + 5)
         const stepIdx = Math.max(0, DAG_STEPS.indexOf(seedItem.current_step))
+        const lotId = generateUuid()
         return {
-          lotId: generateUuid(),
+          lotId,
           fileIndex: idx,
           originalFilename: `sheet_${templateSeed.lot_number}.jpg`,
           initialPreviewTitle: seedItem.display_title,
@@ -405,7 +406,7 @@ export function createMockLotsWorkspace(): MockLotsWorkspace {
           initialStepIndex: stepIdx,
           template: buildLotSummaryFromTemplate(
             templateSeed,
-            generateUuid(),
+            lotId,
             ++sequenceCounter,
             createdAtIso,
           ),
@@ -557,7 +558,11 @@ export function createMockLotsWorkspace(): MockLotsWorkspace {
 
       const nowMs = Date.now()
       const currentProgress = computeBatchProgress(record, nowMs)
-      if (currentProgress.status === 'completed' || currentProgress.status === 'failed') {
+      if (
+        currentProgress.status === 'completed' ||
+        currentProgress.status === 'partial_failed' ||
+        currentProgress.status === 'failed'
+      ) {
         throw createMockProblem({
           slug: 'batch-already-completed',
           title: 'Очередь уже завершена',

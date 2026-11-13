@@ -28,8 +28,13 @@ function getLowerExtension(filename: string): string {
 
 export function isSupportedBatchFile(file: File): boolean {
   const mime = file.type.trim().toLowerCase()
-  if (mime && BATCH_ALLOWED_MIME_TYPES.has(mime)) {
-    return true
+  if (mime) {
+    if (BATCH_ALLOWED_MIME_TYPES.has(mime)) {
+      return true
+    }
+    if (mime !== 'application/octet-stream') {
+      return false
+    }
   }
   return ALLOWED_EXTENSIONS.has(getLowerExtension(file.name))
 }

@@ -329,7 +329,7 @@ function getItemSubtitle(item: BatchItemStatus): string {
             >
               <button
                 type="button"
-                class="flex w-full cursor-pointer items-center justify-between gap-3 px-4 py-3.5 text-left outline-none focus:outline-none focus-visible:outline-none"
+                class="focus-visible:outline-accent flex w-full cursor-pointer items-center justify-between gap-3 px-4 py-3.5 text-left focus-visible:outline-2 focus-visible:outline-offset-[-2px]"
                 @click="previewLot = item.summary"
               >
                 <div class="flex min-w-0 items-center gap-3">

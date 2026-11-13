@@ -42,6 +42,8 @@ export const useAuthStore = defineStore('auth', () => {
 
   function applyAuthTokens(response: AuthTokensResponse): UserProfileResponse {
     sessionEpoch += 1
+    useLotsStore().clear()
+    useBatchesStore().clear()
     tokenStorage.setFromAuthResponse(response)
     isInitialized.value = true
     return response.user

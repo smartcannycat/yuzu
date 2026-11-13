@@ -46,6 +46,9 @@ describe('batchFiles utilities', () => {
       expect(badTypeResult.error).toContain('doc.pdf')
     }
 
+    const spoofedExtension = [makeFile('renamed.jpg', 'application/pdf', 2048)]
+    expect(validateBatchFileAddition([], spoofedExtension).ok).toBe(false)
+
     const oversized = [
       makeFile('valid.png', 'image/png', 2048),
       makeFile('huge.jpg', 'image/jpeg', BATCH_MAX_FILE_SIZE_BYTES + 1),
