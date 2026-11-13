@@ -15,6 +15,7 @@ are floats rounded to 2 decimal places per API_DATA_CONTRACTS.md.
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from dataclasses import dataclass, field
 from datetime import date
@@ -603,4 +604,148 @@ def build_wise_cost_ladder(params: LadderInput) -> LadderResult:
         net_benefit_rub=net_benefit_rub,
         benefit_percentage=benefit_percentage,
         steps=steps,
+    )
+
+
+# --- Start bid derivation (reverse calculation from the RF market price) ---
+
+# Target margin of the reverse calculation: the start bid must leave at least
+# 15% of the Drom market price as the buyer's net benefit.
+DEFAULT_TARGET_MARGIN_PCT = 15.0
+
+# Slider step from the API contract (EconomicsDetail.bid_slider_step_jpy).
+DEFAULT_BID_STEP_JPY = 10_000
+
+
+@dataclass(frozen=True)
+class StartBidInput:
+    """Parameters for deriving a new lot's start bid from the market price."""
+
+    market_price_rf_rub: int
+    rates: CurrencyRatesInput
+    on_date: date
+    customs_params: CustomsInput
+    japan_fob_jpy: int = DEFAULT_JAPAN_FOB_JPY
+    broker_rub: int | None = None
+    repair_total_rub: int = 0
+    include_repairs: bool = True
+    target_margin_pct: float = DEFAULT_TARGET_MARGIN_PCT
+    step_jpy: int = DEFAULT_BID_STEP_JPY
+    min_bid_jpy: int = 300_000
+    max_bid_jpy: int = 2_500_000
+
+
+@dataclass(frozen=True)
+class StartBidResult:
+    """Derived start bid with the numbers it was based on."""
+
+    bid_jpy: int
+    source: str
+    target_turnkey_rub: int
+    achieved_turnkey_rub: int
+    achieved_net_benefit_rub: int
+    clamped: bool
+
+
+def _turnkey_for_bid(
+    bid_jpy: int,
+    params: StartBidInput,
+    fob_rub: int,
+    freight_rub: int,
+) -> int:
+    """Full turnkey cost for a candidate bid (engine grids, exact-sum ladder)."""
+    bid_rub = math.floor(bid_jpy * params.rates.jpy_rub + 0.5)
+    customs_value_rub = bid_rub + fob_rub + freight_rub
+    customs = calculate_customs(
+        dataclasses.replace(
+            params.customs_params,
+            customs_value_rub=customs_value_rub,
+            customs_value_eur=None,
+        ),
+        params.rates,
+        on_date=params.on_date,
+    )
+    ladder = build_wise_cost_ladder(
+        LadderInput(
+            bid_jpy=bid_jpy,
+            rates=params.rates,
+            customs=customs,
+            market_price_rf_rub=params.market_price_rf_rub,
+            broker_rub=params.broker_rub if params.broker_rub is not None else None,
+            repair_total_rub=params.repair_total_rub,
+            include_repairs=params.include_repairs,
+        )
+    )
+    return ladder.turnkey_cost_rub
+
+
+def derive_start_bid_from_market(params: StartBidInput) -> StartBidResult:
+    """Reverse-calculate the start bid from the Drom market price.
+
+    Finds the highest bid (integer JPY, within the Screen 6 slider bounds)
+    whose turnkey cost still leaves at least ``target_margin_pct`` of the
+    market price as net benefit, then aligns it down to the slider step so
+    the target margin always holds. The turnkey cost is strictly increasing
+    in the bid for every corridor (including value-dependent under-3 and
+    EV duties), so a binary search over the integer bid range is exact.
+    """
+    if params.min_bid_jpy > params.max_bid_jpy:
+        raise ValueError("min_bid_jpy must not exceed max_bid_jpy")
+    if params.step_jpy <= 0:
+        raise ValueError("step_jpy must be positive")
+    if params.market_price_rf_rub < 0:
+        raise ValueError("market_price_rf_rub must not be negative")
+
+    rates = params.rates
+    fob_rub = math.floor(params.japan_fob_jpy * rates.jpy_rub + 0.5)
+    freight_rub = params.customs_params.freight_rub
+    if freight_rub is None:
+        freight_rub = math.floor(DEFAULT_FREIGHT_USD * rates.usd_rub + 0.5)
+
+    target_turnkey_rub = math.floor(
+        params.market_price_rf_rub * (1 - params.target_margin_pct / 100) + 0.5
+    )
+
+    def turnkey_for(bid_jpy: int) -> int:
+        return _turnkey_for_bid(bid_jpy, params, fob_rub, freight_rub)
+
+    # Binary search for the largest integer bid within bounds whose turnkey
+    # cost does not exceed the margin target.
+    lo, hi = params.min_bid_jpy, params.max_bid_jpy
+    if turnkey_for(lo) > target_turnkey_rub:
+        # Even the minimum slider bid breaks the target margin: clamp to the
+        # lowest available bid and report the shortfall.
+        achieved = turnkey_for(lo)
+        return StartBidResult(
+            bid_jpy=lo,
+            source="reverse_from_market",
+            target_turnkey_rub=target_turnkey_rub,
+            achieved_turnkey_rub=achieved,
+            achieved_net_benefit_rub=params.market_price_rf_rub - achieved,
+            clamped=True,
+        )
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if turnkey_for(mid) <= target_turnkey_rub:
+            lo = mid
+        else:
+            hi = mid - 1
+
+    # Align down to the slider step; drop one more step if the aligned bid
+    # still overshoots the margin target (can happen when flooring up-crosses
+    # a duty bracket).
+    aligned = (lo // params.step_jpy) * params.step_jpy
+    aligned = max(aligned, params.min_bid_jpy)
+    if aligned != lo and turnkey_for(aligned) > target_turnkey_rub:
+        aligned -= params.step_jpy
+    aligned = max(min(aligned, params.max_bid_jpy), params.min_bid_jpy)
+
+    achieved = turnkey_for(aligned)
+    return StartBidResult(
+        bid_jpy=aligned,
+        source="reverse_from_market",
+        target_turnkey_rub=target_turnkey_rub,
+        achieved_turnkey_rub=achieved,
+        achieved_net_benefit_rub=params.market_price_rf_rub - achieved,
+        clamped=aligned != lo,
     )

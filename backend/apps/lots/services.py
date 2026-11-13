@@ -48,8 +48,10 @@ from apps.lots.customs import (
     CurrencyRatesInput,
     CustomsInput,
     LadderInput,
+    StartBidInput,
     build_wise_cost_ladder,
     calculate_customs,
+    derive_start_bid_from_market,
 )
 from apps.lots.models import (
     Batch,
@@ -1746,6 +1748,87 @@ def recompute_lot_economics(
         lot.save(update_fields=lot_update_fields)
 
 
+def _resolve_start_bid_jpy(lot: Lot, *, persist: bool = True) -> int | None:
+    """Start bid for a new lot, by priority (see BE-09 start bid spec):
+
+    1. Sheet data: the bid captured by the OCR pipeline (``auction_bid_jpy``).
+    2. Auction history: the most recent closing price from the cross-audit
+       archive (``PastAuctionRecord.closing_price_jpy``).
+    3. Reverse calculation from the Drom market price: the highest slider
+       step bid whose turnkey cost leaves a 15% target margin.
+
+    Bids from sources 1-2 are only clamped into the Screen 6 slider bounds;
+    the reverse-calculated bid is stored back on the lot so it becomes the
+    base bid for the recalculation endpoint and the PDF report.
+    """
+    min_bid = lot.bid_slider_min_jpy or 300_000
+    max_bid = lot.bid_slider_max_jpy or 2_500_000
+
+    def clamp(bid_jpy: int) -> int:
+        return max(min_bid, min(max_bid, bid_jpy))
+
+    if lot.auction_bid_jpy:
+        return clamp(lot.auction_bid_jpy)
+
+    record = (
+        PastAuctionRecord.objects.filter(audit__lot=lot, closing_price_jpy__isnull=False)
+        .order_by("-auction_date", "-id")
+        .first()
+    )
+    if record is not None:
+        return clamp(record.closing_price_jpy)
+
+    if not lot.market_price_rf_rub:
+        return None
+
+    customs_model = CustomsCalculation.objects.filter(lot=lot).first()
+    rates_data = None
+    if customs_model is not None:
+        rates_model = CurrencyRatesSnapshot.objects.filter(customs=customs_model).first()
+        if rates_model is not None:
+            rates_data = schemas.CurrencyRates.model_validate(rates_model)
+    if rates_data is None and lot.customs_rates_input:
+        rates_data = schemas.CurrencyRates.model_validate(lot.customs_rates_input)
+    if rates_data is None:
+        return None
+    rates = CurrencyRatesInput(
+        jpy_rub=rates_data.jpy_rub_bank,
+        eur_rub=rates_data.eur_rub_cbrf,
+        usd_rub=rates_data.usd_rub_cbrf,
+    )
+
+    repair = FarpostRepairSummary.objects.filter(lot=lot).first()
+    result = derive_start_bid_from_market(
+        StartBidInput(
+            market_price_rf_rub=lot.market_price_rf_rub,
+            rates=rates,
+            on_date=timezone.localdate(),
+            customs_params=CustomsInput(
+                engine_cc=0 if lot.fuel_type == FuelType.EV else lot.engine_cc,
+                fuel_type=lot.fuel_type,
+                power_hp=lot.power_hp,
+                first_reg_year=lot.first_reg_year,
+                first_reg_month=lot.first_reg_month,
+                is_commercial_util=bool(
+                    customs_model and customs_model.util_mode_selected_commercial
+                ),
+                freight_rub=(customs_model.freight_vladivostok_rub if customs_model else None),
+                broker_rub=(customs_model.broker_svh_sbkts_rub if customs_model else None),
+                mild_hybrid=lot.is_verified_mild_hybrid,
+            ),
+            broker_rub=customs_model.broker_svh_sbkts_rub if customs_model else None,
+            repair_total_rub=repair.grand_total_repair_rub if repair else 0,
+            include_repairs=True,
+            min_bid_jpy=min_bid,
+            max_bid_jpy=max_bid,
+        )
+    )
+    if persist:
+        lot.auction_bid_jpy = result.bid_jpy
+        lot.save(update_fields=["auction_bid_jpy", "updated_at"])
+    return result.bid_jpy
+
+
 def _missing_customs_inputs(lot: Lot) -> list[str]:
     """Mandatory inputs for the customs_calc pipeline step (Russian labels)."""
     missing: list[str] = []
@@ -1771,6 +1854,15 @@ def _step_customs_calc(item: BatchItem) -> bool:
     lot = item.lot
     if lot is None:
         _fail_item(item, TaskStep.FAILED, "Лот не привязан к элементу пачки")
+        return False
+    # Fill in the start bid (sheet -> auction history -> reverse calculation
+    # from the Drom price) before checking the remaining inputs, so a new
+    # lot without an explicit bid still gets its economics built.
+    try:
+        _resolve_start_bid_jpy(lot)
+    except Exception:
+        logger.exception("Start bid derivation failed for lot %s", lot.pk)
+        _fail_item(item, TaskStep.FAILED, "Не удалось определить стартовую ставку лота")
         return False
     missing = _missing_customs_inputs(lot)
     if missing:
