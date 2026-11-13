@@ -294,3 +294,71 @@ def test_invalid_cached_values_are_ignored(field, value) -> None:
     result = service.get_currency_rates()
     assert result.origin == RatesOrigin.CONFIG
     assert len(calls) == 1
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("updated_by_peer", ["cache", "pause"])
+def test_rechecks_cache_and_pause_after_acquiring_lock(monkeypatch, updated_by_peer) -> None:
+    service, calls = _service(_ok_handler())
+    acquire = service._try_acquire_updater_lock
+
+    def acquire_after_peer_update():
+        if updated_by_peer == "cache":
+            _write_cache(OTHER_RATES)
+        else:
+            CurrencyCache().mark_pause()
+        return acquire()
+
+    monkeypatch.setattr(service, "_try_acquire_updater_lock", acquire_after_peer_update)
+    result = service.get_currency_rates()
+    assert result.origin == (
+        RatesOrigin.CACHE if updated_by_peer == "cache" else RatesOrigin.CONFIG
+    )
+    assert calls == []
+
+
+@pytest.mark.django_db
+def test_failed_manual_refresh_sets_pause() -> None:
+    service, calls = _service(_fail_handler())
+    service.refresh()
+    assert CurrencyCache().is_paused()
+    service.get_currency_rates()
+    assert len(calls) == 1
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("force", [False, True])
+def test_postgres_lock_serializes_updates_across_connections(force) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from django.db import connections
+
+    started, finish = Event(), Event()
+
+    def slow_handler(request):
+        started.set()
+        assert finish.wait(timeout=10), "Test did not release the source request"
+        return _ok_handler()(request)
+
+    def update_in_other_connection():
+        try:
+            service, _ = _service(slow_handler)
+            return service.get_currency_rates()
+        finally:
+            connections.close_all()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        updater = pool.submit(update_in_other_connection)
+        try:
+            assert started.wait(timeout=10), "Updater did not reach the source"
+            contender, calls = _service(_ok_handler())
+            result = contender.refresh() if force else contender.get_currency_rates()
+            assert result.origin == RatesOrigin.CONFIG
+            assert calls == []
+        finally:
+            finish.set()
+        assert updater.result(timeout=10).origin == RatesOrigin.LIVE
+    # The transaction-scoped lock was released and the contender can refresh.
+    assert contender.refresh().origin == RatesOrigin.LIVE
+    assert len(calls) == 1
