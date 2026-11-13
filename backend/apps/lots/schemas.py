@@ -1,8 +1,8 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_core import PydanticCustomError
 
 from apps.core.enums import (
@@ -139,6 +139,11 @@ class PastAuctionRecord(StrictBaseModel):
     defects_summary: str | None = Field(None, description="Past auction defects summary")
     closing_price_jpy: int | None = Field(None, description="Closing price in JPY")
     sheet_archive_url: str | None = Field(None, description="Archive sheet scan URL")
+
+    @field_validator("auction_date", mode="before")
+    @classmethod
+    def format_auction_date(cls, value: Any) -> Any:
+        return value.strftime("%d.%m.%Y") if isinstance(value, date) else value
 
 
 class CrossAuditReport(StrictBaseModel):
