@@ -9,6 +9,7 @@ import {
   BaseButton,
   BaseCard,
   BaseInput,
+  BrandLogo,
   SegmentedControl,
   type SegmentOption,
 } from '@/components/ui'
@@ -208,22 +209,7 @@ async function handleSubmit(): Promise<void> {
 <template>
   <main class="mx-auto flex min-h-dvh w-full max-w-[440px] flex-col justify-center gap-5 px-4 py-8">
     <header class="flex flex-col items-start gap-2 px-1">
-      <div class="flex items-center gap-2.5">
-        <span
-          class="bg-accent text-text-on-accent flex h-9 w-9 items-center justify-center rounded-[10px] text-[15px] font-semibold tracking-tight"
-          aria-hidden="true"
-        >
-          YZ
-        </span>
-        <div class="flex flex-col">
-          <span class="text-text-primary text-[18px] leading-tight font-semibold tracking-tight">
-            YUZU
-          </span>
-          <span class="text-text-secondary text-[12px] leading-tight">
-            YUZU // Интеллект японских автоаукционов
-          </span>
-        </div>
-      </div>
+      <BrandLogo layout="auth" />
     </header>
 
     <BaseCard padding="lg" class="flex flex-col gap-5">
