@@ -6,6 +6,7 @@ import {
   formatEngineLiters,
   formatMileageKm,
   formatRub,
+  formatSheetCountRu,
   formatShortDateRu,
   formatTaskStepRu,
   formatVerdictLabelRu,
@@ -49,11 +50,17 @@ describe('formatters', () => {
     expect(cleanVerdictText('Можно брать • +280к выгода')).toBe('Можно брать • +280к выгода')
   })
 
-  it('pluralizes Russian car counts accurately', () => {
+  it('pluralizes Russian car and sheet counts accurately', () => {
     expect(formatCarCountRu(1)).toBe('1 автомобиль')
     expect(formatCarCountRu(2)).toBe('2 автомобиля')
     expect(formatCarCountRu(5)).toBe('5 автомобилей')
     expect(formatCarCountRu(11)).toBe('11 автомобилей')
     expect(formatCarCountRu(22)).toBe('22 автомобиля')
+
+    expect(formatSheetCountRu(1)).toBe('1 лист')
+    expect(formatSheetCountRu(3)).toBe('3 листа')
+    expect(formatSheetCountRu(5)).toBe('5 листов')
+    expect(formatSheetCountRu(11)).toBe('11 листов')
+    expect(formatSheetCountRu(21)).toBe('21 лист')
   })
 })

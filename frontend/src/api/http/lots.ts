@@ -1,6 +1,11 @@
 import type { HttpRequestFn } from '@/api/http/transport'
 import type { LotsApi } from '@/api/types'
-import type { LotListQueryParams, LotListResponse } from '@/types/api'
+import type {
+  BatchCreateResponse,
+  BatchProgressResponse,
+  LotListQueryParams,
+  LotListResponse,
+} from '@/types/api'
 
 function sanitizeLotQuery(
   params?: LotListQueryParams,
@@ -21,12 +26,40 @@ function sanitizeLotQuery(
   return Object.keys(cleaned).length > 0 ? cleaned : undefined
 }
 
+function buildBatchFormData(files: readonly File[]): FormData {
+  const formData = new FormData()
+  for (const file of files) {
+    formData.append('files', file, file.name)
+  }
+  return formData
+}
+
 export function createHttpLotsApi(request: HttpRequestFn): LotsApi {
   return {
     list(params?: LotListQueryParams): Promise<LotListResponse> {
       return request<LotListResponse>('/lots', {
         method: 'GET',
         query: sanitizeLotQuery(params),
+      })
+    },
+
+    createBatch(files: readonly File[]): Promise<BatchCreateResponse> {
+      return request<BatchCreateResponse>('/lots/batches', {
+        method: 'POST',
+        body: buildBatchFormData(files),
+      })
+    },
+
+    getBatch(batchId: string): Promise<BatchProgressResponse> {
+      return request<BatchProgressResponse>(`/lots/batches/${encodeURIComponent(batchId)}`, {
+        method: 'GET',
+      })
+    },
+
+    appendBatchItems(batchId: string, files: readonly File[]): Promise<BatchProgressResponse> {
+      return request<BatchProgressResponse>(`/lots/batches/${encodeURIComponent(batchId)}/items`, {
+        method: 'POST',
+        body: buildBatchFormData(files),
       })
     },
   }

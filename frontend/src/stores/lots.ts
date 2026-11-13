@@ -64,6 +64,8 @@ export const useLotsStore = defineStore('lots', () => {
 
   // Monotonic sequence guard ensures stale responses never overwrite newer filter results.
   let latestRequestId = 0
+  let activeLoadingId = 0
+  let activeLoadingMoreId = 0
   let latestPreviewRequestId = 0
 
   const activeFiltersCount = computed(() => {
@@ -98,10 +100,13 @@ export const useLotsStore = defineStore('lots', () => {
     }
   }
 
-  async function fetchLots(client: ApiClient = apiClient): Promise<void> {
+  async function runFetchLots(silent: boolean, client: ApiClient): Promise<void> {
     const requestId = ++latestRequestId
-    isLoading.value = true
-    errorMessage.value = null
+    const loadingId = silent ? activeLoadingId : ++activeLoadingId
+    if (!silent) {
+      isLoading.value = true
+      errorMessage.value = null
+    }
 
     try {
       const response = await client.lots.list(buildQueryParams(1))
@@ -114,17 +119,27 @@ export const useLotsStore = defineStore('lots', () => {
       hasLoadedOnce.value = true
     } catch (error: unknown) {
       if (requestId !== latestRequestId) return
-      errorMessage.value =
-        error instanceof ApiError
-          ? error.detail
-          : error instanceof Error
-            ? error.message
-            : 'Не удалось загрузить список лотов.'
+      if (!silent) {
+        errorMessage.value =
+          error instanceof ApiError
+            ? error.detail
+            : error instanceof Error
+              ? error.message
+              : 'Не удалось загрузить список лотов.'
+      }
     } finally {
-      if (requestId === latestRequestId) {
+      if (!silent && loadingId === activeLoadingId) {
         isLoading.value = false
       }
     }
+  }
+
+  async function fetchLots(client: ApiClient = apiClient): Promise<void> {
+    return runFetchLots(false, client)
+  }
+
+  async function refreshLotsSilently(client: ApiClient = apiClient): Promise<void> {
+    return runFetchLots(true, client)
   }
 
   async function loadMore(client: ApiClient = apiClient): Promise<void> {
@@ -133,6 +148,7 @@ export const useLotsStore = defineStore('lots', () => {
     }
 
     const requestId = ++latestRequestId
+    const loadingMoreId = ++activeLoadingMoreId
     const nextPage = pagination.value.page + 1
     isLoadingMore.value = true
     errorMessage.value = null
@@ -156,7 +172,7 @@ export const useLotsStore = defineStore('lots', () => {
             ? error.message
             : 'Не удалось загрузить следующую страницу лотов.'
     } finally {
-      if (requestId === latestRequestId) {
+      if (loadingMoreId === activeLoadingMoreId) {
         isLoadingMore.value = false
       }
     }
@@ -193,6 +209,8 @@ export const useLotsStore = defineStore('lots', () => {
 
   function clear(): void {
     latestRequestId += 1
+    activeLoadingId += 1
+    activeLoadingMoreId += 1
     latestPreviewRequestId += 1
     items.value = []
     inProgress.value = createEmptyInProgress()
@@ -225,6 +243,7 @@ export const useLotsStore = defineStore('lots', () => {
     hasAnyActiveFilter,
     hasMore,
     fetchLots,
+    refreshLotsSilently,
     loadMore,
     fetchFilterPreview,
     resetFilters,

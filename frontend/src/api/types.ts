@@ -1,5 +1,7 @@
 import type {
   AuthTokensResponse,
+  BatchCreateResponse,
+  BatchProgressResponse,
   LotListQueryParams,
   LotListResponse,
   TokenLogoutRequest,
@@ -19,6 +21,9 @@ export interface AuthApi {
 
 export interface LotsApi {
   list(params?: LotListQueryParams): Promise<LotListResponse>
+  createBatch(files: readonly File[]): Promise<BatchCreateResponse>
+  getBatch(batchId: string): Promise<BatchProgressResponse>
+  appendBatchItems(batchId: string, files: readonly File[]): Promise<BatchProgressResponse>
 }
 
 export interface ApiClient {

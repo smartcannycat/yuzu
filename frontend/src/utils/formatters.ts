@@ -95,22 +95,33 @@ export function cleanVerdictText(headline: string): string {
   return headline.replace(/^[\p{Extended_Pictographic}\uFE0F\u200D\s]+/u, '').trim()
 }
 
-/**
- * Formats a count of vehicles with Russian pluralization (e.g. "1 автомобиль", "2 автомобиля").
- */
-export function formatCarCountRu(count: number): string {
+function pluralizeRu(count: number, forms: readonly [string, string, string]): string {
   const abs = Math.abs(Math.trunc(count))
   const mod100 = abs % 100
   const mod10 = abs % 10
 
   if (mod100 >= 11 && mod100 <= 14) {
-    return `${abs} автомобилей`
+    return `${abs} ${forms[2]}`
   }
   if (mod10 === 1) {
-    return `${abs} автомобиль`
+    return `${abs} ${forms[0]}`
   }
   if (mod10 >= 2 && mod10 <= 4) {
-    return `${abs} автомобиля`
+    return `${abs} ${forms[1]}`
   }
-  return `${abs} автомобилей`
+  return `${abs} ${forms[2]}`
+}
+
+/**
+ * Formats a count of vehicles with Russian pluralization (e.g. "1 автомобиль", "2 автомобиля").
+ */
+export function formatCarCountRu(count: number): string {
+  return pluralizeRu(count, ['автомобиль', 'автомобиля', 'автомобилей'])
+}
+
+/**
+ * Formats a count of auction sheets with Russian pluralization (e.g. "1 лист", "2 листа", "5 листов").
+ */
+export function formatSheetCountRu(count: number): string {
+  return pluralizeRu(count, ['лист', 'листа', 'листов'])
 }
