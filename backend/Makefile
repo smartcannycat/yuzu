@@ -1,4 +1,4 @@
-.PHONY: help install hooks dev migrate makemigrations createsuperuser test lint format check up up-db down prod-up prod-down logs clean
+.PHONY: help install hooks dev migrate refresh-currency-rates makemigrations createsuperuser test lint format check up up-db down prod-up prod-down logs clean
 
 help: ## Show this help message
 	@echo "Available commands:"
@@ -16,6 +16,9 @@ dev: ## Run development ASGI server (Granian) with reload
 
 migrate: ## Apply database migrations
 	uv run python manage.py migrate
+
+refresh-currency-rates: ## Fetch CBRF rates and warm the cache (BE-05)
+	uv run python manage.py refresh_currency_rates
 
 makemigrations: ## Generate database migrations
 	uv run python manage.py makemigrations
