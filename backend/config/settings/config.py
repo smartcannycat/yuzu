@@ -2,8 +2,10 @@ import json
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from apps.lots.integrations.currency.domain import parse_fallback_config
 
 
 class AppSettings(BaseSettings):
@@ -54,6 +56,11 @@ class AppSettings(BaseSettings):
     CBRF_API_URL: str = "https://www.cbr-xml-daily.ru/daily_json.js"
     HTTP_CLIENT_TIMEOUT_SEC: float = 10.0
 
+    # CBRF currency gateway (BE-05)
+    CBRF_TIMEOUT_SEC: float = Field(default=5.0, gt=0, allow_inf_nan=False)
+    CBRF_JPY_SPREAD: float = Field(default=0.03, ge=0, allow_inf_nan=False)
+    CBRF_FALLBACK_RATES: dict[str, str | float] | None = None
+
     @field_validator("ALLOWED_HOSTS", "CORS_ALLOWED_ORIGINS")
     @classmethod
     def parse_comma_separated_list(cls, value: list[str] | str) -> list[str]:
@@ -67,6 +74,29 @@ class AppSettings(BaseSettings):
         if isinstance(value, (list, tuple)):
             return [str(item).strip() for item in value if str(item).strip()]
         return []
+
+    @field_validator("CBRF_FALLBACK_RATES", mode="before")
+    @classmethod
+    def parse_fallback_json(cls, value: dict | str | None) -> dict | None:
+        if value is None or isinstance(value, dict):
+            return value
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return None
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError as exc:
+                raise ValueError("CBRF_FALLBACK_RATES must be a JSON object") from exc
+            if isinstance(parsed, dict):
+                return parsed
+        raise ValueError("CBRF_FALLBACK_RATES must be a JSON object")
+
+    @field_validator("CBRF_FALLBACK_RATES")
+    @classmethod
+    def validate_fallback_rates(cls, value: dict | None) -> dict | None:
+        parse_fallback_config(value)
+        return value
 
     @model_validator(mode="after")
     def validate_production_security(self) -> "AppSettings":
@@ -85,6 +115,11 @@ class AppSettings(BaseSettings):
             )
         if self.CORS_ALLOW_ALL_ORIGINS:
             raise ValueError("CORS_ALLOW_ALL_ORIGINS must be False when ENVIRONMENT=production")
+        if not self.CBRF_FALLBACK_RATES:
+            raise ValueError(
+                "CBRF_FALLBACK_RATES must be set (eur_rub, usd_rub, jpy_rub, cbrf_date) "
+                "when ENVIRONMENT=production"
+            )
         return self
 
     @property
