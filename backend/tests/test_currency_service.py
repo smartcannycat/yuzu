@@ -7,6 +7,7 @@ import httpx
 import pytest
 from django.utils import timezone
 
+from apps.core.enums import ExternalCacheSource
 from apps.core.models import ExternalCache
 from apps.lots.integrations.currency.cache import CACHE_KEY, PAUSE_KEY, CurrencyCache
 from apps.lots.integrations.currency.client import CbrfClient
@@ -220,3 +221,76 @@ class TestSourceFailure:
         service, _ = _service(_fail_handler())
         result = service.refresh()
         assert result.origin == RatesOrigin.STALE
+
+
+@pytest.mark.django_db
+class TestCacheIntegrity:
+    def test_corrupted_cache_payload_is_ignored(self) -> None:
+        ExternalCache.objects.create(
+            key=CACHE_KEY,
+            source=ExternalCacheSource.CBRF,
+            payload={"garbage": True},
+            expires_at=timezone.now() + TTL,
+        )
+        service, calls = _service(_ok_handler())
+        result = service.get_currency_rates()
+        assert result.origin == RatesOrigin.LIVE
+        assert len(calls) == 1
+
+    def test_non_positive_cached_rates_are_ignored(self) -> None:
+        ExternalCache.objects.create(
+            key=CACHE_KEY,
+            source=ExternalCacheSource.CBRF,
+            payload={
+                "eur_rub": "-95.0",
+                "usd_rub": "85.0",
+                "jpy_rub": "0.5825",
+                "cbrf_date": "12.11.2026",
+                "fetched_at": timezone.now().isoformat(),
+            },
+            expires_at=timezone.now() + TTL,
+        )
+        service, _ = _service(_fail_handler())
+        result = service.get_currency_rates()
+        assert result.origin == RatesOrigin.CONFIG
+
+    def test_failed_update_keeps_last_valid_set(self) -> None:
+        _write_cache(LIVE_RATES)
+        # Fresh cache -> no HTTP at all; verify the entry survives a failed
+        # refresh attempt without being overwritten.
+        cache = CurrencyCache()
+        service, _ = _service(_fail_handler(), cache=cache)
+        service.refresh()
+        entry = ExternalCache.objects.get(key=CACHE_KEY)
+        assert entry.payload["eur_rub"] == "95.0"
+
+    def test_successful_update_is_atomic_single_entry(self) -> None:
+        _write_cache(LIVE_RATES)
+        service, _ = _service(_ok_handler())
+        service.refresh()
+        assert ExternalCache.objects.filter(key=CACHE_KEY).count() == 1
+        entry = ExternalCache.objects.get(key=CACHE_KEY)
+        assert entry.source == ExternalCacheSource.CBRF
+        assert entry.payload["eur_rub"] == "95.0"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("eur_rub", "NaN"),
+        ("usd_rub", "Infinity"),
+        ("jpy_rub", "1e1000"),
+        ("cbrf_date", "31.02.2026"),
+        ("fetched_at", "2026-01-01T00:00:00"),
+    ],
+)
+def test_invalid_cached_values_are_ignored(field, value) -> None:
+    _write_cache()
+    entry = ExternalCache.objects.get(key=CACHE_KEY)
+    payload = {**entry.payload, field: value}
+    ExternalCache.objects.filter(pk=CACHE_KEY).update(payload=payload)
+    service, calls = _service(_fail_handler())
+    result = service.get_currency_rates()
+    assert result.origin == RatesOrigin.CONFIG
+    assert len(calls) == 1
