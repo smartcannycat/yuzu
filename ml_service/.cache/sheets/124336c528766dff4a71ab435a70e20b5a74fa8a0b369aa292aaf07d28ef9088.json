@@ -1,0 +1,192 @@
+{
+  "status": "ok",
+  "warnings": [],
+  "low_confidence_fields": [],
+  "sheet": {
+    "lot_number": "55029",
+    "auction_house": "MIRIVE",
+    "auction_strictness_index": 0.7,
+    "make": "Honda",
+    "model": "Fit",
+    "trim": "Basic 4WD",
+    "model_code": "6BA-GR2",
+    "chassis_number": "GR2-1102612",
+    "frame_id": "GR2-1102612",
+    "frame_id_confidence": "exact",
+    "first_reg_year": 2022,
+    "first_reg_month": 7,
+    "first_reg_date_str": "07.2022 (Возраст 4 года 4 мес.)",
+    "is_pass_corridor_3_5": true,
+    "engine_cc": 1300,
+    "mileage_km": 80015,
+    "odometer_status": "confirmed",
+    "transmission": "АКПП",
+    "drive_type": "4WD",
+    "fuel_type": "gasoline",
+    "color_ru": "перламутр",
+    "paint_code": "NH883P",
+    "overall_grade": "4",
+    "exterior_grade": "C",
+    "interior_grade": "B",
+    "shaken_until": null,
+    "recycling_fee_yen": 9350,
+    "recycling_fee_paid": true,
+    "equipment_ru": [
+      "PS",
+      "PW",
+      "ABS",
+      "Подушки безопасности",
+      "Кондиционер"
+    ],
+    "defects": [
+      {
+        "panel_id": "front_bumper",
+        "panel_ru": "передний бампер",
+        "defect_types": [
+          "A"
+        ],
+        "severity": 1,
+        "raw_code": "A1",
+        "description_ru": "передний бампер — царапина, степень 1"
+      },
+      {
+        "panel_id": "front_left_door",
+        "panel_ru": "передняя левая дверь",
+        "defect_types": [
+          "U"
+        ],
+        "severity": 1,
+        "raw_code": "U1",
+        "description_ru": "передняя левая дверь — вмятина, степень 1"
+      },
+      {
+        "panel_id": "rear_left_door",
+        "panel_ru": "задняя левая дверь",
+        "defect_types": [
+          "U"
+        ],
+        "severity": 3,
+        "raw_code": "U3",
+        "description_ru": "задняя левая дверь — вмятина, степень 3"
+      },
+      {
+        "panel_id": "rear_left_quarter",
+        "panel_ru": "заднее левое крыло",
+        "defect_types": [
+          "A"
+        ],
+        "severity": 1,
+        "raw_code": "AU1",
+        "description_ru": "заднее левое крыло — царапина, степень 1"
+      },
+      {
+        "panel_id": "rear_left_quarter",
+        "panel_ru": "заднее левое крыло",
+        "defect_types": [
+          "U"
+        ],
+        "severity": 1,
+        "raw_code": "AU1",
+        "description_ru": "заднее левое крыло — вмятина, степень 1"
+      }
+    ],
+    "risk_flags": {
+      "is_flooded": false,
+      "airbag_deployed": false,
+      "hail_damage": false,
+      "underbody_rust": true,
+      "underbody_corrosion": false,
+      "core_support_repair": false,
+      "pillar_or_frame_repair": false,
+      "panel_replaced_xx": false,
+      "panel_needs_replacement_x": false,
+      "odometer_issue": false,
+      "color_changed": false,
+      "windshield_damage": true,
+      "repaired_grade_r_ra": false
+    },
+    "inspector_notes_ru": [
+      "Лобовое стекло: скол от камня",
+      "Интерьер: потертости, загрязнения",
+      "Днище: ржавчина",
+      "Посторонние налеты на кузове"
+    ],
+    "seller_comments_ru": [
+      "Навигация, камера заднего хода",
+      "Honda Sensing",
+      "Смарт-ключ, запуск с кнопки"
+    ],
+    "extra_ru": [
+      "Ржавчина по днищу (S)",
+      "Колпаки колес: царапины, трещины",
+      "Боковые зеркала: царапины, трещины",
+      "Следы ремонта кузова"
+    ],
+    "auction_branch": "Saitama",
+    "right_hand_drive": true,
+    "name_change_deadline": null,
+    "inspector_notes_raw": [
+      "Fガラス(飛び石)",
+      "内装(スレ・汚れ)",
+      "下廻りS",
+      "外装付着物"
+    ],
+    "ocr_warnings": []
+  },
+  "raw": {
+    "auction_house_raw": "MIRIVE",
+    "auction_branch": "Saitama",
+    "lot_number_raw": "55029",
+    "make_raw": "ホンダ",
+    "model_raw": "フィット",
+    "trim_raw": "ベーシック 4WD",
+    "model_code_raw": "6BA-GR2",
+    "chassis_number_raw": "GR2-1102612",
+    "first_reg_raw": "R4/7",
+    "mileage_raw": "80,015km",
+    "engine_cc_raw": "1,300",
+    "transmission_raw": "AT",
+    "drive_type_raw": "4WD",
+    "right_hand_drive": true,
+    "name_change_deadline": null,
+    "color_raw": "パール",
+    "paint_code_raw": "NH883P",
+    "shaken_raw": null,
+    "recycling_fee_raw": "9,350",
+    "inspector_notes_raw": [
+      "Fガラス(飛び石)",
+      "内装(スレ・汚れ)",
+      "下廻りS",
+      "外装付着物"
+    ],
+    "seller_comments_raw": [
+      "ナビ バックカメラ",
+      "ホンダセンシング",
+      "スマートキー&プッシュスタート"
+    ]
+  },
+  "summary_md": "**Основная информация**\n- **Номер лота:** 55029\n- **Аукционный дом:** MIRIVE (индекс строгости: 0.7)\n- **Марка и модель:** Honda Fit\n- **Наименование комплектации:** Basic 4WD\n- **Код кузова (модели):** 6BA-GR2\n- **Номер кузова (шасси):** GR2-1102612\n- **Канонический Frame ID:** `GR2-1102612` (верифицирован)\n- **Дата первой регистрации:** 07.2022 (Возраст 4 года 4 мес.)\n- **Цвет и заводской код краски:** перламутр, NH883P\n\n**Технические характеристики**\n- **Объем двигателя:** 1300 см³\n- **Тип трансмиссии:** АКПП\n- **Тип привода:** 4WD\n- **Пробег и статус одометра:** 80 015 км, подтверждён\n- **Сумма утилизационного сбора:** 9 350 иен, оплачен\n\n**Оценки и оборудование**\n- **Общая оценка:** 4\n- **Оценка кузова:** C\n- **Оценка салона:** B\n- **Чек-лист базового оборудования:** PS, PW, ABS, Подушки безопасности, Кондиционер\n\n**Состояние и комментарии**\n- **Схема дефектов кузова:** передний бампер: A1; передняя левая дверь: U1; задняя левая дверь: U3; заднее левое крыло: AU1; заднее левое крыло: AU1\n- **Замечания инспектора:** Лобовое стекло: скол от камня; Интерьер: потертости, загрязнения; Днище: ржавчина; Посторонние налеты на кузове\n- **Комментарии продавца:** Навигация, камера заднего хода; Honda Sensing; Смарт-ключ, запуск с кнопки\n\n**Дополнительно:**\n- Ржавчина по днищу (S)\n- Колпаки колес: царапины, трещины\n- Боковые зеркала: царапины, трещины\n- Следы ремонта кузова",
+  "meta": {
+    "processing_ms": 15176,
+    "mode_used": "complex_or_handwritten",
+    "cached": false,
+    "model_used": "gemini-3-flash-preview",
+    "sha256": "124336c528766dff4a71ab435a70e20b5a74fa8a0b369aa292aaf07d28ef9088",
+    "gatekeeper_model": "gemini-decision-1",
+    "gatekeeper_ms": 819,
+    "header_ms": null,
+    "extract_ms": 14217,
+    "attempts": [
+      {
+        "model": "gemini-3-flash-preview",
+        "status": "ok",
+        "ms": 6216
+      },
+      {
+        "model": "gemini-3.6-flash",
+        "status": "hedged_cancelled",
+        "ms": 14217
+      }
+    ]
+  }
+}

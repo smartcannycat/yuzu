@@ -517,3 +517,51 @@ def test_settings_module_exports_ml_service_config() -> None:
     assert hasattr(django_settings, "ML_SERVICE_URL")
     assert hasattr(django_settings, "ML_SERVICE_TIMEOUT_SEC")
     assert hasattr(django_settings, "ML_SERVICE_API_KEY")
+
+
+@pytest.mark.django_db
+def test_unknown_panel_defects_are_preserved_in_extra_ru(batch_item) -> None:
+    """Defects outside the 16 canonical panels survive as Russian notes.
+
+    ML reports structural entries (radiator core support, frame parts) as
+    panel_id="other"; the raw observation must reach the lot's extra_ru
+    instead of being dropped, alongside the ocr_warning.
+    """
+    lot = batch_item.lot
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        body = _ok_response_body(
+            sheet=_sheet_payload(
+                defects=[
+                    {
+                        "panel_id": "other",
+                        "panel_ru": "рамка радиатора",
+                        "defect_types": ["R"],
+                        "severity": None,
+                        "description_ru": "следы ремонта",
+                        "raw_code": "R",
+                    },
+                    {
+                        "panel_id": "hood",
+                        "panel_ru": "Капот",
+                        "defect_types": ["A1"],
+                        "severity": 1,
+                        "description_ru": "Царапина",
+                        "raw_code": "A1",
+                    },
+                ],
+            )
+        )
+
+        return httpx.Response(200, content=body)
+
+    parser = MlServiceParser(client=_client(handler))
+    assert parser.gatekeeper(batch_item) is None
+    parser.parse(batch_item)
+
+    lot.refresh_from_db()
+    defects = list(LotDefect.objects.filter(lot=lot))
+    assert [defect.panel_id for defect in defects] == [BodyPanel.HOOD]
+    assert any("рамка радиатора" in note for note in lot.extra_ru)
+    assert any("R" in note for note in lot.extra_ru)
+    assert any("Unknown panel_id" in warning for warning in lot.ocr_warnings)

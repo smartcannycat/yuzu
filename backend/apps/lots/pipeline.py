@@ -29,11 +29,20 @@ from apps.lots.economics import (
     _resolve_start_bid_jpy,
     recompute_lot_economics,
 )
+from apps.lots.integrations.currency.service import build_currency_service, to_customs_rates_input
 from apps.lots.integrations.drom.schemas import DromFetchError, DromMarketResult, DromSearchCriteria
 from apps.lots.integrations.farpost.service import save_repair_estimate
 from apps.lots.lifecycle import compute_lot_expires_at
-from apps.lots.models import Batch, BatchItem, Lot, MarketComparisonInfo, WiseCostLadder
+from apps.lots.models import (
+    Batch,
+    BatchItem,
+    CustomsCalculation,
+    Lot,
+    MarketComparisonInfo,
+    WiseCostLadder,
+)
 from apps.lots.queries import _build_lot_summary, _has_full_detail
+from apps.lots.safety import build_cross_audit_baseline, build_safety_checklist
 from apps.lots.schemas import (
     BatchCreateResponse,
     BatchItemStatus,
@@ -326,7 +335,24 @@ def _step_gatekeeper(item: BatchItem) -> bool:
     return True
 
 
-def _step_cross_audit(_item: BatchItem) -> bool:
+def _step_cross_audit(item: BatchItem) -> bool:
+    _advance_step(item, TaskStep.CROSS_AUDIT)
+    lot = item.lot
+    if lot is None:
+        _fail_item(item, TaskStep.FAILED, "Лот не привязан к элементу пачки")
+        return False
+    try:
+        build_cross_audit_baseline(lot)
+    except Exception:
+        logger.exception("Cross audit baseline failed for item %s", item.pk)
+        _fail_item(item, TaskStep.FAILED, "Не удалось зафиксировать результаты кросс-аудита")
+        return False
+    try:
+        build_safety_checklist(lot)
+    except Exception:
+        logger.exception("Safety checklist failed for item %s", item.pk)
+        _fail_item(item, TaskStep.FAILED, "Не удалось построить чек-лист систем безопасности")
+        return False
     return True
 
 
@@ -405,15 +431,47 @@ def _step_farpost_parts(item: BatchItem) -> bool:
     return True
 
 
+def _ensure_lot_rates(lot: Lot) -> bool:
+    """Attach a currency rates snapshot to the lot via the BE-05 gateway.
+
+    The gateway resolves from cache first and falls back to the configured
+    demonstration rates when CBRF is unreachable, so a pipeline batch never
+    hard-fails on the rates input. Idempotent: keeps an existing snapshot.
+    """
+    if lot.customs_rates_input or (
+        CustomsCalculation.objects.filter(lot=lot, rates_snapshot__isnull=False).exists()
+    ):
+        return True
+    try:
+        result = build_currency_service().get_currency_rates()
+    except Exception:
+        logger.exception("Currency rates gateway failed for lot %s", lot.pk)
+        return False
+    lot.customs_rates_input = to_customs_rates_input(result)
+    lot.save(update_fields=["customs_rates_input", "updated_at"])
+    logger.info(
+        "Rates attached to lot %s: origin=%s cbrf_date=%s",
+        lot.pk,
+        result.origin.value,
+        result.cbrf_date,
+    )
+    return True
+
+
 def _step_customs_calc(item: BatchItem) -> bool:
     _advance_step(item, TaskStep.CUSTOMS_CALC)
     lot = item.lot
     if lot is None:
         _fail_item(item, TaskStep.FAILED, "Лот не привязан к элементу пачки")
         return False
+    lot.refresh_from_db()
+    if not _ensure_lot_rates(lot):
+        _fail_item(item, TaskStep.FAILED, "Не удалось получить курсы валют (шлюз ЦБ РФ)")
+        return False
     # Fill in the start bid (sheet -> auction history -> reverse calculation
     # from the Drom price) before checking the remaining inputs, so a new
-    # lot without an explicit bid still gets its economics built.
+    # lot without an explicit bid still gets its economics built. The
+    # reverse calculation needs the rates attached above.
     try:
         ladder = WiseCostLadder.objects.filter(lot=lot).first()
         bid_jpy = ladder.car_bid_jpy if ladder is not None else _resolve_start_bid_jpy(lot)

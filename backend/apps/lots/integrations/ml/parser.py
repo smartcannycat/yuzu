@@ -152,10 +152,21 @@ class MlServiceParser:
             _unknown_panel_warning(defect) for defect in _unknown_panel_defects(sheet.defects)
         ]
         fields = _sheet_to_lot_fields(sheet, response, mapping_warnings)
+        unmatched_defect_notes = [
+            note.strip() for note in _unmatched_defect_notes(sheet.defects) if note.strip()
+        ]
 
         with transaction.atomic():
             for name, value in fields.items():
                 setattr(lot, name, value)
+            if unmatched_defect_notes:
+                # Preserve observations outside the 16 canonical panels
+                # (radiator core support, frame parts) as Russian notes.
+                fields["extra_ru"] = [
+                    *fields.get("extra_ru", []),
+                    *unmatched_defect_notes,
+                ]
+                lot.extra_ru = fields["extra_ru"]
             lot.save(update_fields=[*fields.keys(), "updated_at"])
             LotRiskFlags.objects.update_or_create(lot=lot, defaults=sheet.risk_flags.model_dump())
             _replace_defects(lot, sheet.defects)
@@ -284,14 +295,20 @@ def _map_choice(
 
 
 def _replace_defects(lot: Lot, defects: list[Defect]) -> None:
+    """Replace stored defects with the canonical-zone subset.
+
+    Structural entries the canonical panel catalog has no member for
+    (radiator core support, frame elements -- ML reports them as
+    ``panel_id="other"``) are preserved separately as Russian notes via
+    ``_unmatched_defect_notes``: their stop-factor semantics live in
+    ``risk_flags`` and the safety checklist, but the raw observation
+    must survive.
+    """
     lot.defects.all().delete()
     valid_panels = set(BodyPanel.values)
     rows: list[LotDefect] = []
     for defect in defects:
         if defect.panel_id not in valid_panels:
-            # BodyPanel has no OTHER member (16 canonical zones only), so an
-            # unknown panel cannot be stored without violating the choices
-            # contract; skip the defect and surface a warning instead.
             continue
         rows.append(
             LotDefect(
@@ -318,3 +335,17 @@ def _unknown_panel_warning(defect: Defect) -> str:
         f"Unknown panel_id from ML service: {defect.panel_id!r} "
         f"(raw_code={defect.raw_code!r}); defect skipped"
     )
+
+
+def _unmatched_defect_notes(defects: list[Defect]) -> list[str]:
+    """Russian notes for defects whose panel_id is outside the 16 zones."""
+    valid_panels = set(BodyPanel.values)
+    notes: list[str] = []
+    for defect in defects:
+        if defect.panel_id in valid_panels:
+            continue
+        parts = [defect.panel_ru, defect.raw_code, defect.description_ru]
+        note = " — ".join(part for part in parts if part)
+        if note:
+            notes.append(note)
+    return notes

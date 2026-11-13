@@ -1,0 +1,204 @@
+{
+  "status": "ok",
+  "warnings": [
+    "ambiguous_bare_year_without_era",
+    "drive_type_not_marked_on_sheet"
+  ],
+  "low_confidence_fields": [],
+  "sheet": {
+    "lot_number": "09521",
+    "auction_house": "Honda",
+    "auction_strictness_index": 0.9,
+    "make": "Honda",
+    "model": "Accord Hybrid",
+    "trim": "EX",
+    "model_code": "6AA-CV3",
+    "chassis_number": "CV3-1001740",
+    "frame_id": "CV3-1001740",
+    "frame_id_confidence": "exact",
+    "first_reg_year": 2020,
+    "first_reg_month": 4,
+    "first_reg_date_str": "04.2020 (Возраст 6 лет 7 мес.)",
+    "is_pass_corridor_3_5": false,
+    "engine_cc": 1990,
+    "mileage_km": 40364,
+    "odometer_status": "confirmed",
+    "transmission": "АКПП",
+    "drive_type": null,
+    "fuel_type": "hybrid",
+    "color_ru": "черный",
+    "paint_code": "NH731P",
+    "overall_grade": "0",
+    "exterior_grade": null,
+    "interior_grade": null,
+    "shaken_until": "04.2027",
+    "recycling_fee_yen": 14490,
+    "recycling_fee_paid": true,
+    "equipment_ru": [
+      "ГУР",
+      "электростеклоподъемники",
+      "ABS",
+      "подушки безопасности",
+      "система стабилизации",
+      "система предотвращения столкновений",
+      "навигация",
+      "ТВ",
+      "люк",
+      "автоматический кондиционер"
+    ],
+    "defects": [
+      {
+        "panel_id": "front_bumper",
+        "panel_ru": "передний бампер",
+        "defect_types": [
+          "R"
+        ],
+        "severity": null,
+        "raw_code": "R",
+        "description_ru": "передний бампер — следы ремонта"
+      },
+      {
+        "panel_id": "hood",
+        "panel_ru": "капот",
+        "defect_types": [
+          "R"
+        ],
+        "severity": null,
+        "raw_code": "R",
+        "description_ru": "капот — следы ремонта"
+      },
+      {
+        "panel_id": "front_left_fender",
+        "panel_ru": "переднее левое крыло",
+        "defect_types": [
+          "R"
+        ],
+        "severity": null,
+        "raw_code": "R",
+        "description_ru": "переднее левое крыло — следы ремонта"
+      },
+      {
+        "panel_id": "front_right_fender",
+        "panel_ru": "переднее правое крыло",
+        "defect_types": [
+          "R"
+        ],
+        "severity": null,
+        "raw_code": "R",
+        "description_ru": "переднее правое крыло — следы ремонта"
+      },
+      {
+        "panel_id": "other",
+        "panel_ru": "рамка радиатора",
+        "defect_types": [
+          "R"
+        ],
+        "severity": null,
+        "raw_code": "R",
+        "description_ru": "рамка радиатора — следы ремонта"
+      }
+    ],
+    "risk_flags": {
+      "is_flooded": false,
+      "airbag_deployed": false,
+      "hail_damage": false,
+      "underbody_rust": false,
+      "underbody_corrosion": false,
+      "core_support_repair": true,
+      "pillar_or_frame_repair": true,
+      "panel_replaced_xx": false,
+      "panel_needs_replacement_x": false,
+      "odometer_issue": false,
+      "color_changed": false,
+      "windshield_damage": true,
+      "repaired_grade_r_ra": true
+    },
+    "inspector_notes_ru": [
+      "Автомобиль после ДТП, требуется осмотр вживую",
+      "Боковое зеркало: царапина",
+      "Отделка: царапина",
+      "Экстерьер: царапины, вмятины",
+      "Салон: загрязнение",
+      "Лобовое стекло: скол от камня",
+      "Горят несколько индикаторов неисправности"
+    ],
+    "seller_comments_ru": [
+      "Выставлено дилером",
+      "Впервые на аукционе"
+    ],
+    "extra_ru": [
+      "Глубина протектора: передние 3 мм, задние 4 мм"
+    ],
+    "auction_branch": null,
+    "right_hand_drive": true,
+    "name_change_deadline": "12/25",
+    "inspector_notes_raw": [
+      "事故現状車両現車確認必要",
+      "Dミラー A",
+      "トリム A",
+      "外装 A・U",
+      "室内 ヨゴレ",
+      "Fガラス トビ石",
+      "警告灯 複数点灯"
+    ],
+    "ocr_warnings": []
+  },
+  "raw": {
+    "auction_house_raw": "HONDA",
+    "auction_branch": null,
+    "lot_number_raw": "09521",
+    "make_raw": "アコードHV",
+    "model_raw": "アコードHV 4ドア",
+    "trim_raw": "EX",
+    "model_code_raw": "6AA-CV3",
+    "chassis_number_raw": "CV3-1001740",
+    "first_reg_raw": "2年4月",
+    "mileage_raw": "40,364 km",
+    "engine_cc_raw": "1990 cc",
+    "transmission_raw": "FAT",
+    "drive_type_raw": null,
+    "right_hand_drive": true,
+    "name_change_deadline": "12/25",
+    "color_raw": "クロ",
+    "paint_code_raw": "NH731P",
+    "shaken_raw": "9年4月",
+    "recycling_fee_raw": "14,490 円",
+    "inspector_notes_raw": [
+      "事故現状車両現車確認必要",
+      "Dミラー A",
+      "トリム A",
+      "外装 A・U",
+      "室内 ヨゴレ",
+      "Fガラス トビ石",
+      "警告灯 複数点灯"
+    ],
+    "seller_comments_raw": [
+      "ディーラー出品",
+      "初出品"
+    ]
+  },
+  "summary_md": "**Основная информация**\n- **Номер лота:** 09521\n- **Аукционный дом:** Honda (индекс строгости: 0.9)\n- **Марка и модель:** Honda Accord Hybrid\n- **Наименование комплектации:** EX\n- **Код кузова (модели):** 6AA-CV3\n- **Номер кузова (шасси):** CV3-1001740\n- **Канонический Frame ID:** `CV3-1001740` (верифицирован)\n- **Дата первой регистрации:** 04.2020 (Возраст 6 лет 7 мес.)\n- **Цвет и заводской код краски:** черный, NH731P\n\n**Технические характеристики**\n- **Объем двигателя:** 1990 см³\n- **Тип трансмиссии:** АКПП\n- **Пробег и статус одометра:** 40 364 км, подтверждён\n- **Статус техосмотра:** 04.2027\n- **Сумма утилизационного сбора:** 14 490 иен, оплачен\n\n**Оценки и оборудование**\n- **Общая оценка:** 0\n- **Чек-лист базового оборудования:** ГУР, электростеклоподъемники, ABS, подушки безопасности, система стабилизации, система предотвращения столкновений, навигация, ТВ, люк, автоматический кондиционер\n\n**Предупреждения безопасности и риски:**\n- ⚠️ ВНИМАНИЕ: Аварийный/ремонтный статус лота (0)\n\n**Состояние и комментарии**\n- **Схема дефектов кузова:** передний бампер: R; капот: R; переднее левое крыло: R; переднее правое крыло: R; рамка радиатора: R\n- **Замечания инспектора:** Автомобиль после ДТП, требуется осмотр вживую; Боковое зеркало: царапина; Отделка: царапина; Экстерьер: царапины, вмятины; Салон: загрязнение; Лобовое стекло: скол от камня; Горят несколько индикаторов неисправности\n- **Комментарии продавца:** Выставлено дилером; Впервые на аукционе\n\n**Дополнительно:**\n- Глубина протектора: передние 3 мм, задние 4 мм",
+  "meta": {
+    "processing_ms": 10453,
+    "mode_used": "complex_or_handwritten",
+    "cached": false,
+    "model_used": "gemini-3-flash-preview",
+    "sha256": "ef1a9c1471d773d17793726fd844df7f29f9dbc094f440ba59d06626d3a10e37",
+    "gatekeeper_model": "gemini-decision-1",
+    "gatekeeper_ms": 916,
+    "header_ms": null,
+    "extract_ms": 9418,
+    "attempts": [
+      {
+        "model": "gemini-3-flash-preview",
+        "status": "ok",
+        "ms": 9417
+      },
+      {
+        "model": "gemini-3.7-flash",
+        "status": "hedged_cancelled",
+        "ms": 9418
+      }
+    ]
+  }
+}
