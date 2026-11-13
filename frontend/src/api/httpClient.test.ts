@@ -343,4 +343,26 @@ describe('httpClient (ofetch)', () => {
     expect(result.items).toEqual([])
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
+
+  it('calls POST /auth/logout with bearer token and refresh_token body', async () => {
+    tokenStorage.setFromAuthResponse({
+      access_token: 'access-logout',
+      refresh_token: 'refresh-logout',
+      token_type: 'bearer',
+      expires_in_sec: 3600,
+      user: sampleUser,
+    })
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(extractUrl(input)).toBe('/api/v1/auth/logout')
+      expect(init?.method).toBe('POST')
+      expect(extractAuthHeader(input, init)).toBe('Bearer access-logout')
+      expect(init?.body).toBe(JSON.stringify({ refresh_token: 'refresh-logout' }))
+      return new Response(null, { status: 204 })
+    })
+
+    const client = createHttpApiClient({ fetch: fetchMock })
+    await client.auth.logout({ refresh_token: 'refresh-logout' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
 })

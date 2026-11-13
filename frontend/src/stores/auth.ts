@@ -104,9 +104,24 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  function logout(): void {
-    clearSession()
-    isInitialized.value = true
+  async function logout(options: { revokeRemote?: boolean } = {}): Promise<void> {
+    const { revokeRemote = true } = options
+    const epochAtStart = sessionEpoch
+    const refreshToken = tokenStorage.getRefreshToken()
+    const accessToken = tokenStorage.getAccessToken()
+
+    if (revokeRemote && refreshToken && accessToken) {
+      try {
+        await apiClient.auth.logout({ refresh_token: refreshToken })
+      } catch {
+        // Clear local session even if server revocation fails or user is offline.
+      }
+    }
+
+    if (sessionEpoch === epochAtStart) {
+      clearSession()
+      isInitialized.value = true
+    }
   }
 
   return {

@@ -6,12 +6,18 @@ import type { AuthApi } from '@/api/types'
 import type {
   AuthTokensResponse,
   InvalidParamDetail,
+  TokenLogoutRequest,
   TokenRefreshRequest,
   UserLoginRequest,
   UserProfileResponse,
   UserRegisterRequest,
 } from '@/types/api'
-import { NAME_MAX_LENGTH, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from '@/utils/validation'
+import {
+  isValidEmailFormat,
+  NAME_MAX_LENGTH,
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+} from '@/utils/validation'
 
 export const MOCK_USERS_STORAGE_KEY = 'yuzu.mock.users'
 const ACCESS_TOKEN_PREFIX = 'mock-access:'
@@ -89,8 +95,11 @@ const mockUsersStorage = useStorage<MockUserRecord[]>(
   },
 )
 
+const revokedRefreshTokens = new Set<string>()
+
 export function resetMockUsers(): void {
   mockUsersStorage.value = [DEFAULT_DEMO_USER]
+  revokedRefreshTokens.clear()
 }
 
 function toPublicProfile(record: MockUserRecord): UserProfileResponse {
@@ -121,10 +130,6 @@ function extractUserIdFromToken(token: string, prefix: string): string | null {
   return userId || null
 }
 
-function isValidEmail(email: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
-}
-
 export function createMockAuthApi(defaultDelay: number): AuthApi {
   return {
     async register(payload: UserRegisterRequest): Promise<AuthTokensResponse> {
@@ -134,7 +139,7 @@ export function createMockAuthApi(defaultDelay: number): AuthApi {
       const name = payload.name?.trim() || null
 
       const invalidParams: InvalidParamDetail[] = []
-      if (!isValidEmail(email)) {
+      if (!isValidEmailFormat(email)) {
         invalidParams.push({
           name: 'email',
           reason: 'Укажите корректный адрес электронной почты',
@@ -218,7 +223,10 @@ export function createMockAuthApi(defaultDelay: number): AuthApi {
       await delay(Math.min(defaultDelay, 120))
       const userId = extractUserIdFromToken(payload.refresh_token, REFRESH_TOKEN_PREFIX)
       const users = mockUsersStorage.value
-      const matched = userId ? users.find((user) => user.user_id === userId) : undefined
+      const matched =
+        userId && !revokedRefreshTokens.has(payload.refresh_token)
+          ? users.find((user) => user.user_id === userId)
+          : undefined
 
       if (!matched) {
         throw createMockProblem({
@@ -231,6 +239,13 @@ export function createMockAuthApi(defaultDelay: number): AuthApi {
       }
 
       return createTokensResponse(matched)
+    },
+
+    async logout(payload: TokenLogoutRequest): Promise<void> {
+      await delay(Math.min(defaultDelay, 80))
+      if (payload.refresh_token) {
+        revokedRefreshTokens.add(payload.refresh_token)
+      }
     },
 
     async me(): Promise<UserProfileResponse> {
