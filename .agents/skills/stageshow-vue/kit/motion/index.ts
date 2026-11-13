@@ -1,0 +1,31 @@
+// Motion: the behaviors a demo is made of, each built to hold up frame by
+// frame. A height that opens and carries what follows, text that changes only
+// where it changed, a card that opens into a screen, a camera push-in. They
+// bring motion, not a look: style what's inside them as the product does.
+// One file per part, each importing its own CSS.
+export { default as Connector } from './Connector.vue'
+export type { ConnectorProps } from './Connector.vue'
+export { default as Count } from './Count.vue'
+export type { CountProps } from './Count.vue'
+export { default as Roll } from './Roll.vue'
+export type { RollProps } from './Roll.vue'
+export { default as Swap } from './Swap.vue'
+export type { SwapProps } from './Swap.vue'
+export { default as Collapse } from './Collapse.vue'
+export type { CollapseProps } from './Collapse.vue'
+export { default as Fly } from './Fly.vue'
+export type { FlyProps } from './Fly.vue'
+export { default as Follow, cellOf } from './Follow.vue'
+export type { FollowProps } from './Follow.vue'
+export { default as States } from './States.vue'
+export type { StatesProps } from './States.vue'
+export { default as Stream } from './Stream.vue'
+export type { StreamProps } from './Stream.vue'
+export { default as Popover, type PopoverOrigin } from './Popover.vue'
+export type { PopoverProps } from './Popover.vue'
+export { default as Camera } from './Camera.vue'
+export type { CameraProps } from './Camera.vue'
+export { default as Scroll } from './Scroll.vue'
+export type { ScrollProps } from './Scroll.vue'
+export { default as Expand } from './Expand.vue'
+export type { ExpandProps } from './Expand.vue'
