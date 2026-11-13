@@ -30,6 +30,7 @@ from apps.lots.economics import (
     recompute_lot_economics,
 )
 from apps.lots.integrations.drom.schemas import DromFetchError, DromMarketResult, DromSearchCriteria
+from apps.lots.integrations.farpost.service import save_repair_estimate
 from apps.lots.models import Batch, BatchItem, Lot, MarketComparisonInfo, WiseCostLadder
 from apps.lots.queries import _build_lot_summary, _has_full_detail
 from apps.lots.schemas import (
@@ -375,7 +376,16 @@ def _step_drom_market(item: BatchItem) -> bool:
         return False
 
 
-def _step_farpost_parts(_item: BatchItem) -> bool:
+def _step_farpost_parts(item: BatchItem) -> bool:
+    if item.lot is None:
+        _fail_item(item, TaskStep.FAILED, "Лот не привязан к элементу пачки")
+        return False
+    try:
+        save_repair_estimate(item.lot)
+    except Exception:
+        logger.exception("Repair estimate failed for item %s", item.pk)
+        _fail_item(item, TaskStep.FAILED, "Не удалось сформировать смету ремонта")
+        return False
     return True
 
 
