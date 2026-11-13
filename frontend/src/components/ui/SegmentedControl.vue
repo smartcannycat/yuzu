@@ -151,7 +151,7 @@ function setTabRef(el: unknown, index: number) {
     ref="listRef"
     role="tablist"
     :aria-label="ariaLabel"
-    class="relative items-center gap-0.5 rounded-[9px] bg-[#E5E5EA]/90 p-[3px] ring-1 ring-black/[0.06] ring-inset"
+    class="relative items-center gap-0.5 rounded-[9px] bg-[#E5E5EA] p-[3px]"
     :class="fullWidth ? 'flex w-full' : 'inline-flex max-w-full overflow-x-auto'"
   >
     <span

@@ -45,8 +45,8 @@ const verdictMeta = computed(() => VERDICT_META[props.detail.verdict.verdict])
 
 <template>
   <BaseCard variant="surface" padding="lg">
-    <div class="flex items-center gap-3.5">
-      <div class="h-[68px] w-[68px] shrink-0 sm:h-[76px] sm:w-[76px]">
+    <div class="flex items-center gap-4">
+      <div class="h-[80px] w-[80px] shrink-0 sm:h-[92px] sm:w-[92px]">
         <CapyMascot :verdict="detail.verdict.verdict" size="compact" />
       </div>
 
