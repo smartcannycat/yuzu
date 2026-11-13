@@ -1,0 +1,131 @@
+@font-face {
+  font-family: 'SF Pro Display';
+  src: url('./fonts/SF-Pro-Display-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'SF Pro Display';
+  src: url('./fonts/SF-Pro-Display-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'SF Pro Display';
+  src: url('./fonts/SF-Pro-Display-Bold.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@import 'tailwindcss';
+
+:root {
+  /* Motion tokens (transitions-dev shared scale) */
+  --duration-micro: 80ms;
+  --duration-quick: 150ms;
+  --duration-fast: 250ms;
+  --duration-medium: 350ms;
+  --ease-smooth-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: ease-in-out;
+  --ease-out: ease-out;
+  --ease-bounce: cubic-bezier(0.34, 1.36, 0.64, 1);
+
+  /* Toggle (iOS 26 52x26 track, 28x22 thumb, 20px travel) */
+  --toggle-dur: 350ms;
+  --toggle-travel: 20px;
+  --toggle-ov1: 1.5px;
+  --toggle-ov2: 0.5px;
+  --toggle-track: 200ms;
+  --toggle-ease: cubic-bezier(0.34, 1.35, 0.64, 1);
+
+  /* Tabs sliding */
+  --tabs-dur: var(--duration-fast);
+  --tabs-ease: var(--ease-smooth-out);
+
+  /* Modal / Sheet */
+  --modal-open-dur: var(--duration-fast);
+  --modal-close-dur: var(--duration-quick);
+  --modal-ease: var(--ease-smooth-out);
+}
+
+@theme {
+  --font-sans: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+
+  /* Tonal Canvas & Surfaces */
+  --color-canvas: #f2f2f7;
+  --color-surface: #ffffff;
+  --color-surface-inset: #efeff4;
+  --color-surface-hover: #f8f8fa;
+
+  /* Borders & Hairline Dividers */
+  --color-border: #e5e5ea;
+  --color-border-strong: #d1d1d6;
+  --color-border-subtle: #f2f2f7;
+  --color-border-focus: #ff6b00;
+
+  /* Text Hierarchy */
+  --color-text-primary: #111827;
+  --color-text-secondary: #6b7280;
+  --color-text-muted: #9ca3af;
+  --color-text-on-accent: #ffffff;
+
+  /* Conversion Accent (Farpost Orange, 90/10 Rule) */
+  --color-accent: #ff6b00;
+  --color-accent-hover: #e55f00;
+  --color-accent-active: #cc5500;
+  --color-accent-subtle: #fff4ed;
+
+  /* Soft Seamless Status Colors */
+  --color-success: #15803d;
+  --color-success-bg: #f0fdf4;
+  --color-warning: #b45309;
+  --color-warning-bg: #fffbeb;
+  --color-danger: #b91c1c;
+  --color-danger-bg: #fef2f2;
+  --color-info: #1d4ed8;
+  --color-info-bg: #eff6ff;
+
+  /* Shape & Elevation */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.03);
+  --shadow-thumb: 0 2px 4px rgba(0, 0, 0, 0.12), 0 0 1px rgba(0, 0, 0, 0.15);
+  --shadow-segment: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-sheet: 0 -8px 32px rgba(17, 24, 39, 0.12);
+  --shadow-modal: 0 20px 50px rgba(17, 24, 39, 0.16);
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    background-color: var(--color-canvas);
+    color: var(--color-text-primary);
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+}
+
+/* Reduced motion safeguard for micro-interactions */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
