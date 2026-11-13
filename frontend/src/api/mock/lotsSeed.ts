@@ -1,4 +1,35 @@
+import {
+  computeLotExpiresAt,
+  formatJstAuctionDateWithOffset,
+  isoWithOffset,
+} from '@/api/mock/lotLifecycle'
 import type { InProgressSummary, LotSummary } from '@/types/api'
+
+const BOOT_NOW_MS = Date.now()
+
+const createdCorolla = isoWithOffset(0, -1, BOOT_NOW_MS)
+const auctionCorolla = formatJstAuctionDateWithOffset(1, BOOT_NOW_MS)
+
+const createdVezel = isoWithOffset(0, -2, BOOT_NOW_MS)
+const auctionVezel = formatJstAuctionDateWithOffset(2, BOOT_NOW_MS)
+
+const createdNote = isoWithOffset(-1, 0, BOOT_NOW_MS)
+const auctionNote = formatJstAuctionDateWithOffset(0, BOOT_NOW_MS)
+
+const createdHarrier = isoWithOffset(-1, -4, BOOT_NOW_MS)
+
+const createdLevorg = isoWithOffset(-1, -6, BOOT_NOW_MS)
+const auctionLevorg = formatJstAuctionDateWithOffset(1, BOOT_NOW_MS)
+
+const createdCx5 = isoWithOffset(-2, 0, BOOT_NOW_MS)
+const auctionCx5 = formatJstAuctionDateWithOffset(2, BOOT_NOW_MS)
+
+const createdXtrail = isoWithOffset(-5, 0, BOOT_NOW_MS)
+const auctionXtrail = formatJstAuctionDateWithOffset(-3, BOOT_NOW_MS)
+const expiredXtrailAt = computeLotExpiresAt(createdXtrail, auctionXtrail)
+
+const createdFit = isoWithOffset(-1, -8, BOOT_NOW_MS)
+const auctionFit = formatJstAuctionDateWithOffset(1, BOOT_NOW_MS)
 
 export const SEEDED_MOCK_LOTS: readonly LotSummary[] = [
   {
@@ -21,7 +52,12 @@ export const SEEDED_MOCK_LOTS: readonly LotSummary[] = [
     has_anomaly: false,
     anomaly_text: null,
     thumbnail_url: null,
-    created_at: '2026-05-31T10:25:00Z',
+    auction_date: auctionCorolla,
+    is_archived: false,
+    archived_at: null,
+    archived_reason: null,
+    expires_at: computeLotExpiresAt(createdCorolla, auctionCorolla),
+    created_at: createdCorolla,
   },
   {
     lot_id: '892b4e10-3a2c-411f-a801-019283746502',
@@ -43,7 +79,12 @@ export const SEEDED_MOCK_LOTS: readonly LotSummary[] = [
     has_anomaly: false,
     anomaly_text: null,
     thumbnail_url: null,
-    created_at: '2026-05-31T09:40:00Z',
+    auction_date: auctionVezel,
+    is_archived: false,
+    archived_at: null,
+    archived_reason: null,
+    expires_at: computeLotExpiresAt(createdVezel, auctionVezel),
+    created_at: createdVezel,
   },
   {
     lot_id: '892b4e10-3a2c-411f-a801-019283746503',
@@ -65,7 +106,12 @@ export const SEEDED_MOCK_LOTS: readonly LotSummary[] = [
     has_anomaly: true,
     anomaly_text: 'На схеме отмечены W2 на пятой двери и замена заднего бампера',
     thumbnail_url: null,
-    created_at: '2026-05-30T17:15:00Z',
+    auction_date: auctionNote,
+    is_archived: false,
+    archived_at: null,
+    archived_reason: null,
+    expires_at: computeLotExpiresAt(createdNote, auctionNote),
+    created_at: createdNote,
   },
   {
     lot_id: '892b4e10-3a2c-411f-a801-019283746504',
@@ -87,7 +133,12 @@ export const SEEDED_MOCK_LOTS: readonly LotSummary[] = [
     has_anomaly: true,
     anomaly_text: 'Восстановление задней стойки, следы сварки в нише багажника',
     thumbnail_url: null,
-    created_at: '2026-05-30T14:10:00Z',
+    auction_date: null,
+    is_archived: false,
+    archived_at: null,
+    archived_reason: null,
+    expires_at: computeLotExpiresAt(createdHarrier, null),
+    created_at: createdHarrier,
   },
   {
     lot_id: '892b4e10-3a2c-411f-a801-019283746505',
@@ -109,7 +160,12 @@ export const SEEDED_MOCK_LOTS: readonly LotSummary[] = [
     has_anomaly: false,
     anomaly_text: null,
     thumbnail_url: null,
-    created_at: '2026-05-29T18:05:00Z',
+    auction_date: auctionLevorg,
+    is_archived: false,
+    archived_at: null,
+    archived_reason: null,
+    expires_at: computeLotExpiresAt(createdLevorg, auctionLevorg),
+    created_at: createdLevorg,
   },
   {
     lot_id: '892b4e10-3a2c-411f-a801-019283746506',
@@ -131,7 +187,66 @@ export const SEEDED_MOCK_LOTS: readonly LotSummary[] = [
     has_anomaly: false,
     anomaly_text: null,
     thumbnail_url: null,
-    created_at: '2026-05-29T11:30:00Z',
+    auction_date: auctionCx5,
+    is_archived: false,
+    archived_at: null,
+    archived_reason: null,
+    expires_at: computeLotExpiresAt(createdCx5, auctionCx5),
+    created_at: createdCx5,
+  },
+  {
+    lot_id: '892b4e10-3a2c-411f-a801-019283746507',
+    make: 'Nissan',
+    model: 'X-Trail',
+    year: 2020,
+    engine_cc: 1997,
+    frame_id: 'NT32-580412',
+    auction_house: 'USS',
+    lot_number: '4120',
+    overall_grade: '4',
+    mileage_km: 67000,
+    turnkey_cost_rub: 2150000,
+    market_price_rf_rub: 2340000,
+    verdict: 'green',
+    verdict_headline: 'Можно брать • прошлые торги завершены',
+    net_benefit_rub: 190000,
+    meti_sanction_risk: true,
+    has_anomaly: false,
+    anomaly_text: null,
+    thumbnail_url: null,
+    auction_date: auctionXtrail,
+    is_archived: true,
+    archived_at: expiredXtrailAt,
+    archived_reason: 'expired',
+    expires_at: expiredXtrailAt,
+    created_at: createdXtrail,
+  },
+  {
+    lot_id: '892b4e10-3a2c-411f-a801-019283746508',
+    make: 'Honda',
+    model: 'Fit e:HEV',
+    year: 2021,
+    engine_cc: 1496,
+    frame_id: 'GR3-112940',
+    auction_house: 'TAA',
+    lot_number: '1904',
+    overall_grade: '4.5',
+    mileage_km: 41000,
+    turnkey_cost_rub: 1380000,
+    market_price_rf_rub: 1590000,
+    verdict: 'green',
+    verdict_headline: 'Можно брать • сохранено в архив',
+    net_benefit_rub: 210000,
+    meti_sanction_risk: true,
+    has_anomaly: false,
+    anomaly_text: null,
+    thumbnail_url: null,
+    auction_date: auctionFit,
+    is_archived: true,
+    archived_at: isoWithOffset(-1, 0, BOOT_NOW_MS),
+    archived_reason: 'manual',
+    expires_at: computeLotExpiresAt(createdFit, auctionFit),
+    created_at: createdFit,
   },
 ]
 

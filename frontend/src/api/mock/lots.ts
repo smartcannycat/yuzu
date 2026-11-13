@@ -10,7 +10,10 @@ import {
   type BatchProgressResponse,
   type FilterCountItem,
   type InProgressSummary,
+  type LotBulkDeleteRequest,
+  type LotBulkDeleteResponse,
   type LotDetailResponse,
+  type LotLifecyclePatchRequest,
   type LotListQueryParams,
   type LotListResponse,
   type LotSummary,
@@ -91,14 +94,15 @@ function buildFilterCounts(lots: readonly LotSummary[], key: 'make' | 'model'): 
 }
 
 function buildAvailableFilters(
-  allLots: readonly LotSummary[],
+  scopedLots: readonly LotSummary[],
   filters: NormalizedFilters,
+  archivedLotsCount: number,
 ): AvailableFilters {
-  const makeFacetLots = allLots.filter((lot) =>
+  const makeFacetLots = scopedLots.filter((lot) =>
     matchesLotFilters(lot, filters, new Set<FilterFacet>(['make', 'model'])),
   )
   const makeCounts = new Map<string, number>()
-  for (const lot of allLots) {
+  for (const lot of scopedLots) {
     if (!makeCounts.has(lot.make)) {
       makeCounts.set(lot.make, 0)
     }
@@ -110,13 +114,13 @@ function buildAvailableFilters(
     .map(([value, count]) => ({ value, count }))
     .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value, 'ru'))
 
-  const modelFacetLots = allLots.filter((lot) =>
+  const modelFacetLots = scopedLots.filter((lot) =>
     matchesLotFilters(lot, filters, new Set<FilterFacet>(['model'])),
   )
   const models = buildFilterCounts(modelFacetLots, 'model')
 
   if (filters.model && !models.some((item) => item.value.toLowerCase() === filters.model)) {
-    const activeModelLot = allLots.find(
+    const activeModelLot = scopedLots.find(
       (lot) =>
         lot.model.toLowerCase() === filters.model &&
         (!filters.make || lot.make.toLowerCase() === filters.make),
@@ -126,7 +130,7 @@ function buildAvailableFilters(
     }
   }
 
-  const verdictFacetLots = allLots.filter((lot) =>
+  const verdictFacetLots = scopedLots.filter((lot) =>
     matchesLotFilters(lot, filters, new Set<FilterFacet>(['verdict'])),
   )
   const countsByVerdict: Partial<Record<TrafficLightColor, number>> = {
@@ -140,6 +144,7 @@ function buildAvailableFilters(
 
   return {
     total_lots_count: makeFacetLots.length,
+    archived_lots_count: archivedLotsCount,
     makes,
     models,
     counts_by_verdict: countsByVerdict,
@@ -152,7 +157,16 @@ export function queryMockLots(
   inProgress: InProgressSummary = MOCK_IN_PROGRESS_SUMMARY,
 ): LotListResponse {
   const filters = normalizeFilters(params)
-  const filtered = sourceLots.filter((lot) => matchesLotFilters(lot, filters))
+  const lifecycle = params.lifecycle ?? 'active'
+  const archivedLotsCount = sourceLots.filter((lot) => lot.is_archived).length
+  const scopedLots =
+    lifecycle === 'archived'
+      ? sourceLots.filter((lot) => lot.is_archived)
+      : lifecycle === 'all'
+        ? sourceLots
+        : sourceLots.filter((lot) => !lot.is_archived)
+
+  const filtered = scopedLots.filter((lot) => matchesLotFilters(lot, filters))
 
   const sortBy = params.sort_by ?? 'created_at'
   const sortOrder = params.sort_order ?? 'desc'
@@ -183,7 +197,7 @@ export function queryMockLots(
       page_size: pageSize,
       total_pages: totalPages,
     },
-    available_filters: buildAvailableFilters(sourceLots, filters),
+    available_filters: buildAvailableFilters(scopedLots, filters, archivedLotsCount),
   }
 }
 
@@ -191,19 +205,38 @@ export function createMockLotsApi(defaultDelay: number, persistState = false): L
   const workspace = createMockLotsWorkspace({ persistState })
   const detailCache = new Map<string, LotDetailResponse>()
 
-  function resolveLotDetail(lotId: string): LotDetailResponse {
-    const cached = detailCache.get(lotId)
-    if (cached) return cached
+  function syncDetailLifecycle(detail: LotDetailResponse, summary: LotSummary): LotDetailResponse {
+    return {
+      ...detail,
+      is_archived: summary.is_archived,
+      archived_at: summary.archived_at,
+      archived_reason: summary.archived_reason,
+      expires_at: summary.expires_at,
+      passport: {
+        ...detail.passport,
+        auction_date: summary.auction_date,
+      },
+    }
+  }
 
+  function resolveLotDetail(lotId: string): LotDetailResponse {
     const snapshot = workspace.getFeedSnapshot()
     const summary = snapshot.lots.find((item) => item.lot_id === lotId)
     if (!summary) {
+      detailCache.delete(lotId)
       throw new ApiError({
         type: 'about:blank',
         title: 'Not Found',
         status: 404,
         detail: 'Лот не найден.',
       })
+    }
+
+    const cached = detailCache.get(lotId)
+    if (cached) {
+      const synced = syncDetailLifecycle(cached, summary)
+      detailCache.set(lotId, synced)
+      return synced
     }
 
     const detail = buildMockLotDetail(summary)
@@ -227,6 +260,34 @@ export function createMockLotsApi(defaultDelay: number, persistState = false): L
       await delay(Math.min(defaultDelay, 120))
       const base = resolveLotDetail(lotId)
       return recalculateMockLotDetail(base, payload)
+    },
+
+    async updateLifecycle(lotId: string, payload: LotLifecyclePatchRequest): Promise<LotSummary> {
+      await delay(Math.min(defaultDelay, 120))
+      const updated = workspace.updateLotLifecycle(lotId, payload.is_archived)
+      const cached = detailCache.get(lotId)
+      if (cached) {
+        detailCache.set(lotId, {
+          ...syncDetailLifecycle(cached, updated),
+          updated_at: updated.archived_at ?? new Date().toISOString(),
+        })
+      }
+      return updated
+    },
+
+    async deleteLot(lotId: string): Promise<void> {
+      await delay(Math.min(defaultDelay, 120))
+      workspace.deleteLot(lotId)
+      detailCache.delete(lotId)
+    },
+
+    async bulkDeleteLots(payload: LotBulkDeleteRequest): Promise<LotBulkDeleteResponse> {
+      await delay(Math.min(defaultDelay, 160))
+      const result = workspace.bulkDeleteLots(payload.lot_ids)
+      for (const deletedId of result.deleted_ids) {
+        detailCache.delete(deletedId)
+      }
+      return result
     },
 
     async createBatch(files: readonly File[]): Promise<BatchCreateResponse> {

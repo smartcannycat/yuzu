@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { Plus } from '@lucide/vue'
+import { CheckSquare, OctagonAlert, Plus, Trash2, Undo2, X } from '@lucide/vue'
 import { useMediaQuery } from '@vueuse/core'
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, toRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { AppHeader, ProfileSheet } from '@/components/layout'
@@ -14,6 +14,7 @@ import {
   type LotFilterDraft,
 } from '@/components/lots'
 import { BaseButton } from '@/components/ui'
+import { useLotFeedActions } from '@/composables/useLotFeedActions'
 import { useAuthStore } from '@/stores/auth'
 import { useBatchesStore } from '@/stores/batches'
 import { useLotsStore } from '@/stores/lots'
@@ -87,8 +88,28 @@ onMounted(async () => {
   }
 })
 
+const {
+  pendingDelete,
+  selectionMode,
+  selectedLotIds,
+  isBulkDeleting,
+  lifecycleActionError,
+  visibleItems,
+  allVisibleSelected,
+  flushPendingDeleteOnUnmount,
+  handleUndoDelete,
+  handleToggleArchiveLot,
+  handleDeleteLot,
+  handleStartMultiSelect,
+  handleToggleSelectLot,
+  handleToggleSelectAll,
+  cancelSelectionMode,
+  handleBulkDeleteSelected,
+} = useLotFeedActions(toRef(lotsStore, 'items'), lotsStore)
+
 onBeforeUnmount(() => {
   stopBackgroundSync()
+  flushPendingDeleteOnUnmount()
 })
 
 function openUploadSheet(): void {
@@ -179,10 +200,12 @@ async function handlePreviewFilterSheet(draft: LotFilterDraft) {
     model: modelForDraft,
     verdict: draft.verdict || undefined,
     has_anomaly: draft.onlyAnomalies ? true : undefined,
+    lifecycle: draft.lifecycle,
   })
 }
 
 async function handleApplyFilterSheet(draft: LotFilterDraft) {
+  cancelSelectionMode()
   if (draft.make && draft.make !== lotsStore.selectedMake && lotsStore.selectedModel) {
     const modelBelongsToMake = lotsStore.items.some(
       (item) => item.model === lotsStore.selectedModel && item.make === draft.make,
@@ -196,10 +219,12 @@ async function handleApplyFilterSheet(draft: LotFilterDraft) {
   lotsStore.onlyAnomalies = draft.onlyAnomalies
   lotsStore.sortBy = draft.sortBy
   lotsStore.sortOrder = draft.sortOrder
+  lotsStore.lifecycle = draft.lifecycle
   await lotsStore.fetchLots()
 }
 
 async function handleResetAllFilters() {
+  cancelSelectionMode()
   lotsStore.resetFilters()
   await lotsStore.fetchLots()
 }
@@ -258,23 +283,50 @@ async function handleLogout(): Promise<void> {
       @reset-filters="handleResetAllFilters"
     />
 
+    <div
+      v-if="lifecycleActionError"
+      role="alert"
+      class="bg-danger-subtle border-danger/25 text-danger mt-4 flex items-center justify-between gap-3 rounded-md border px-3.5 py-2.5 text-[13px] font-medium"
+    >
+      <div class="flex items-center gap-2">
+        <OctagonAlert :size="16" class="shrink-0" />
+        <span>{{ lifecycleActionError }}</span>
+      </div>
+      <button
+        type="button"
+        aria-label="Скрыть ошибку"
+        class="text-danger/80 hover:text-danger shrink-0 cursor-pointer rounded-full p-1"
+        @click="lifecycleActionError = null"
+      >
+        <X :size="15" />
+      </button>
+    </div>
+
     <LotsFeed
       class="mt-5 sm:mt-6"
-      :items="lotsStore.items"
+      :items="visibleItems"
       :is-loading="lotsStore.isLoading"
       :is-loading-more="lotsStore.isLoadingMore"
       :has-loaded-once="lotsStore.hasLoadedOnce"
       :has-more="lotsStore.hasMore"
       :has-any-active-filter="lotsStore.hasAnyActiveFilter"
       :error-message="lotsStore.errorMessage"
+      :lifecycle="lotsStore.lifecycle"
+      :selection-mode="selectionMode"
+      :selected-ids="selectedLotIds"
       @select-lot="handleSelectLot"
       @retry="lotsStore.fetchLots()"
       @reset-filters="handleResetAllFilters"
       @open-upload="openUploadSheet"
       @load-more="lotsStore.loadMore()"
+      @toggle-archive="handleToggleArchiveLot"
+      @delete-lot="handleDeleteLot"
+      @start-multi-select="handleStartMultiSelect"
+      @toggle-select="handleToggleSelectLot"
     />
 
     <button
+      v-if="!selectionMode && !pendingDelete"
       type="button"
       aria-label="Загрузить аукционные листы"
       class="bg-accent text-text-on-accent hover:bg-accent-hover focus-visible:outline-accent fixed right-4 bottom-5 z-30 inline-flex h-12 cursor-pointer items-center gap-2 rounded-full px-5 text-[15px] font-semibold shadow-lg transition-transform duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 active:scale-95 sm:hidden"
@@ -284,6 +336,73 @@ async function handleLogout(): Promise<void> {
       <span>Загрузить</span>
     </button>
 
+    <!-- Single-delete 5-second Undo Toast -->
+    <div
+      v-if="pendingDelete && !selectionMode"
+      role="status"
+      aria-live="polite"
+      class="bg-text-primary text-surface fixed inset-x-4 bottom-5 z-40 mx-auto flex max-w-md items-center justify-between gap-3 rounded-full px-4 py-2.5 shadow-xl sm:inset-x-auto sm:left-1/2 sm:min-w-[360px] sm:-translate-x-1/2"
+    >
+      <span class="truncate text-[13px] font-medium">
+        «{{ pendingDelete.lot.make }} {{ pendingDelete.lot.model }}» удалён
+      </span>
+      <button
+        type="button"
+        class="text-accent hover:text-accent/90 inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-2.5 py-1 text-[13px] font-semibold transition-colors"
+        @click="handleUndoDelete"
+      >
+        <Undo2 :size="14" />
+        <span>Отменить</span>
+      </button>
+    </div>
+
+    <!-- Bulk Selection Floating Bar -->
+    <div
+      v-if="selectionMode"
+      role="region"
+      aria-label="Массовые действия с лотами"
+      class="bg-surface border-border fixed inset-x-3 bottom-4 z-40 mx-auto flex max-w-2xl flex-wrap items-center justify-between gap-2 rounded-2xl border px-3.5 py-2.5 shadow-xl sm:inset-x-auto sm:bottom-5 sm:left-1/2 sm:w-full sm:-translate-x-1/2 sm:rounded-full sm:px-4"
+    >
+      <div class="flex items-center gap-2.5">
+        <CheckSquare :size="16" class="text-accent shrink-0" />
+        <span class="text-text-primary text-[13px] font-semibold tabular-nums">
+          Выбрано: {{ selectedLotIds.size }}
+        </span>
+        <button
+          type="button"
+          class="text-accent hover:text-accent-hover cursor-pointer text-[13px] font-medium"
+          @click="handleToggleSelectAll"
+        >
+          {{ allVisibleSelected ? 'Снять все' : 'Выбрать все' }}
+        </button>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <BaseButton
+          variant="ghost"
+          size="sm"
+          pill
+          :disabled="isBulkDeleting"
+          @click="cancelSelectionMode"
+        >
+          Отмена
+        </BaseButton>
+        <BaseButton
+          variant="destructive"
+          size="sm"
+          pill
+          :disabled="selectedLotIds.size === 0"
+          :loading="isBulkDeleting"
+          @click="handleBulkDeleteSelected"
+        >
+          <template #icon-left>
+            <Trash2 :size="14" />
+          </template>
+          Удалить ({{ selectedLotIds.size }})
+        </BaseButton>
+      </div>
+    </div>
+
     <LotFilterSheet
       v-model:open="isFiltersOpen"
       :available-filters="lotsStore.availableFilters"
@@ -292,6 +411,7 @@ async function handleLogout(): Promise<void> {
       :only-anomalies="lotsStore.onlyAnomalies"
       :sort-by="lotsStore.sortBy"
       :sort-order="lotsStore.sortOrder"
+      :lifecycle="lotsStore.lifecycle"
       :preview-filters="handlePreviewFilterSheet"
       @apply="handleApplyFilterSheet"
       @reset="handleResetAllFilters"

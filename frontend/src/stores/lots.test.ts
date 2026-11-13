@@ -92,6 +92,11 @@ describe('useLotsStore', () => {
           has_anomaly: false,
           anomaly_text: null,
           thumbnail_url: null,
+          auction_date: null,
+          is_archived: false,
+          archived_at: null,
+          archived_reason: null,
+          expires_at: null,
           created_at: '2026-05-31T09:40:00Z',
         },
       ],
@@ -99,6 +104,7 @@ describe('useLotsStore', () => {
       pagination: { total_items: 1, page: 1, page_size: 20, total_pages: 1 },
       available_filters: {
         total_lots_count: 1,
+        archived_lots_count: 0,
         makes: [{ value: 'Honda', count: 1 }],
         models: [{ value: 'Vezel', count: 1 }],
         counts_by_verdict: { green: 1 },
@@ -111,7 +117,13 @@ describe('useLotsStore', () => {
       items: [],
       in_progress: { active_batches_count: 0, total_processing_lots: 0, items: [] },
       pagination: { total_items: 0, page: 1, page_size: 20, total_pages: 0 },
-      available_filters: { total_lots_count: 0, makes: [], models: [], counts_by_verdict: {} },
+      available_filters: {
+        total_lots_count: 0,
+        archived_lots_count: 0,
+        makes: [],
+        models: [],
+        counts_by_verdict: {},
+      },
     })
 
     await firstCall
@@ -145,7 +157,13 @@ describe('useLotsStore', () => {
       items: [],
       in_progress: { active_batches_count: 1, total_processing_lots: 1, items: [] },
       pagination: { total_items: 0, page: 1, page_size: 20, total_pages: 0 },
-      available_filters: { total_lots_count: 0, makes: [], models: [], counts_by_verdict: {} },
+      available_filters: {
+        total_lots_count: 0,
+        archived_lots_count: 0,
+        makes: [],
+        models: [],
+        counts_by_verdict: {},
+      },
     })
     await silentPromise
 
@@ -153,7 +171,13 @@ describe('useLotsStore', () => {
       items: [],
       in_progress: { active_batches_count: 0, total_processing_lots: 0, items: [] },
       pagination: { total_items: 0, page: 1, page_size: 20, total_pages: 0 },
-      available_filters: { total_lots_count: 0, makes: [], models: [], counts_by_verdict: {} },
+      available_filters: {
+        total_lots_count: 0,
+        archived_lots_count: 0,
+        makes: [],
+        models: [],
+        counts_by_verdict: {},
+      },
     })
     await visiblePromise
 
@@ -256,5 +280,55 @@ describe('useLotsStore', () => {
 
     expect(store.currentLotDetail?.lot_id).toBe(detailB.lot_id)
     expect(store.isLoadingDetail).toBe(false)
+  })
+
+  it('tracks lifecycle filter count, archives/unarchives lots, and chunks bulk deletes', async () => {
+    const client = createMockApiClient({ delayMs: 0 })
+    const store = useLotsStore()
+
+    await store.fetchLots(client)
+    expect(store.items).toHaveLength(6)
+    expect(store.availableFilters.archived_lots_count).toBe(2)
+    expect(store.activeFiltersCount).toBe(0)
+
+    const targetId = store.items[0]!.lot_id
+    await store.fetchLotDetail(targetId, client)
+    await store.setLotArchived(targetId, true, client)
+
+    expect(store.items).toHaveLength(5)
+    expect(store.availableFilters.archived_lots_count).toBe(3)
+    expect(store.currentLotDetail?.is_archived).toBe(true)
+
+    store.lifecycle = 'archived'
+    expect(store.activeFiltersCount).toBe(1)
+    await store.fetchLots(client)
+    expect(store.items.length).toBe(3)
+
+    await store.setLotArchived(targetId, false, client)
+    expect(store.items).toHaveLength(2)
+    expect(store.availableFilters.archived_lots_count).toBe(2)
+
+    store.resetFilters()
+    expect(store.lifecycle).toBe('active')
+    await store.fetchLots(client)
+
+    await store.deleteLot(targetId, client)
+    expect(store.items.some((item) => item.lot_id === targetId)).toBe(false)
+    expect(store.currentLotDetail).toBeNull()
+
+    const bulkMock = vi
+      .fn()
+      .mockResolvedValue({ deleted_ids: ['a', 'b'], not_found_ids: [], deleted_count: 2 })
+    const customClient = {
+      auth: client.auth,
+      lots: { ...client.lots, bulkDeleteLots: bulkMock },
+    } as unknown as ApiClient
+    const ids = Array.from({ length: 105 }, (_, i) => `lot-${i}`)
+    const bulkResult = await store.bulkDeleteLots(ids, customClient)
+    expect(bulkMock).toHaveBeenCalledTimes(2)
+    expect(bulkMock.mock.calls[0]?.[0]).toEqual({ lot_ids: ids.slice(0, 100) })
+    expect(bulkMock.mock.calls[1]?.[0]).toEqual({ lot_ids: ids.slice(100) })
+    expect(bulkResult.deleted_count).toBe(4)
+    expect(bulkResult.deleted_ids).toHaveLength(4)
   })
 })

@@ -37,12 +37,17 @@ export type LotSortBy = 'created_at' | 'net_benefit' | 'turnkey_cost'
 
 export type LotSortOrder = 'desc' | 'asc'
 
+export type LotLifecycleFilter = 'active' | 'archived' | 'all'
+
+export type LotArchiveReason = 'expired' | 'manual'
+
 export interface LotListQueryParams {
   query?: string
   make?: string
   model?: string
   verdict?: TrafficLightColor
   has_anomaly?: boolean
+  lifecycle?: LotLifecycleFilter
   page?: number
   page_size?: number
   sort_by?: LotSortBy
@@ -69,6 +74,11 @@ export interface LotSummary {
   has_anomaly: boolean
   anomaly_text: string | null
   thumbnail_url: string | null
+  auction_date: string | null
+  is_archived: boolean
+  archived_at: string | null
+  archived_reason: LotArchiveReason | null
+  expires_at: string | null
   created_at: string
 }
 
@@ -100,6 +110,7 @@ export interface FilterCountItem {
 
 export interface AvailableFilters {
   total_lots_count: number
+  archived_lots_count: number
   makes: FilterCountItem[]
   models: FilterCountItem[]
   counts_by_verdict: Partial<Record<TrafficLightColor, number>>
@@ -208,6 +219,7 @@ export interface NormalizedSheet {
   lot_number: string
   auction_house: AuctionHouse
   auction_branch: string | null
+  auction_date: string | null
   auction_strictness_index: number
   make: string
   model: string
@@ -416,6 +428,10 @@ export interface LotDetailResponse {
   lot_id: string
   created_at: string
   updated_at: string
+  is_archived: boolean
+  archived_at: string | null
+  archived_reason: LotArchiveReason | null
+  expires_at: string | null
   passport: NormalizedSheet
   verdict: TrafficLightVerdict
   market: MarketComparisonInfo
@@ -449,4 +465,18 @@ export interface RecalculateResponse {
   benefit_percentage: number
   verdict: TrafficLightVerdict
   pdf_report_stale: boolean
+}
+
+export interface LotLifecyclePatchRequest {
+  is_archived: boolean
+}
+
+export interface LotBulkDeleteRequest {
+  lot_ids: string[]
+}
+
+export interface LotBulkDeleteResponse {
+  deleted_ids: string[]
+  not_found_ids: string[]
+  deleted_count: number
 }

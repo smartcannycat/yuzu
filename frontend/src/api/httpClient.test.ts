@@ -325,6 +325,7 @@ describe('httpClient (ofetch)', () => {
         },
         available_filters: {
           total_lots_count: 0,
+          archived_lots_count: 0,
           makes: [],
           models: [],
           counts_by_verdict: {},
@@ -430,5 +431,95 @@ describe('httpClient (ofetch)', () => {
     const appended = await client.lots.appendBatchItems('batch-uuid-1', [fileC])
     expect(appended.total_count).toBe(3)
     expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('sends lifecycle query and calls PATCH, DELETE, and POST bulk-delete lot endpoints', async () => {
+    tokenStorage.setFromAuthResponse({
+      access_token: 'access-lifecycle',
+      refresh_token: 'refresh-lifecycle',
+      token_type: 'bearer',
+      expires_in_sec: 3600,
+      user: sampleUser,
+    })
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = extractUrl(input)
+      const method = init?.method ?? 'GET'
+
+      if (url.startsWith('/api/v1/lots?')) {
+        expect(url).toContain('lifecycle=archived')
+        return jsonResponse({
+          items: [],
+          in_progress: { active_batches_count: 0, total_processing_lots: 0, items: [] },
+          pagination: { total_items: 0, page: 1, page_size: 20, total_pages: 0 },
+          available_filters: {
+            total_lots_count: 0,
+            archived_lots_count: 2,
+            makes: [],
+            models: [],
+            counts_by_verdict: {},
+          },
+        })
+      }
+
+      if (url === '/api/v1/lots/lot-42' && method === 'PATCH') {
+        expect(JSON.parse(String(init?.body))).toEqual({ is_archived: true })
+        return jsonResponse({
+          lot_id: 'lot-42',
+          make: 'Toyota',
+          model: 'Corolla',
+          year: 2021,
+          engine_cc: 1797,
+          frame_id: 'ZWE211-1234567',
+          auction_house: 'USS',
+          lot_number: '1001',
+          overall_grade: '4.5',
+          mileage_km: 32000,
+          turnkey_cost_rub: 1850000,
+          market_price_rf_rub: 2150000,
+          verdict: 'green',
+          verdict_headline: 'Хороший лот',
+          net_benefit_rub: 300000,
+          meti_sanction_risk: false,
+          has_anomaly: false,
+          anomaly_text: null,
+          thumbnail_url: null,
+          auction_date: null,
+          is_archived: true,
+          archived_at: '2026-11-13T10:00:00Z',
+          archived_reason: 'manual',
+          expires_at: null,
+          created_at: '2026-11-10T10:00:00Z',
+        })
+      }
+
+      if (url === '/api/v1/lots/lot-42' && method === 'DELETE') {
+        return new Response(null, { status: 204 })
+      }
+
+      expect(url).toBe('/api/v1/lots/bulk-delete')
+      expect(method).toBe('POST')
+      expect(JSON.parse(String(init?.body))).toEqual({ lot_ids: ['lot-1', 'lot-2'] })
+      return jsonResponse({
+        deleted_ids: ['lot-1', 'lot-2'],
+        not_found_ids: [],
+        deleted_count: 2,
+      })
+    })
+
+    const client = createHttpApiClient({ fetch: fetchMock })
+
+    const listRes = await client.lots.list({ lifecycle: 'archived' })
+    expect(listRes.available_filters.archived_lots_count).toBe(2)
+
+    const patched = await client.lots.updateLifecycle('lot-42', { is_archived: true })
+    expect(patched.is_archived).toBe(true)
+    expect(patched.archived_reason).toBe('manual')
+
+    await expect(client.lots.deleteLot('lot-42')).resolves.toBeUndefined()
+
+    const bulkRes = await client.lots.bulkDeleteLots({ lot_ids: ['lot-1', 'lot-2'] })
+    expect(bulkRes.deleted_ids).toEqual(['lot-1', 'lot-2'])
+    expect(fetchMock).toHaveBeenCalledTimes(4)
   })
 })

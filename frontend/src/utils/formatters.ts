@@ -1,4 +1,4 @@
-import type { TaskStep, TrafficLightColor } from '@/types/api'
+import type { LotArchiveReason, TaskStep, TrafficLightColor } from '@/types/api'
 
 const rubNumberFormatter = new Intl.NumberFormat('ru-RU')
 const shortDateFormatter = new Intl.DateTimeFormat('ru-RU', {
@@ -96,6 +96,33 @@ export function formatShortDateRu(isoDate: string): string {
     return '—'
   }
   return shortDateFormatter.format(parsed)
+}
+
+/**
+ * Formats auction date "DD.MM.YYYY" as compact "Торги DD.MM", falling back to created_at date.
+ */
+export function formatCardDateLabel(
+  auctionDate: string | null | undefined,
+  createdAtIso: string,
+): string {
+  if (auctionDate) {
+    const match = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(auctionDate.trim())
+    if (match) {
+      return `Торги ${match[1]}.${match[2]}`
+    }
+  }
+  return formatShortDateRu(createdAtIso)
+}
+
+/**
+ * Formats an archive status badge label for archived lots, returning null for active lots.
+ */
+export function formatArchiveBadgeLabelRu(
+  isArchived: boolean,
+  reason: LotArchiveReason | null | undefined,
+): string | null {
+  if (!isArchived) return null
+  return reason === 'expired' ? 'Торги прошли' : 'В архиве'
 }
 
 /**
