@@ -1,0 +1,33 @@
+services:
+  frontend:
+    build:
+      context: .
+      target: dev
+    container_name: yuzu_frontend_dev
+    restart: unless-stopped
+    volumes:
+      - ./src:/app/src
+      - ./public:/app/public
+      - ./index.html:/app/index.html
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./vitest.config.ts:/app/vitest.config.ts
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./tsconfig.app.json:/app/tsconfig.app.json
+      - ./tsconfig.node.json:/app/tsconfig.node.json
+      - ./env.d.ts:/app/env.d.ts
+      - ./.oxlintrc.json:/app/.oxlintrc.json
+      - ./.oxfmtrc.json:/app/.oxfmtrc.json
+    ports:
+      - "${FRONTEND_DEV_PORT:-5173}:5173"
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api/v1}
+      VITE_USE_MOCKS: ${VITE_USE_MOCKS:-true}
+      DEV_PROXY_TARGET: ${DOCKER_DEV_PROXY_TARGET:-http://host.docker.internal:8000}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:5173/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
