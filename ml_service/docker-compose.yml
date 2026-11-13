@@ -1,0 +1,14 @@
+services:
+  sheet-parser:
+    build:
+      context: ./sheet_parser
+      dockerfile: Dockerfile
+    image: sheet-parser-service:latest
+    container_name: sheet-parser-service
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./sheet_parser/.env
+    volumes:
+      - ./sheet_parser/.cache:/app/.cache
+    restart: unless-stopped
