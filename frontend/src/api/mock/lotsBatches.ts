@@ -636,6 +636,27 @@ export function createMockLotsWorkspace(options: MockLotsWorkspaceOptions = {}):
     }
   }
 
+  function throwLotNotFound(lotId: string, detail: string): never {
+    throw createMockProblem({
+      slug: 'lot-not-found',
+      title: 'Лот не найден',
+      status: 404,
+      detail,
+      instance: `/api/v1/lots/${lotId}`,
+    })
+  }
+
+  function removeLotFromFeed(lotId: string): boolean {
+    const index = feedLots.findIndex((item) => item.lot_id === lotId)
+    if (index === -1 || deletedLotIds.has(lotId)) {
+      return false
+    }
+    feedLots.splice(index, 1)
+    deletedLotIds.add(lotId)
+    suppressedAutoArchiveIds.delete(lotId)
+    return true
+  }
+
   return {
     getFeedSnapshot() {
       const inProgress = advanceAllBatches(Date.now())
@@ -651,13 +672,7 @@ export function createMockLotsWorkspace(options: MockLotsWorkspaceOptions = {}):
 
       const index = feedLots.findIndex((item) => item.lot_id === lotId)
       if (index === -1 || deletedLotIds.has(lotId)) {
-        throw createMockProblem({
-          slug: 'lot-not-found',
-          title: 'Лот не найден',
-          status: 404,
-          detail: 'Лот не найден или был удалён.',
-          instance: `/api/v1/lots/${lotId}`,
-        })
+        throwLotNotFound(lotId, 'Лот не найден или был удалён.')
       }
 
       const current = feedLots[index]!
@@ -694,20 +709,9 @@ export function createMockLotsWorkspace(options: MockLotsWorkspaceOptions = {}):
 
     deleteLot(lotId: string): void {
       advanceAllBatches(Date.now())
-      const index = feedLots.findIndex((item) => item.lot_id === lotId)
-      if (index === -1 || deletedLotIds.has(lotId)) {
-        throw createMockProblem({
-          slug: 'lot-not-found',
-          title: 'Лот не найден',
-          status: 404,
-          detail: 'Лот не найден или уже был удалён.',
-          instance: `/api/v1/lots/${lotId}`,
-        })
+      if (!removeLotFromFeed(lotId)) {
+        throwLotNotFound(lotId, 'Лот не найден или уже был удалён.')
       }
-
-      feedLots.splice(index, 1)
-      deletedLotIds.add(lotId)
-      suppressedAutoArchiveIds.delete(lotId)
       saveWorkspace()
     },
 
@@ -720,14 +724,10 @@ export function createMockLotsWorkspace(options: MockLotsWorkspaceOptions = {}):
       for (const lotId of lotIds) {
         if (seen.has(lotId)) continue
         seen.add(lotId)
-        const index = feedLots.findIndex((item) => item.lot_id === lotId)
-        if (index === -1 || deletedLotIds.has(lotId)) {
+        if (!removeLotFromFeed(lotId)) {
           notFoundIds.push(lotId)
           continue
         }
-        feedLots.splice(index, 1)
-        deletedLotIds.add(lotId)
-        suppressedAutoArchiveIds.delete(lotId)
         deletedIds.push(lotId)
       }
 

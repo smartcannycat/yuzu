@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { CheckSquare, OctagonAlert, Plus, Trash2, Undo2, X } from '@lucide/vue'
 import { useMediaQuery } from '@vueuse/core'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, toRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { AppHeader, ProfileSheet } from '@/components/layout'
@@ -14,6 +14,7 @@ import {
   type LotFilterDraft,
 } from '@/components/lots'
 import { BaseButton } from '@/components/ui'
+import { useLotFeedActions } from '@/composables/useLotFeedActions'
 import { useAuthStore } from '@/stores/auth'
 import { useBatchesStore } from '@/stores/batches'
 import { useLotsStore } from '@/stores/lots'
@@ -21,7 +22,6 @@ import type { InProgressItemPreview, LotSummary, TrafficLightColor } from '@/typ
 
 const HOME_IN_PROGRESS_POLL_MS = 2000
 const IN_PROGRESS_AUTO_EXPAND_LIMIT = 4
-const DELETE_UNDO_MS = 5000
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -88,133 +88,28 @@ onMounted(async () => {
   }
 })
 
-interface PendingDeleteState {
-  lot: LotSummary
-  timerId: number
-}
-
-const pendingDelete = ref<PendingDeleteState | null>(null)
-const selectionMode = ref(false)
-const selectedLotIds = ref<Set<string>>(new Set())
-const isBulkDeleting = ref(false)
-const lifecycleActionError = ref<string | null>(null)
-
-const visibleItems = computed(() => {
-  const hiddenId = pendingDelete.value?.lot.lot_id
-  return hiddenId ? lotsStore.items.filter((item) => item.lot_id !== hiddenId) : lotsStore.items
-})
-
-const allVisibleSelected = computed(
-  () =>
-    visibleItems.value.length > 0 &&
-    visibleItems.value.every((item) => selectedLotIds.value.has(item.lot_id)),
-)
-
-async function commitSingleDelete(lotId: string): Promise<void> {
-  try {
-    await lotsStore.deleteLot(lotId)
-  } catch (err) {
-    lifecycleActionError.value =
-      err instanceof Error && err.message ? err.message : 'Не удалось удалить лот'
-  }
-}
-
-async function flushPendingDelete(commit: boolean): Promise<void> {
-  const current = pendingDelete.value
-  if (!current) return
-  window.clearTimeout(current.timerId)
-  pendingDelete.value = null
-  if (commit) {
-    await commitSingleDelete(current.lot.lot_id)
-  }
-}
-
-function handleUndoDelete(): void {
-  const current = pendingDelete.value
-  if (!current) return
-  window.clearTimeout(current.timerId)
-  pendingDelete.value = null
-}
-
-async function handleToggleArchiveLot(lot: LotSummary): Promise<void> {
-  lifecycleActionError.value = null
-  try {
-    await lotsStore.setLotArchived(lot.lot_id, !lot.is_archived)
-  } catch (err) {
-    lifecycleActionError.value =
-      err instanceof Error && err.message ? err.message : 'Не удалось обновить статус лота'
-  }
-}
-
-async function handleDeleteLot(lot: LotSummary): Promise<void> {
-  lifecycleActionError.value = null
-  await flushPendingDelete(true)
-
-  const timerId = window.setTimeout(() => {
-    const current = pendingDelete.value
-    if (current?.lot.lot_id !== lot.lot_id) return
-    pendingDelete.value = null
-    void commitSingleDelete(lot.lot_id)
-  }, DELETE_UNDO_MS)
-
-  pendingDelete.value = { lot, timerId }
-}
-
-function handleStartMultiSelect(lot: LotSummary): void {
-  lifecycleActionError.value = null
-  selectionMode.value = true
-  selectedLotIds.value = new Set([lot.lot_id])
-}
-
-function handleToggleSelectLot(lotId: string): void {
-  const next = new Set(selectedLotIds.value)
-  if (next.has(lotId)) {
-    next.delete(lotId)
-  } else {
-    next.add(lotId)
-  }
-  selectedLotIds.value = next
-}
-
-function handleToggleSelectAll(): void {
-  if (allVisibleSelected.value) {
-    selectedLotIds.value = new Set()
-    return
-  }
-  selectedLotIds.value = new Set(visibleItems.value.map((item) => item.lot_id))
-}
-
-function cancelSelectionMode(): void {
-  selectionMode.value = false
-  selectedLotIds.value = new Set()
-}
-
-async function handleBulkDeleteSelected(): Promise<void> {
-  const ids = Array.from(selectedLotIds.value)
-  if (ids.length === 0 || isBulkDeleting.value) return
-
-  lifecycleActionError.value = null
-  await flushPendingDelete(true)
-  isBulkDeleting.value = true
-  try {
-    await lotsStore.bulkDeleteLots(ids)
-    cancelSelectionMode()
-  } catch (err) {
-    lifecycleActionError.value =
-      err instanceof Error && err.message ? err.message : 'Не удалось удалить выбранные лоты'
-  } finally {
-    isBulkDeleting.value = false
-  }
-}
+const {
+  pendingDelete,
+  selectionMode,
+  selectedLotIds,
+  isBulkDeleting,
+  lifecycleActionError,
+  visibleItems,
+  allVisibleSelected,
+  flushPendingDeleteOnUnmount,
+  handleUndoDelete,
+  handleToggleArchiveLot,
+  handleDeleteLot,
+  handleStartMultiSelect,
+  handleToggleSelectLot,
+  handleToggleSelectAll,
+  cancelSelectionMode,
+  handleBulkDeleteSelected,
+} = useLotFeedActions(toRef(lotsStore, 'items'), lotsStore)
 
 onBeforeUnmount(() => {
   stopBackgroundSync()
-  if (pendingDelete.value) {
-    const lotId = pendingDelete.value.lot.lot_id
-    window.clearTimeout(pendingDelete.value.timerId)
-    pendingDelete.value = null
-    void lotsStore.deleteLot(lotId)
-  }
+  flushPendingDeleteOnUnmount()
 })
 
 function openUploadSheet(): void {

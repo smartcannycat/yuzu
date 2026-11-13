@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 
 import {
   cleanVerdictText,
+  formatArchiveBadgeLabelRu,
   formatCarCountRu,
+  formatCardDateLabel,
   formatEngineLiters,
   formatJpy,
   formatMileageKm,
@@ -68,5 +70,20 @@ describe('formatters', () => {
     expect(formatSheetCountRu(5)).toBe('5 листов')
     expect(formatSheetCountRu(11)).toBe('11 листов')
     expect(formatSheetCountRu(21)).toBe('21 лист')
+  })
+
+  it('formats card auction date labels and archive status badges', () => {
+    expect(formatCardDateLabel('14.11.2026', '2026-11-10T10:00:00Z')).toBe('Торги 14.11')
+    expect(formatCardDateLabel(null, '2026-05-31T10:25:00Z')).toBe(
+      formatShortDateRu('2026-05-31T10:25:00Z'),
+    )
+    expect(formatCardDateLabel('invalid', '2026-05-31T10:25:00Z')).toBe(
+      formatShortDateRu('2026-05-31T10:25:00Z'),
+    )
+
+    expect(formatArchiveBadgeLabelRu(false, null)).toBeNull()
+    expect(formatArchiveBadgeLabelRu(true, 'expired')).toBe('Торги прошли')
+    expect(formatArchiveBadgeLabelRu(true, 'manual')).toBe('В архиве')
+    expect(formatArchiveBadgeLabelRu(true, null)).toBe('В архиве')
   })
 })

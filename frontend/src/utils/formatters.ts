@@ -1,4 +1,4 @@
-import type { TaskStep, TrafficLightColor } from '@/types/api'
+import type { LotArchiveReason, TaskStep, TrafficLightColor } from '@/types/api'
 
 const rubNumberFormatter = new Intl.NumberFormat('ru-RU')
 const shortDateFormatter = new Intl.DateTimeFormat('ru-RU', {
@@ -112,6 +112,17 @@ export function formatCardDateLabel(
     }
   }
   return formatShortDateRu(createdAtIso)
+}
+
+/**
+ * Formats an archive status badge label for archived lots, returning null for active lots.
+ */
+export function formatArchiveBadgeLabelRu(
+  isArchived: boolean,
+  reason: LotArchiveReason | null | undefined,
+): string | null {
+  if (!isArchived) return null
+  return reason === 'expired' ? 'Торги прошли' : 'В архиве'
 }
 
 /**

@@ -18,6 +18,7 @@ import { BaseBadge, BaseCard, type BadgeVariant } from '@/components/ui'
 import type { LotSummary, TrafficLightColor } from '@/types/api'
 import {
   cleanVerdictText,
+  formatArchiveBadgeLabelRu,
   formatCardDateLabel,
   formatEngineLiters,
   formatMileageKm,
@@ -74,7 +75,7 @@ const safeThumbnailUrl = computed(() => sanitizeImageUrl(props.lot.thumbnail_url
 const hasThumbnail = computed(() => Boolean(safeThumbnailUrl.value) && !imageError.value)
 const dateLabel = computed(() => formatCardDateLabel(props.lot.auction_date, props.lot.created_at))
 const archiveBadgeLabel = computed(() =>
-  props.lot.archived_reason === 'expired' ? 'Торги прошли' : 'В архиве',
+  formatArchiveBadgeLabelRu(props.lot.is_archived, props.lot.archived_reason),
 )
 
 const benefitClass = computed(() => {
@@ -176,6 +177,8 @@ function handleDeleteAction(): void {
               data-lot-menu
               class="relative shrink-0"
               @click="!selectionMode && $event.stopPropagation()"
+              @keydown.enter="!selectionMode && $event.stopPropagation()"
+              @keydown.space="!selectionMode && $event.stopPropagation()"
             >
               <span
                 v-if="selectionMode"

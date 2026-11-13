@@ -31,6 +31,8 @@ import {
 } from '@/components/ui'
 import { useLotsStore } from '@/stores/lots'
 import type { RecalculateRequest } from '@/types/api'
+import { getErrorMessage } from '@/utils/errors'
+import { formatArchiveBadgeLabelRu } from '@/utils/formatters'
 
 type LotDetailTab = 'general' | 'tech' | 'economics'
 
@@ -181,10 +183,11 @@ const isDeleteConfirmOpen = ref(false)
 const isDeletingLot = ref(false)
 const lifecycleError = ref<string | null>(null)
 
-const archiveBadgeLabel = computed(() => {
-  if (!detail.value?.is_archived) return null
-  return detail.value.archived_reason === 'expired' ? 'Торги прошли' : 'В архиве'
-})
+const archiveBadgeLabel = computed(() =>
+  detail.value
+    ? formatArchiveBadgeLabelRu(detail.value.is_archived, detail.value.archived_reason)
+    : null,
+)
 
 watch(lotId, () => {
   lifecycleError.value = null
@@ -198,8 +201,7 @@ async function handleToggleArchive(): Promise<void> {
   try {
     await lotsStore.setLotArchived(detail.value.lot_id, !detail.value.is_archived)
   } catch (err) {
-    lifecycleError.value =
-      err instanceof Error && err.message ? err.message : 'Не удалось обновить статус архива'
+    lifecycleError.value = getErrorMessage(err, 'Не удалось обновить статус архива')
   } finally {
     isUpdatingLifecycle.value = false
   }
@@ -219,8 +221,7 @@ async function handleConfirmDelete(): Promise<void> {
     isDeleteConfirmOpen.value = false
     await router.replace({ name: 'home' })
   } catch (err) {
-    lifecycleError.value =
-      err instanceof Error && err.message ? err.message : 'Не удалось удалить лот'
+    lifecycleError.value = getErrorMessage(err, 'Не удалось удалить лот')
   } finally {
     isDeletingLot.value = false
   }
