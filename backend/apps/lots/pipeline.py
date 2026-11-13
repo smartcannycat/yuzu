@@ -31,6 +31,7 @@ from apps.lots.economics import (
 )
 from apps.lots.integrations.drom.schemas import DromFetchError, DromMarketResult, DromSearchCriteria
 from apps.lots.integrations.farpost.service import save_repair_estimate
+from apps.lots.lifecycle import compute_lot_expires_at
 from apps.lots.models import Batch, BatchItem, Lot, MarketComparisonInfo, WiseCostLadder
 from apps.lots.queries import _build_lot_summary, _has_full_detail
 from apps.lots.schemas import (
@@ -214,11 +215,17 @@ def _build_batch_progress(batch: Batch) -> BatchProgressResponse:
 
 
 def _build_item_status(item: BatchItem) -> BatchItemStatus:
+    is_deleted = item.lot is not None and item.lot.deleted_at is not None
     summary: LotSummary | None = None
-    if item.status == ItemProcessingStatus.READY and item.lot is not None and item.lot.make:
+    if (
+        not is_deleted
+        and item.status == ItemProcessingStatus.READY
+        and item.lot is not None
+        and item.lot.make
+    ):
         summary = _build_lot_summary(item.lot)
     return BatchItemStatus(
-        lot_id=item.lot_id,
+        lot_id=None if is_deleted else item.lot_id,
         file_index=item.file_index,
         original_filename=item.original_filename,
         preview_title=item.preview_title,
@@ -297,8 +304,16 @@ def _complete_item(item: BatchItem) -> None:
     item.status = ItemProcessingStatus.READY
     item.current_step = TaskStep.COMPLETED
     if item.lot is not None:
-        item.lot.completed_at = timezone.now()
-        item.lot.save(update_fields=["completed_at", "updated_at"])
+        now = timezone.now()
+        item.lot.completed_at = now
+        update_fields = ["completed_at", "updated_at"]
+        if item.lot.expires_at is None and not item.lot.auto_archive_disabled:
+            item.lot.expires_at = compute_lot_expires_at(
+                item.lot.created_at or now,
+                item.lot.auction_date,
+            )
+            update_fields.append("expires_at")
+        item.lot.save(update_fields=update_fields)
     item.save(update_fields=["status", "current_step", "updated_at"])
 
 

@@ -21,6 +21,7 @@ from apps.core.enums import (
     TrafficLightColor,
     WorkType,
 )
+from apps.lots.lifecycle import compute_lot_expires_at
 from apps.lots.models import (
     CrossAuditReport,
     CurrencyRatesSnapshot,
@@ -688,7 +689,9 @@ def _create_lot_relations(
 
 
 def _seed_lot_from_fixture(user: User, now, fixture: dict[str, Any]) -> Lot:
-    lot = Lot.objects.create(user=user, completed_at=now, **fixture["lot_fields"])
+    lot_fields = fixture["lot_fields"]
+    expires_at = compute_lot_expires_at(now, lot_fields.get("auction_date"))
+    lot = Lot.objects.create(user=user, completed_at=now, expires_at=expires_at, **lot_fields)
     _create_lot_relations(lot, now, fixture=fixture)
     return lot
 
