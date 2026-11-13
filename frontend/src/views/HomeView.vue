@@ -21,6 +21,7 @@ import { useLotsStore } from '@/stores/lots'
 import type { InProgressItemPreview, LotSummary, TrafficLightColor } from '@/types/api'
 
 const HOME_IN_PROGRESS_POLL_MS = 2000
+const IN_PROGRESS_AUTO_EXPAND_LIMIT = 4
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -71,6 +72,7 @@ watch(
       }
     } else {
       stopBackgroundSync()
+      isInProgressOpen.value = false
     }
   },
 )
@@ -98,7 +100,8 @@ async function handleUploadSubmit(files: File[]): Promise<void> {
   isUploadOpen.value = false
 
   if (isDesktop.value) {
-    isInProgressOpen.value = true
+    const totalInProgress = lotsStore.inProgress.total_processing_lots
+    isInProgressOpen.value = totalInProgress > 0 && totalInProgress <= IN_PROGRESS_AUTO_EXPAND_LIMIT
     scheduleBackgroundSync()
   } else {
     await router.push({
