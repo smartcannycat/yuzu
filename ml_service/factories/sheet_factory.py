@@ -1,6 +1,6 @@
 """Factory assembling normalized domain results from raw Vision LLM extractions."""
 
-from app.domains.entities import (
+from ml_service.domains.entities import (
     FastHeaderPreviewEntity,
     GatekeeperDecisionEntity,
     NormalizedDefectEntity,
@@ -11,9 +11,9 @@ from app.domains.entities import (
     RawExtractionEntity,
     RiskFlagsEntity,
 )
-from app.domains.enums import AuctionHouse, DefectCode, FrameIdConfidence, OdometerStatus, ParseStatus
-from app.factories.markdown_renderer import render_markdown
-from app.factories.normalizers import (
+from ml_service.domains.enums import AuctionHouse, DefectCode, FrameIdConfidence, OdometerStatus, ParseStatus
+from ml_service.factories.markdown_renderer import render_markdown
+from ml_service.factories.normalizers import (
     CHASSIS_RE,
     KATASHIKI_RE,
     build_defect_description_ru,
@@ -50,6 +50,20 @@ def _normalize_defects(
         parsed_codes, code_warnings = parse_defect_codes_with_warnings(defect.raw_code)
         defect_warnings.extend(code_warnings)
 
+        if not parsed_codes:
+            raw_label = defect.raw_code.strip() or "не указан"
+            norm_defects.append(
+                NormalizedDefectEntity(
+                    panel_id=panel_id,
+                    panel_ru=panel_ru,
+                    defect_types=[],
+                    severity=None,
+                    raw_code=defect.raw_code,
+                    description_ru=f"{panel_ru} — код дефекта ({raw_label})",
+                )
+            )
+            continue
+
         for d_type, severity in parsed_codes:
             if d_type == DefectCode.XX:
                 has_xx = True
@@ -65,7 +79,12 @@ def _normalize_defects(
                     defect_types=[d_type],
                     severity=severity,
                     raw_code=defect.raw_code,
-                    description_ru=build_defect_description_ru(panel_ru, d_type, severity),
+                    description_ru=build_defect_description_ru(
+                        panel_ru,
+                        d_type,
+                        severity,
+                        raw_code=defect.raw_code,
+                    ),
                 )
             )
 

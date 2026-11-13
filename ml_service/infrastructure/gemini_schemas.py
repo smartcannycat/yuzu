@@ -2,12 +2,12 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.domains.entities import (
+from ml_service.domains.entities import (
     RawDefectEntity,
     RawExtractionEntity,
     RawRiskFlagsEntity,
 )
-from app.domains.enums import (
+from ml_service.domains.enums import (
     BodyPanel,
     DriveType,
     FuelType,

@@ -1,14 +1,15 @@
 services:
-  sheet-parser:
+  ml:
     build:
-      context: ./sheet_parser
+      context: .
       dockerfile: Dockerfile
-    image: sheet-parser-service:latest
-    container_name: sheet-parser-service
+    image: yuzu-ml-service:latest
+    container_name: yuzu_ml_service
     ports:
-      - "8000:8000"
+      - "8001:8001"
     env_file:
-      - ./sheet_parser/.env
+      - path: ./.env
+        required: false
     volumes:
-      - ./sheet_parser/.cache:/app/.cache
+      - ./.cache:/app/ml_service/.cache
     restart: unless-stopped

@@ -1,11 +1,12 @@
 """Pydantic v2 HTTP schemas and explicit domain-to-API converters."""
 
+from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
-from app.domains.entities import (
+from ml_service.domains.entities import (
     BatchItemStatusEntity,
     BatchJobEntity,
     NormalizedDefectEntity,
@@ -14,7 +15,7 @@ from app.domains.entities import (
     ParserResultEntity,
     RiskFlagsEntity,
 )
-from app.domains.enums import (
+from ml_service.domains.enums import (
     BatchItemState,
     BatchStatus,
     BodyPanel,
@@ -46,7 +47,6 @@ class HealthResponse(StrictBaseModel):
 
     status: Literal["ok"] = "ok"
     keys_configured: int
-    cache_dir: str
     reference_year: int
 
 
@@ -214,12 +214,19 @@ class BatchProgressResponse(StrictBaseModel):
     batch_id: UUID
     created_at: str
     status: BatchStatus
-    total_items: int
+    total_count: int
     processed_count: int
     ready_count: int
     failed_count: int
     mascot: MascotResponse
     items: list[BatchItemStatusResponse]
+
+
+class InvalidParamDetail(StrictBaseModel):
+    """Single validation failure entry inside RFC 7807 Problem Details."""
+
+    name: str
+    reason: str
 
 
 class ProblemDetailsResponse(StrictBaseModel):
@@ -230,6 +237,8 @@ class ProblemDetailsResponse(StrictBaseModel):
     status: int
     detail: str
     instance: str | None = None
+    invalid_params: list[InvalidParamDetail] = Field(default_factory=list)
+    timestamp: str = Field(default_factory=lambda: datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
 
 
 def _to_defect_response(defect: NormalizedDefectEntity) -> DefectResponse:
@@ -415,7 +424,7 @@ def to_batch_progress_response(batch: BatchJobEntity) -> BatchProgressResponse:
         batch_id=UUID(batch.batch_id),
         created_at=batch.created_at,
         status=batch.status,
-        total_items=batch.total_items,
+        total_count=batch.total_items,
         processed_count=batch.processed_count,
         ready_count=batch.ready_count,
         failed_count=batch.failed_count,

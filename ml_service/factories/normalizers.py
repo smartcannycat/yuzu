@@ -4,7 +4,7 @@ import datetime
 import re
 import unicodedata
 
-from app.domains.enums import AuctionHouse, BodyPanel, DefectCode, FrameIdConfidence
+from ml_service.domains.enums import AuctionHouse, BodyPanel, DefectCode, FrameIdConfidence
 
 CHASSIS_RE = re.compile(r"^(?:[A-Z0-9]{2,7}-\d{4,8}|\d{6,8}|[A-HJ-NPR-Z0-9]{17})$")
 KATASHIKI_RE = re.compile(r"^(?:[A-Z0-9]{1,4}-)?[A-Z0-9]{2,8}(?:-[A-Z0-9]{1,5})?$")
@@ -217,14 +217,18 @@ def build_defect_description_ru(
     panel_ru: str,
     defect_code: DefectCode | str,
     severity: int | None,
+    *,
+    raw_code: str = "",
 ) -> str:
     """Build deterministic Russian human-readable description for a normalized defect."""
     code_str = defect_code.value if isinstance(defect_code, DefectCode) else str(defect_code)
     label = _DEFECT_LABELS_RU.get(code_str, code_str.lower())
     panel = panel_ru.strip() or "Кузов"
+    norm_raw = unicodedata.normalize("NFKC", raw_code)
+    small_suffix = " (small)" if "小" in norm_raw else ""
     if severity is not None:
-        return f"{panel} — {label}, степень {severity}"
-    return f"{panel} — {label}"
+        return f"{panel} — {label}, степень {severity}{small_suffix}"
+    return f"{panel} — {label}{small_suffix}"
 
 
 def _replace_kanji_numbers(text: str) -> str:
@@ -378,7 +382,7 @@ _PANEL_ZONE_KEYWORDS: tuple[tuple[str, BodyPanel, str], ...] = (
 )
 
 _REPAIR_ACTION_RE = re.compile(r"(XX|\bX\b|\bR\b|W\d?|交換|修理|鈑金|歪|曲|凹|修復|замен|ремонт|деформац)", re.IGNORECASE)
-_PILLAR_OR_FRAME_RE = re.compile(r"(ピラー|サイドメンバー|フレーム|クロスメンバー|修復歴|骨格|стойк|лонжерон)", re.IGNORECASE)
+_PILLAR_OR_FRAME_RE = re.compile(r"(ピラー|サイドメンバー|フレーム|修復歴|骨格|стойк|лонжерон)", re.IGNORECASE)
 _INSIDE_PANEL_ONLY_RE = re.compile(r"(インパネ|インサイドパネル)", re.IGNORECASE)
 _CORE_SUPPORT_RE = re.compile(r"(コアサポート|рамк[аи]\s+радиатора|телевизор)", re.IGNORECASE)
 _NO_ANOMALY_RE = re.compile(r"(異常なし|問題なし|исправн|в\s+норме)", re.IGNORECASE)
@@ -443,20 +447,21 @@ def derive_structural_risk_flags(
     defect_texts: list[str],
 ) -> tuple[bool, bool]:
     """Deterministically refine structural risk flags based on Japanese notes and repair codes."""
+    all_lines = [*inspector_notes_raw, *inspector_notes_ru, *defect_texts]
     all_raw = " | ".join(inspector_notes_raw)
-    all_text = " | ".join([*inspector_notes_raw, *inspector_notes_ru, *defect_texts])
 
-    has_pillar_keyword = bool(_PILLAR_OR_FRAME_RE.search(all_text))
-    has_inside_panel_only = bool(_INSIDE_PANEL_ONLY_RE.search(all_raw)) and not has_pillar_keyword
+    pillar_lines = [line for line in all_lines if _PILLAR_OR_FRAME_RE.search(line)]
+    has_active_pillar = any(not _NO_ANOMALY_RE.search(line) for line in pillar_lines)
+    has_inside_panel_only = bool(_INSIDE_PANEL_ONLY_RE.search(all_raw)) and not pillar_lines
 
-    if has_pillar_keyword and not _NO_ANOMALY_RE.search(all_text):
+    if has_active_pillar:
         pillar_or_frame = True
     elif has_inside_panel_only:
         pillar_or_frame = False
     else:
         pillar_or_frame = llm_pillar_or_frame and not _NO_ANOMALY_RE.search(all_raw)
 
-    core_lines = [line for line in [*inspector_notes_raw, *inspector_notes_ru, *defect_texts] if _CORE_SUPPORT_RE.search(line)]
+    core_lines = [line for line in all_lines if _CORE_SUPPORT_RE.search(line)]
     if core_lines:
         core_support = any(_REPAIR_ACTION_RE.search(line) and not _NO_ANOMALY_RE.search(line) for line in core_lines)
     else:

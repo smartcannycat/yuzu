@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from typing import Protocol
 
-from app.domains.entities import (
+from ml_service.domains.entities import (
     FastHeaderPreviewEntity,
     GatekeeperDecisionEntity,
     LoadedImageEntity,
@@ -14,8 +14,8 @@ from app.domains.entities import (
     RawExtractionEntity,
     SlicedSheetEntity,
 )
-from app.domains.enums import LayoutComplexity, TaskStep
-from app.factories.sheet_factory import SheetFactory
+from ml_service.domains.enums import LayoutComplexity, TaskStep
+from ml_service.factories.sheet_factory import SheetFactory
 
 StepCallback = Callable[[TaskStep, int], Awaitable[None]]
 PreviewCallback = Callable[[str], Awaitable[None]]
@@ -36,6 +36,8 @@ class VisionClientProtocol(Protocol):
     def flash_model_name(self) -> str: ...
 
     async def check_sheet(self, full_png: bytes) -> GatekeeperDecisionEntity: ...
+
+    async def extract_fast_header(self, sliced: SlicedSheetEntity) -> FastHeaderPreviewEntity | None: ...
 
     async def extract_sheet(
         self,
@@ -149,18 +151,13 @@ class SheetParserService:
         header_preview: FastHeaderPreviewEntity | None = None
 
         async def _run_fast_header() -> FastHeaderPreviewEntity | None:
-            fn = getattr(self._vision_client, "extract_fast_header", None)
-            if fn is None:
-                return None
-            preview = await fn(sliced)
+            preview = await self._vision_client.extract_fast_header(sliced)
             if preview is not None and preview.preview_title and on_preview is not None:
                 await on_preview(preview.preview_title)
             return preview
 
-        header_task: asyncio.Task[FastHeaderPreviewEntity | None] | None = None
-        if hasattr(self._vision_client, "extract_fast_header"):
-            await _notify_step(on_step, TaskStep.FAST_HEADER_OCR, 45)
-            header_task = asyncio.create_task(_run_fast_header())
+        await _notify_step(on_step, TaskStep.FAST_HEADER_OCR, 45)
+        header_task: asyncio.Task[FastHeaderPreviewEntity | None] = asyncio.create_task(_run_fast_header())
 
         await _notify_step(on_step, TaskStep.GEMINI_OCR, 65)
         try:
