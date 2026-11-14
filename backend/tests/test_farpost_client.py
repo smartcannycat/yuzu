@@ -11,6 +11,7 @@ from bs4 import BeautifulSoup
 from apps.lots.integrations.farpost.client import (
     FarpostClient,
     FarpostFetchError,
+    FarpostRateLimitedError,
     PartCriteria,
     parse_offers,
 )
@@ -167,3 +168,91 @@ def test_network_timeout_is_a_source_error():
 def test_farpost_noindex_link_wrapper_preserves_local_offer():
     offers = parse(listing(href="/ni/vladivostok/zapchasti/door-123.html"))
     assert len(offers) == 1
+
+
+@pytest.mark.parametrize(
+    "title,annotation",
+    [
+        ("Решетка переднего бампера Toyota Corolla NRE210", ""),
+        ("Усилитель переднего бампера Toyota Corolla NRE210", ""),
+        ("Стекло передней левой двери Toyota Corolla NRE210 цвет 070", ""),
+        ("Дверь передняя левая Toyota Corolla NRE210 цвет 070", "Дубликат SAT, Тайвань"),
+    ],
+)
+def test_rejects_expanded_accessories_and_aftermarket(title, annotation):
+    assert parse(listing(title, annotation=annotation), replace(CRITERIA, paint_code="")) == []
+
+
+def test_rejects_stub_prices_below_threshold():
+    assert parse(listing(price="500₽")) == []
+
+
+def test_accepts_used_listing_without_literal_kontrakt_and_abbreviations():
+    offers = parse(
+        listing(
+            "Дверь п/л Toyota Corolla NRE210 цвет ПЕРЛАМУТР 070",
+            annotation="Отличное состояние",
+        )
+    )
+    assert len(offers) == 1
+    assert offers[0].color_matched
+
+
+def test_accepts_cyrillic_make_model_one_digit_body_and_paint_code():
+    criteria = PartCriteria(
+        "Honda", "Freed", "GB5", "front_left_door", "дверь", "левая", "передняя", "NH883P"
+    )
+    offers = parse(
+        listing("Дверь передняя левая Хонда Фрид GB5 NH883P", annotation=""),
+        criteria,
+    )
+    assert len(offers) == 1
+    assert offers[0].color_matched
+
+
+def test_trim_grades_do_not_trigger_side_or_position_false_positives():
+    criteria_right = PartCriteria(
+        "Toyota", "Aqua", "NHP10", "front_right_door", "дверь", "правая", "передняя", ""
+    )
+    assert (
+        parse(listing("Дверь передняя левая Toyota Aqua NHP10 L", annotation=""), criteria_right)
+        == []
+    )
+    criteria_rear = PartCriteria(
+        "Toyota", "Vitz", "KSP130", "rear_left_door", "дверь", "левая", "задняя", ""
+    )
+    assert (
+        parse(listing("Дверь передняя левая Toyota Vitz KSP130 F", annotation=""), criteria_rear)
+        == []
+    )
+
+
+def test_tailgate_and_windshield_synonyms_without_false_door_matches():
+    tailgate = PartCriteria("Honda", "Freed", "GB5", "tailgate", "багажник", "", "", "")
+    assert len(parse(listing("Дверь 5-я Honda Freed GB5", annotation=""), tailgate)) == 1
+    assert parse(listing("Дверь задняя левая Honda Freed GB5", annotation=""), tailgate) == []
+
+    windshield = PartCriteria("Honda", "Fit", "GE6", "windshield", "стекло", "", "лобовое", "")
+    assert len(parse(listing("Ветровое стекло Honda Fit GE6", annotation=""), windshield)) == 1
+
+
+def test_verify_redirect_and_429_raise_rate_limited_and_context_manager_reuses_cookies():
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if "verify" in str(request.url):
+            return httpx.Response(200, text="<title>Проверка</title>")
+        if len(requests) == 1:
+            return httpx.Response(
+                200,
+                text=listing(),
+                headers={"Set-Cookie": "ring=abc123; Path=/"},
+            )
+        return httpx.Response(302, headers={"Location": "https://www.farpost.ru/verify"})
+
+    with FarpostClient(transport=httpx.MockTransport(handler)) as client:
+        assert len(client.search(CRITERIA, deadline=time.monotonic() + 20)) == 1
+        with pytest.raises(FarpostRateLimitedError):
+            client.search(CRITERIA, deadline=time.monotonic() + 20)
+    assert "ring=abc123" in requests[1].headers.get("cookie", "")
