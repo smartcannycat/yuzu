@@ -24,6 +24,10 @@ export default defineConfig(({ mode }) => {
           target: proxyTarget,
           changeOrigin: !proxyTarget.includes('host.docker.internal'),
         },
+        '/media': {
+          target: proxyTarget,
+          changeOrigin: !proxyTarget.includes('host.docker.internal'),
+        },
       },
     },
   }

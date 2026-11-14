@@ -291,6 +291,8 @@ export function buildMockLotDetail(summary: LotSummary): LotDetailResponse {
     effective_duty_pct: null,
     customs_duty_eur: customsDutyEur,
     customs_duty_rub: customsDutyRub,
+    excise_rub: 0,
+    import_vat_rub: 0,
     is_under_160_hp: isUnder160,
     is_commercial_util: isCommercialUtil,
     utilization_fee_rub: utilFeeRub,

@@ -64,6 +64,12 @@ export function createHttpLotsApi(request: HttpRequestFn): LotsApi {
       })
     },
 
+    resetSimulation(lotId: string): Promise<RecalculateResponse> {
+      return request<RecalculateResponse>(`/lots/${encodeURIComponent(lotId)}/recalculate/reset`, {
+        method: 'POST',
+      })
+    },
+
     updateLifecycle(lotId: string, payload: LotLifecyclePatchRequest): Promise<LotSummary> {
       return request<LotSummary>(`/lots/${encodeURIComponent(lotId)}`, {
         method: 'PATCH',

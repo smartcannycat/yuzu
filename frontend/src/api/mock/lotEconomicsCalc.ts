@@ -264,6 +264,7 @@ export function recalculateMockLotDetail(
     net_benefit_rub: netBenefitRub,
     benefit_percentage: Number(benefitPct.toFixed(1)),
     verdict: updatedVerdict,
+    is_simulation_modified: false,
     pdf_report_stale: true,
   }
 }

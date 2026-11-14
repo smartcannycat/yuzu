@@ -28,6 +28,7 @@ export interface LotsApi {
   list(params?: LotListQueryParams): Promise<LotListResponse>
   getDetail(lotId: string): Promise<LotDetailResponse>
   recalculate(lotId: string, payload: RecalculateRequest): Promise<RecalculateResponse>
+  resetSimulation(lotId: string): Promise<RecalculateResponse>
   updateLifecycle(lotId: string, payload: LotLifecyclePatchRequest): Promise<LotSummary>
   deleteLot(lotId: string): Promise<void>
   bulkDeleteLots(payload: LotBulkDeleteRequest): Promise<LotBulkDeleteResponse>

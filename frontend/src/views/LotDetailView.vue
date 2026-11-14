@@ -142,7 +142,7 @@ function handleRecalculate(payload: RecalculateRequest): void {
 
 function handleResetSimulation(): void {
   if (!lotId.value) return
-  lotsStore.resetLotSimulation(lotId.value)
+  void lotsStore.resetLotSimulation(lotId.value)
 }
 
 const baseDocumentTitle = typeof document !== 'undefined' ? document.title : ''
