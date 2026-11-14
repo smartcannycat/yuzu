@@ -7,6 +7,7 @@ from pydantic import UUID4
 
 from apps.core.enums import LotLifecycleFilter, TrafficLightColor
 from apps.core.exceptions import UnauthorizedProblemError
+from apps.core.redis_utils import enforce_rate_limit
 from apps.core.schemas import ProblemDetail
 from apps.lots import services
 from apps.lots.schemas import (
@@ -18,6 +19,8 @@ from apps.lots.schemas import (
     LotLifecyclePatchRequest,
     LotListResponse,
     LotSummary,
+    RecalculateRequest,
+    RecalculateResponse,
 )
 from apps.users.authentication import AppJWTAuth
 from apps.users.models import User
@@ -77,6 +80,7 @@ class LotController(ControllerBase):
             400: ProblemDetail,
             401: ProblemDetail,
             422: ProblemDetail,
+            429: ProblemDetail,
         },
     )
     def create_batch(
@@ -85,6 +89,13 @@ class LotController(ControllerBase):
         files: list[UploadedFile],
     ) -> Status[BatchCreateResponse]:
         user = self._require_user(request)
+        enforce_rate_limit(
+            "lots:batches",
+            str(user.id),
+            limit=20,
+            window_sec=60,
+            detail="Слишком много загрузок пачек. Попробуйте через минуту.",
+        )
         return Status(202, services.create_batch(user, files))
 
     @http_get(
@@ -113,6 +124,7 @@ class LotController(ControllerBase):
             404: ProblemDetail,
             409: ProblemDetail,
             422: ProblemDetail,
+            429: ProblemDetail,
         },
     )
     def append_batch_items(
@@ -122,6 +134,13 @@ class LotController(ControllerBase):
         files: list[UploadedFile],
     ) -> Status[BatchProgressResponse]:
         user = self._require_user(request)
+        enforce_rate_limit(
+            "lots:batches",
+            str(user.id),
+            limit=20,
+            window_sec=60,
+            detail="Слишком много загрузок пачек. Попробуйте через минуту.",
+        )
         return Status(202, services.append_batch_items(user, batch_id, files))
 
     @http_post(
@@ -156,6 +175,43 @@ class LotController(ControllerBase):
     ) -> LotDetailResponse:
         user = self._require_user(request)
         return services.get_lot_detail(user, lot_id)
+
+    @http_post(
+        "/{lot_id}/recalculate",
+        response={
+            200: RecalculateResponse,
+            400: ProblemDetail,
+            401: ProblemDetail,
+            404: ProblemDetail,
+            422: ProblemDetail,
+        },
+    )
+    def recalculate_lot(
+        self,
+        request: HttpRequest,
+        lot_id: UUID4,
+        payload: RecalculateRequest,
+    ) -> RecalculateResponse:
+        user = self._require_user(request)
+        return services.recalculate_lot(user, lot_id, payload)
+
+    @http_post(
+        "/{lot_id}/recalculate/reset",
+        response={
+            200: RecalculateResponse,
+            400: ProblemDetail,
+            401: ProblemDetail,
+            404: ProblemDetail,
+            422: ProblemDetail,
+        },
+    )
+    def reset_lot_simulation(
+        self,
+        request: HttpRequest,
+        lot_id: UUID4,
+    ) -> RecalculateResponse:
+        user = self._require_user(request)
+        return services.reset_lot_simulation(user, lot_id)
 
     @http_patch(
         "/{lot_id}",

@@ -187,6 +187,7 @@ describe('useLotsStore', () => {
   it('loads lot detail, applies recalculation across store, and resets cleanly to baseline', async () => {
     const client = createMockApiClient({ delayMs: 0 })
     const store = useLotsStore()
+    await store.fetchLots(client)
 
     const loaded = await store.fetchLotDetail('892b4e10-3a2c-411f-a801-019283746501', client)
     expect(loaded).not.toBeNull()
@@ -200,13 +201,24 @@ describe('useLotsStore', () => {
     )
 
     expect(store.isSimulationModified).toBe(true)
-    expect(store.currentLotDetail!.economics.wise_cost_ladder.turnkey_cost_rub).toBeGreaterThan(
-      initialTurnkey,
-    )
+    const modifiedTurnkey = store.currentLotDetail!.economics.wise_cost_ladder.turnkey_cost_rub
+    expect(modifiedTurnkey).toBeGreaterThan(initialTurnkey)
+    expect(
+      store.items.find((item) => item.lot_id === '892b4e10-3a2c-411f-a801-019283746501')
+        ?.turnkey_cost_rub,
+    ).toBe(modifiedTurnkey)
 
-    store.resetLotSimulation('892b4e10-3a2c-411f-a801-019283746501')
+    // Simulated F5 reload still sees server-persisted modification flag
+    await store.fetchLotDetail('892b4e10-3a2c-411f-a801-019283746501', client)
+    expect(store.isSimulationModified).toBe(true)
+
+    await store.resetLotSimulation('892b4e10-3a2c-411f-a801-019283746501', client)
     expect(store.isSimulationModified).toBe(false)
     expect(store.currentLotDetail!.economics.wise_cost_ladder.turnkey_cost_rub).toBe(initialTurnkey)
+    expect(
+      store.items.find((item) => item.lot_id === '892b4e10-3a2c-411f-a801-019283746501')
+        ?.turnkey_cost_rub,
+    ).toBe(initialTurnkey)
   })
 
   it('ignores stale getDetail and recalculate responses when switching lots mid-flight', async () => {

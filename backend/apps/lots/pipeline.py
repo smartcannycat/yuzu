@@ -1,9 +1,8 @@
 import logging
-import sys
-import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from pathlib import Path
 
 from django.conf import settings
@@ -24,16 +23,29 @@ from apps.core.exceptions import (
     ConflictProblemError,
     NotFoundProblemError,
 )
+from apps.core.redis_utils import get_redis_client
 from apps.lots.economics import (
     _missing_customs_inputs,
     _resolve_start_bid_jpy,
+    ensure_lot_baseline,
     recompute_lot_economics,
 )
+from apps.lots.integrations.aleado.service import AleadoCrossAuditService
+from apps.lots.integrations.currency.service import build_currency_service, to_customs_rates_input
 from apps.lots.integrations.drom.schemas import DromFetchError, DromMarketResult, DromSearchCriteria
 from apps.lots.integrations.farpost.service import save_repair_estimate
 from apps.lots.lifecycle import compute_lot_expires_at
-from apps.lots.models import Batch, BatchItem, Lot, MarketComparisonInfo, WiseCostLadder
+from apps.lots.media import attach_uploaded_sheet_media_from_item
+from apps.lots.models import (
+    Batch,
+    BatchItem,
+    CustomsCalculation,
+    Lot,
+    MarketComparisonInfo,
+    WiseCostLadder,
+)
 from apps.lots.queries import _build_lot_summary, _has_full_detail
+from apps.lots.safety import build_cross_audit_baseline, build_safety_checklist
 from apps.lots.schemas import (
     BatchCreateResponse,
     BatchItemStatus,
@@ -41,6 +53,7 @@ from apps.lots.schemas import (
     LotSummary,
     MascotState,
 )
+from apps.lots.scoring import compute_verdict
 from apps.users.models import User
 
 logger = logging.getLogger(__name__)
@@ -131,9 +144,9 @@ def _create_batch_items(
 
 
 def _schedule_batch_pipeline(batch_id: uuid.UUID) -> None:
-    transaction.on_commit(
-        lambda: threading.Thread(target=run_batch_pipeline, args=(batch_id,), daemon=True).start()
-    )
+    from apps.lots.tasks import process_batch_task
+
+    transaction.on_commit(lambda: process_batch_task.delay(str(batch_id)))
 
 
 @transaction.atomic
@@ -325,7 +338,31 @@ def _step_gatekeeper(item: BatchItem) -> bool:
     return True
 
 
-def _step_cross_audit(_item: BatchItem) -> bool:
+def _step_cross_audit(item: BatchItem) -> bool:
+    _advance_step(item, TaskStep.CROSS_AUDIT)
+    lot = item.lot
+    if lot is None:
+        _fail_item(item, TaskStep.FAILED, "Лот не привязан к элементу пачки")
+        return False
+    try:
+        # Real cross-audit through the Aleado catalog (BE-08). Any failure
+        # of the external source falls back to the honest sheet-based
+        # baseline so the step never fails because of a third party.
+        AleadoCrossAuditService().audit_lot(lot)
+    except Exception:
+        logger.exception("Aleado cross audit failed for item %s", item.pk)
+        try:
+            build_cross_audit_baseline(lot)
+        except Exception:
+            logger.exception("Cross audit baseline failed for item %s", item.pk)
+            _fail_item(item, TaskStep.FAILED, "Не удалось зафиксировать результаты кросс-аудита")
+            return False
+    try:
+        build_safety_checklist(lot)
+    except Exception:
+        logger.exception("Safety checklist failed for item %s", item.pk)
+        _fail_item(item, TaskStep.FAILED, "Не удалось построить чек-лист систем безопасности")
+        return False
     return True
 
 
@@ -404,15 +441,47 @@ def _step_farpost_parts(item: BatchItem) -> bool:
     return True
 
 
+def _ensure_lot_rates(lot: Lot) -> bool:
+    """Attach a currency rates snapshot to the lot via the BE-05 gateway.
+
+    The gateway resolves from cache first and falls back to the configured
+    demonstration rates when CBRF is unreachable, so a pipeline batch never
+    hard-fails on the rates input. Idempotent: keeps an existing snapshot.
+    """
+    if lot.customs_rates_input or (
+        CustomsCalculation.objects.filter(lot=lot, rates_snapshot__isnull=False).exists()
+    ):
+        return True
+    try:
+        result = build_currency_service().get_currency_rates()
+    except Exception:
+        logger.exception("Currency rates gateway failed for lot %s", lot.pk)
+        return False
+    lot.customs_rates_input = to_customs_rates_input(result)
+    lot.save(update_fields=["customs_rates_input", "updated_at"])
+    logger.info(
+        "Rates attached to lot %s: origin=%s cbrf_date=%s",
+        lot.pk,
+        result.origin.value,
+        result.cbrf_date,
+    )
+    return True
+
+
 def _step_customs_calc(item: BatchItem) -> bool:
     _advance_step(item, TaskStep.CUSTOMS_CALC)
     lot = item.lot
     if lot is None:
         _fail_item(item, TaskStep.FAILED, "Лот не привязан к элементу пачки")
         return False
+    lot.refresh_from_db()
+    if not _ensure_lot_rates(lot):
+        _fail_item(item, TaskStep.FAILED, "Не удалось получить курсы валют (шлюз ЦБ РФ)")
+        return False
     # Fill in the start bid (sheet -> auction history -> reverse calculation
     # from the Drom price) before checking the remaining inputs, so a new
-    # lot without an explicit bid still gets its economics built.
+    # lot without an explicit bid still gets its economics built. The
+    # reverse calculation needs the rates attached above.
     try:
         ladder = WiseCostLadder.objects.filter(lot=lot).first()
         bid_jpy = ladder.car_bid_jpy if ladder is not None else _resolve_start_bid_jpy(lot)
@@ -431,6 +500,10 @@ def _step_customs_calc(item: BatchItem) -> bool:
     try:
         recompute_lot_economics(lot, bid_jpy=bid_jpy)
         lot.refresh_from_db()
+        customs_model = CustomsCalculation.objects.filter(lot=lot).first()
+        ladder_model = WiseCostLadder.objects.filter(lot=lot).first()
+        if customs_model is not None and ladder_model is not None:
+            ensure_lot_baseline(lot, customs_model, ladder_model)
     except Exception:
         logger.exception("Customs recomputation failed for lot %s", lot.pk)
         _fail_item(item, TaskStep.FAILED, "Не удалось рассчитать таможные платежи")
@@ -440,6 +513,17 @@ def _step_customs_calc(item: BatchItem) -> bool:
 
 def _step_scoring(item: BatchItem) -> bool:
     _advance_step(item, TaskStep.SCORING)
+    lot = item.lot
+    if lot is None:
+        _fail_item(item, TaskStep.FAILED, "Лот не привязан к элементу пачки")
+        return False
+    lot.refresh_from_db()
+    try:
+        compute_verdict(lot)
+    except Exception:
+        logger.exception("Scoring failed for lot %s", lot.pk)
+        _fail_item(item, TaskStep.FAILED, "Не удалось рассчитать вердикт светофора")
+        return False
     return True
 
 
@@ -491,6 +575,7 @@ def _run_ocr_stage(item: BatchItem) -> bool:
         if not item.lot.make or not item.lot.model:
             _fail_item(item, TaskStep.FAILED, "Распознавание не вернуло марку и модель")
             return False
+        attach_uploaded_sheet_media_from_item(item)
         return True
     except Exception:
         logger.exception("Parser failed for batch item %s", item.pk)
@@ -593,19 +678,50 @@ def run_batch_pipeline(batch_id: uuid.UUID) -> None:
         connection.close()
 
 
-def recover_batches_on_startup() -> None:
-    """Requeue interrupted batches when the application server starts."""
-    if "pytest" in sys.modules:
-        return
+def recover_batches_on_startup(
+    *,
+    stale_before: datetime | None = None,
+    use_startup_lock: bool = True,
+) -> int:
+    """Requeue interrupted batches when a background worker starts or recovers."""
+    if use_startup_lock:
+        client = get_redis_client()
+        if client is not None:
+            try:
+                if not client.set("yuzu:recovery:startup_lock", "1", nx=True, ex=60):
+                    return 0
+            except Exception:
+                logger.warning("Could not acquire Redis startup recovery lock", exc_info=True)
+
     stuck_statuses = [BatchStatus.QUEUED, BatchStatus.PROCESSING]
     batches = Batch.objects.filter(status__in=stuck_statuses)
+    if stale_before is not None:
+        batches = batches.filter(updated_at__lte=stale_before)
+
+    from apps.lots.tasks import process_batch_task
+
+    requeued = 0
     for batch in batches:
-        BatchItem.objects.filter(
-            batch=batch,
-            status=ItemProcessingStatus.PROCESSING,
-        ).update(
-            status=ItemProcessingStatus.QUEUED,
-            current_step=TaskStep.GATEKEEPER,
-        )
-        Batch.objects.filter(id=batch.id).update(status=BatchStatus.QUEUED)
-        threading.Thread(target=run_batch_pipeline, args=(batch.id,), daemon=True).start()
+        with transaction.atomic():
+            locked = Batch.objects.select_for_update().filter(
+                id=batch.id,
+                status__in=stuck_statuses,
+            )
+            if stale_before is not None:
+                locked = locked.filter(updated_at__lte=stale_before)
+            target = locked.first()
+            if target is None:
+                continue
+            BatchItem.objects.filter(
+                batch=target,
+                status=ItemProcessingStatus.PROCESSING,
+            ).update(
+                status=ItemProcessingStatus.QUEUED,
+                current_step=TaskStep.GATEKEEPER,
+                updated_at=timezone.now(),
+            )
+            target.status = BatchStatus.QUEUED
+            target.save(update_fields=["status", "updated_at"])
+        process_batch_task.delay(str(batch.id))
+        requeued += 1
+    return requeued

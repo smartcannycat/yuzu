@@ -9,6 +9,15 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 app_settings = get_settings()
 LOT_PARSER_BACKEND = app_settings.LOT_PARSER_BACKEND
+ML_SERVICE_URL = app_settings.ML_SERVICE_URL
+ML_SERVICE_TIMEOUT_SEC = app_settings.ML_SERVICE_TIMEOUT_SEC
+ML_SERVICE_API_KEY = app_settings.ML_SERVICE_API_KEY
+ALEADO_BASE_URL = app_settings.ALEADO_BASE_URL
+ALEADO_USERNAME = app_settings.ALEADO_USERNAME
+ALEADO_PASSWORD = app_settings.ALEADO_PASSWORD
+ALEADO_TIMEOUT_SEC = app_settings.ALEADO_TIMEOUT_SEC
+ALEADO_REQUEST_INTERVAL_SEC = app_settings.ALEADO_REQUEST_INTERVAL_SEC
+ALEADO_VERIFY_CANDIDATES = app_settings.ALEADO_VERIFY_CANDIDATES
 
 SECRET_KEY = app_settings.SECRET_KEY
 DEBUG = app_settings.DEBUG
@@ -46,6 +55,7 @@ AUTH_USER_MODEL = "users.User"
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -146,9 +156,14 @@ MEDIA_ROOT = media_root_path if media_root_path.is_absolute() else BASE_DIR / me
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# CORS
+# CORS & CSRF
 CORS_ALLOWED_ORIGINS = app_settings.CORS_ALLOWED_ORIGINS
 CORS_ALLOW_ALL_ORIGINS = app_settings.CORS_ALLOW_ALL_ORIGINS
+CSRF_TRUSTED_ORIGINS = list(app_settings.CSRF_TRUSTED_ORIGINS) or [
+    origin
+    for origin in app_settings.CORS_ALLOWED_ORIGINS
+    if origin.startswith(("http://", "https://"))
+]
 
 # Production reverse-proxy and cookie hardening
 if app_settings.is_production:
@@ -167,3 +182,31 @@ NINJA_JWT = {
     "USER_ID_FIELD": "id",
     "USER_ID_CLAIM": "user_id",
 }
+
+# Redis, Celery & Rate Limiting
+REDIS_URL = app_settings.REDIS_URL or app_settings.CELERY_BROKER_URL
+CELERY_BROKER_URL = (
+    app_settings.CELERY_BROKER_URL or app_settings.REDIS_URL or "redis://127.0.0.1:6379/0"
+)
+CELERY_TASK_ALWAYS_EAGER = app_settings.CELERY_TASK_ALWAYS_EAGER or app_settings.is_testing
+CELERY_TASK_EAGER_PROPAGATES = True
+CELERY_TASK_ACKS_LATE = True
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+CELERY_TASK_IGNORE_RESULT = True
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_TIMEZONE = "UTC"
+CELERY_BEAT_SCHEDULE = {
+    "recover-stuck-batches": {
+        "task": "apps.lots.tasks.recover_stuck_batches_task",
+        "schedule": 300.0,
+    },
+    "purge-stale-media": {
+        "task": "apps.lots.tasks.purge_stale_media_task",
+        "schedule": 3600.0,
+    },
+}
+
+RATE_LIMIT_ENABLED = app_settings.RATE_LIMIT_ENABLED and not app_settings.is_testing
+MEDIA_PURGE_DELETED_AFTER_DAYS = app_settings.MEDIA_PURGE_DELETED_AFTER_DAYS
+MEDIA_PURGE_BATCH_ORIGINALS_AFTER_HOURS = app_settings.MEDIA_PURGE_BATCH_ORIGINALS_AFTER_HOURS

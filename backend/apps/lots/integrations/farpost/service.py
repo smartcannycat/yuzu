@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import re
+import threading
 import time
 from dataclasses import asdict, replace
 from datetime import timedelta
@@ -12,12 +13,15 @@ from pathlib import Path
 
 from django.db import transaction
 from django.utils import timezone
+from redis.exceptions import RedisError
 
 from apps.core.enums import ExternalCacheSource, WorkType
 from apps.core.models import ExternalCache
+from apps.core.redis_utils import get_redis_client
 from apps.lots.integrations.farpost.client import (
     FarpostClient,
     FarpostFetchError,
+    FarpostRateLimitedError,
     PartCriteria,
     PartOffer,
 )
@@ -26,6 +30,13 @@ from apps.lots.schemas import FarpostRepairSummary as RepairSchema
 from config.settings.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+_FARPOST_COOLDOWN_KEY = "yuzu:farpost:cooldown"
+_MODEL_TRIM_RE = re.compile(r"\b(?:hv|hybrid|phev|phv|e:hev|e-power|epower|4wd|awd|2wd)\b", re.I)
+_BODY_CODE_RE = re.compile(r"[A-Z]{1,5}\d{1,4}[A-Z]?")
+
+_cooldown_lock = threading.Lock()
+_local_cooldown_until = 0.0
 
 # Each panel has a single query identity; fixed panels require restoration instead.
 PANELS = {
@@ -89,6 +100,46 @@ def _read_offers(entry: ExternalCache | None) -> list[PartOffer] | None:
         return None
 
 
+def _is_rate_limit_cooldown_active() -> bool:
+    with _cooldown_lock:
+        if _local_cooldown_until > time.monotonic():
+            return True
+    redis_client = get_redis_client()
+    if redis_client is None:
+        return False
+    try:
+        return bool(redis_client.get(_FARPOST_COOLDOWN_KEY))
+    except RedisError as exc:
+        logger.debug("Redis cooldown check skipped: %s", exc)
+        return False
+
+
+def _activate_rate_limit_cooldown(cooldown_sec: int) -> None:
+    global _local_cooldown_until
+    if cooldown_sec <= 0:
+        return
+    with _cooldown_lock:
+        _local_cooldown_until = max(_local_cooldown_until, time.monotonic() + cooldown_sec)
+    redis_client = get_redis_client()
+    if redis_client is None:
+        return
+    try:
+        redis_client.set(_FARPOST_COOLDOWN_KEY, "1", ex=cooldown_sec)
+    except RedisError as exc:
+        logger.debug("Redis cooldown store skipped: %s", exc)
+
+
+def _stale_fallback(entry: ExternalCache | None) -> tuple[list[PartOffer], bool]:
+    previous = _read_offers(entry)
+    if (
+        previous
+        and entry is not None
+        and timedelta(0) <= timezone.now() - entry.updated_at <= timedelta(days=1)
+    ):
+        return previous, True
+    return [], True
+
+
 def search_cached(
     client: FarpostClient,
     criteria: PartCriteria,
@@ -96,6 +147,7 @@ def search_cached(
     deadline: float,
 ) -> tuple[list[PartOffer], bool]:
     """Keep successful offers separate from short-lived valid empty results."""
+    settings = get_settings()
     key = _cache_key(criteria)
     entry = ExternalCache.objects.filter(key=key, source=ExternalCacheSource.FARPOST).first()
     offers = _read_offers(entry)
@@ -104,21 +156,25 @@ def search_cached(
     empty = ExternalCache.objects.filter(key=key + ":empty").first()
     if empty is not None and not empty.is_expired:
         return [], False
+    if _is_rate_limit_cooldown_active():
+        logger.info("Farpost cooldown active; using fallback for %s", criteria.panel_id)
+        return _stale_fallback(entry)
     try:
         offers = client.search(criteria, deadline=deadline)
+    except FarpostRateLimitedError as exc:
+        logger.warning("Farpost rate limited on %s: %s", criteria.panel_id, exc)
+        _activate_rate_limit_cooldown(settings.FARPOST_COOLDOWN_SEC)
+        return _stale_fallback(entry)
     except FarpostFetchError as exc:
         logger.warning("Farpost search failed for %s: %s", criteria.panel_id, exc)
-        previous = _read_offers(entry)
-        if previous and timedelta(0) <= timezone.now() - entry.updated_at <= timedelta(days=1):
-            return previous, True
-        return [], True
+        return _stale_fallback(entry)
     if offers:
         ExternalCache.objects.update_or_create(
             key=key,
             defaults={
                 "source": ExternalCacheSource.FARPOST,
                 "payload": {"offers": [asdict(offer) for offer in offers]},
-                "expires_at": timezone.now() + timedelta(hours=1),
+                "expires_at": timezone.now() + timedelta(hours=settings.FARPOST_CACHE_TTL_HOURS),
             },
         )
         ExternalCache.objects.filter(key=key + ":empty").delete()
@@ -134,9 +190,25 @@ def search_cached(
     return offers, False
 
 
+def _search_model(model: str) -> str:
+    cleaned = re.sub(r"\s+", " ", _MODEL_TRIM_RE.sub(" ", model or "")).strip(" -+/")
+    return cleaned or (model or "").strip()
+
+
 def _body_code(lot: Lot) -> str:
-    for value in (lot.model_code, lot.chassis_number, lot.frame_id):
-        match = re.search(r"[A-Z]{2,5}\d{2,4}[A-Z]?", (value or "").upper())
+    # Prefer the raw frame/chassis series (e.g., GB5, GE6, NRE210) over full katashiki codes.
+    candidates: list[str] = []
+    for value in (lot.frame_id, lot.chassis_number):
+        upper = (value or "").upper().strip()
+        if upper:
+            candidates.append(upper.split("-", 1)[0])
+    if lot.model_code:
+        upper = lot.model_code.upper().strip()
+        if "-" in upper:
+            candidates.append(upper.split("-", 1)[1])
+        candidates.append(upper)
+    for candidate in candidates:
+        match = _BODY_CODE_RE.search(candidate)
         if match:
             return match[0]
     return ""
@@ -177,76 +249,90 @@ def _operations(codes: set[str], matrix: dict) -> dict[str, int]:
 
 def estimate_repair(lot: Lot, *, client: FarpostClient | None = None) -> RepairSchema:
     settings = get_settings()
-    client = client or FarpostClient(timeout_sec=settings.FARPOST_TIMEOUT_SEC)
+    managed = client is None
+    active_client = client or FarpostClient(
+        timeout_sec=settings.FARPOST_TIMEOUT_SEC,
+        request_interval_sec=settings.FARPOST_REQUEST_INTERVAL_SEC,
+    )
     deadline = time.monotonic() + settings.FARPOST_BUDGET_SEC
     matrix = repair_matrix()
     parts, works = [], []
     has_color_matched_parts = False
-    for panel, codes in sorted(_panel_codes(list(lot.defects.all())).items()):
-        name = FIXED_PANELS.get(panel, PANELS.get(panel, (panel,))[0])
-        is_replacement = bool(codes & {"X", "XX"})
-        if is_replacement and panel in FIXED_PANELS:
-            operations = {WorkType.BODYWORK: matrix["bodywork"]}
-        elif is_replacement and panel in PANELS:
-            _, part_name, side, position = PANELS[panel]
-            criteria = PartCriteria(
-                lot.make or "",
-                lot.model or "",
-                _body_code(lot),
-                panel,
-                part_name,
-                side,
-                position,
-                (lot.paint_code or "").strip().upper(),
-            )
-            offers, stale = [], False
-            if criteria.make and criteria.model and criteria.body_code:
-                offers, stale = search_cached(client, criteria, deadline=deadline)
-                if not offers and criteria.paint_code and not stale:
-                    criteria = replace(criteria, paint_code="")
-                    offers, stale = search_cached(client, criteria, deadline=deadline)
-            offer = min(offers, key=lambda item: item.price_rub) if offers else None
-            matched = bool(offer and offer.color_matched and not stale)
-            has_color_matched_parts |= matched
-            if offer and not stale:
-                subtitle = (
-                    f"Контрактная деталь в заводской цвет {lot.paint_code}"
-                    if matched
-                    else "Контрактная деталь; цвет не подтверждён, требуется окраска"
+    search_make = (lot.make or "").strip()
+    search_model = _search_model(lot.model or "")
+    body_code = _body_code(lot)
+    paint_code = (lot.paint_code or "").strip().upper()
+    if managed and hasattr(type(active_client), "__enter__"):
+        active_client.__enter__()
+    try:
+        for panel, codes in sorted(_panel_codes(list(lot.defects.all())).items()):
+            name = FIXED_PANELS.get(panel, PANELS.get(panel, (panel,))[0])
+            is_replacement = bool(codes & {"X", "XX"})
+            if is_replacement and panel in FIXED_PANELS:
+                operations = {WorkType.BODYWORK: matrix["bodywork"]}
+            elif is_replacement and panel in PANELS:
+                _, part_name, side, position = PANELS[panel]
+                criteria = PartCriteria(
+                    search_make,
+                    search_model,
+                    body_code,
+                    panel,
+                    part_name,
+                    side,
+                    position,
+                    paint_code,
                 )
-            elif offer:
-                subtitle = "Предварительная цена из кэша; наличие и цвет не подтверждены"
+                offers, stale = [], False
+                if criteria.make and criteria.model and criteria.body_code:
+                    offers, stale = search_cached(active_client, criteria, deadline=deadline)
+                    if not offers and criteria.paint_code and not stale:
+                        criteria = replace(criteria, paint_code="")
+                        offers, stale = search_cached(active_client, criteria, deadline=deadline)
+                offer = min(offers, key=lambda item: item.price_rub) if offers else None
+                matched = bool(offer and offer.color_matched and not stale)
+                has_color_matched_parts |= matched
+                if offer and not stale:
+                    subtitle = (
+                        f"Контрактная деталь в заводской цвет {lot.paint_code}"
+                        if matched
+                        else "Контрактная деталь; цвет не подтверждён, требуется окраска"
+                    )
+                elif offer:
+                    subtitle = "Предварительная цена из кэша; наличие и цвет не подтверждены"
+                else:
+                    subtitle = "Статистическая оценка; наличие и цвет не подтверждены"
+                parts.append(
+                    {
+                        "panel_id": panel,
+                        "defect_code": "XX" if "XX" in codes else "X",
+                        "part_name_ru": name,
+                        "subtitle_ru": subtitle,
+                        "price_from_rub": offer.price_rub
+                        if offer
+                        else matrix["parts"].get(panel, matrix["parts"]["default"]),
+                        "in_stock_vladivostok": bool(offer and not stale),
+                        "is_statistical_fallback": not bool(offer) or stale,
+                    }
+                )
+                operations = {WorkType.MOUNT_DISMOUNT: matrix["mount_dismount"]}
+                if panel != "windshield":
+                    operations[WorkType.PAINT] = 0 if matched else matrix["paint"]
             else:
-                subtitle = "Статистическая оценка; наличие и цвет не подтверждены"
-            parts.append(
-                {
-                    "panel_id": panel,
-                    "defect_code": "XX" if "XX" in codes else "X",
-                    "part_name_ru": name,
-                    "subtitle_ru": subtitle,
-                    "price_from_rub": offer.price_rub
-                    if offer
-                    else matrix["parts"].get(panel, matrix["parts"]["default"]),
-                    "in_stock_vladivostok": bool(offer and not stale),
-                    "is_statistical_fallback": not bool(offer) or stale,
-                }
-            )
-            operations = {WorkType.MOUNT_DISMOUNT: matrix["mount_dismount"]}
-            if panel != "windshield":
-                operations[WorkType.PAINT] = 0 if matched else matrix["paint"]
-        else:
-            operations = _operations(codes, matrix)
-        for kind, amount in operations.items():
-            works.append(
-                {
-                    "work_type": kind,
-                    "label_ru": f"{LABELS[kind]}: {name} (оценка по матрице)",
-                    "amount_rub": amount,
-                    "zero_cost_reason_ru": "не требуется"
-                    if kind == WorkType.PAINT and amount == 0
-                    else None,
-                }
-            )
+                operations = _operations(codes, matrix)
+            for kind, amount in operations.items():
+                works.append(
+                    {
+                        "work_type": kind,
+                        "label_ru": f"{LABELS[kind]}: {name} (оценка по матрице)",
+                        "amount_rub": amount,
+                        "zero_cost_reason_ru": "не требуется"
+                        if kind == WorkType.PAINT and amount == 0
+                        else None,
+                    }
+                )
+    finally:
+        if managed and hasattr(type(active_client), "__exit__"):
+            active_client.__exit__(None, None, None)
     total_parts = sum(part["price_from_rub"] for part in parts)
     total_works = sum(work["amount_rub"] for work in works)
     return RepairSchema(

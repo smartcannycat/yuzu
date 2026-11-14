@@ -368,6 +368,8 @@ export interface CustomsCalculation {
   effective_duty_pct: number | null
   customs_duty_eur: number
   customs_duty_rub: number
+  excise_rub: number
+  import_vat_rub: number
   is_under_160_hp: boolean | null
   is_commercial_util: boolean
   utilization_fee_rub: number
@@ -419,6 +421,7 @@ export interface EconomicsDetail {
   bid_slider_max_jpy: number
   bid_slider_step_jpy: number
   is_repairs_included: boolean
+  is_simulation_modified?: boolean
   customs: CustomsCalculation
   farpost_repair: FarpostRepairSummary
   wise_cost_ladder: WiseCostLadder
@@ -464,6 +467,7 @@ export interface RecalculateResponse {
   net_benefit_rub: number
   benefit_percentage: number
   verdict: TrafficLightVerdict
+  is_simulation_modified?: boolean
   pdf_report_stale: boolean
 }
 

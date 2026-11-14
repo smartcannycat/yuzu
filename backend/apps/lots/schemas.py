@@ -360,6 +360,9 @@ class EconomicsDetail(StrictBaseModel):
     is_repairs_included: bool = Field(
         True, description="Whether Farpost repair is included in turnkey cost"
     )
+    is_simulation_modified: bool = Field(
+        False, description="Whether persisted economics differ from initial baseline"
+    )
     customs: CustomsCalculation = Field(..., description="Customs and logistics calculation")
     farpost_repair: FarpostRepairSummary = Field(..., description="Parts and STO works estimate")
     wise_cost_ladder: WiseCostLadder = Field(..., description="Transparent cost ladder (Screen 6)")
@@ -477,6 +480,9 @@ class RecalculateResponse(StrictBaseModel):
     net_benefit_rub: int = Field(..., description="Updated net benefit")
     benefit_percentage: float = Field(..., description="Updated benefit percentage")
     verdict: TrafficLightVerdict = Field(..., description="Updated traffic light verdict")
+    is_simulation_modified: bool = Field(
+        False, description="Whether persisted economics differ from initial baseline"
+    )
     pdf_report_stale: bool = Field(True, description="Flag that PDF export needs simulation params")
 
 

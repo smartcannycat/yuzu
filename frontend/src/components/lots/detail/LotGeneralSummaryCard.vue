@@ -31,17 +31,17 @@ const roiFormatted = computed(() => formatRoiPercent(props.detail.verdict.benefi
 
 <template>
   <BaseCard variant="surface" padding="lg">
-    <div class="flex items-start justify-between gap-3">
-      <div>
+    <div class="flex flex-wrap items-start justify-between gap-2.5">
+      <div class="min-w-0">
         <div class="text-text-secondary text-[13px] font-medium">Себестоимость под ключ</div>
         <div
-          class="text-text-primary mt-1 text-[30px] leading-tight font-semibold tracking-[-0.02em] tabular-nums"
+          class="text-text-primary mt-1 text-[30px] leading-tight font-semibold tracking-[-0.02em] whitespace-nowrap tabular-nums"
         >
           {{ formatRub(turnkeyCostRub) }}
         </div>
       </div>
 
-      <BaseBadge :variant="badgeVariant">
+      <BaseBadge :variant="badgeVariant" wrap>
         {{ detail.verdict.badge_text }}
       </BaseBadge>
     </div>

@@ -70,3 +70,20 @@ def test_unexpected_exception_masks_detail_in_non_debug(api_client: Client) -> N
     problem = response.json()
     assert problem["status"] == 500
     assert "sensitive secret" not in problem["detail"]
+
+
+def test_admin_login_and_csrf_trusted_origins(api_client: Client) -> None:
+    from django.conf import settings
+
+    from config.settings.config import AppSettings
+
+    response = api_client.get("/admin/login/")
+    assert response.status_code == 200
+    assert "whitenoise.middleware.WhiteNoiseMiddleware" in settings.MIDDLEWARE
+
+    derived = AppSettings(CORS_ALLOWED_ORIGINS="https://yuzu.nlzr.net,http://localhost:5173")
+    assert derived.CSRF_TRUSTED_ORIGINS == []
+    assert [o for o in derived.CORS_ALLOWED_ORIGINS if o.startswith(("http://", "https://"))] == [
+        "https://yuzu.nlzr.net",
+        "http://localhost:5173",
+    ]

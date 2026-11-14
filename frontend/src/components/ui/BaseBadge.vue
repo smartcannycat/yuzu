@@ -7,11 +7,13 @@ export type BadgeSize = 'sm' | 'md'
 interface Props {
   variant?: BadgeVariant
   size?: BadgeSize
+  wrap?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
   variant: 'neutral',
   size: 'md',
+  wrap: false,
 })
 
 const VARIANT_CLASSES: Record<BadgeVariant, string> = {
@@ -33,8 +35,14 @@ const sizeClasses = computed(() => SIZE_CLASSES[props.size])
 
 <template>
   <span
-    class="inline-flex items-center rounded-full border-0 leading-none font-medium tracking-[0.01em] whitespace-nowrap [&_svg]:shrink-0 [&_svg]:fill-none [&_svg]:stroke-current"
-    :class="[variantClasses, sizeClasses]"
+    class="inline-flex items-center rounded-full border-0 font-medium tracking-[0.01em] [&_svg]:shrink-0 [&_svg]:fill-none [&_svg]:stroke-current"
+    :class="[
+      variantClasses,
+      sizeClasses,
+      wrap
+        ? 'max-w-full text-left leading-snug whitespace-normal'
+        : 'leading-none whitespace-nowrap',
+    ]"
   >
     <slot name="icon" />
     <span>

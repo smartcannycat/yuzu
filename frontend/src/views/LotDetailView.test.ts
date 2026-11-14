@@ -176,6 +176,7 @@ describe('LotDetailView (Screens 4, 5, 6)', () => {
       b.textContent?.includes('Сбросить ставку'),
     )
     resetButton?.click()
+    await vi.advanceTimersByTimeAsync(250)
     await flushUi()
 
     expect(lotsStore.isSimulationModified).toBe(false)

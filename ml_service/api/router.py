@@ -13,6 +13,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ml_service.api.dependencies import (
     get_batch_service_dep,
+    get_chassis_ocr_client_dep,
     get_key_pool_dep,
     get_parser_service_dep,
     get_settings_dep,
@@ -22,6 +23,7 @@ from ml_service.api.dependencies import (
 from ml_service.api.schemas import (
     BatchCreateResponse,
     BatchProgressResponse,
+    ChassisOcrResponse,
     HealthResponse,
     InvalidParamDetail,
     ParserResponse,
@@ -157,6 +159,29 @@ async def health_check(
         status="ok",
         keys_configured=key_pool.key_count,
         reference_year=settings.reference_year,
+    )
+
+
+@router.post("/api/v1/chassis/read", response_model=ChassisOcrResponse, tags=["chassis"])
+async def read_chassis_number(
+    file: UploadFile = File(...),
+    chassis_client=Depends(get_chassis_ocr_client_dep),
+    settings: Settings = Depends(get_settings_dep),
+) -> ChassisOcrResponse:
+    """Read the chassis/frame number printed in an uploaded chassis image."""
+    mime = (file.content_type or "").split(";")[0].strip().lower()
+    if mime not in {"image/jpeg", "image/jpg", "image/png"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported Content-Type '{mime}' for chassis image. Allowed: image/jpeg, image/png.",
+        )
+    payload = await _read_upload_bounded(file, settings.max_image_bytes)
+    entity = await chassis_client.read_chassis_number(payload, mime_type="image/jpeg" if mime != "image/png" else "image/png")
+    return ChassisOcrResponse(
+        frame_id=entity.frame_id,
+        raw=entity.raw,
+        confidence=entity.confidence,
+        cached=entity.cached,
     )
 
 

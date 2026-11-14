@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { computed, ref, toRaw } from 'vue'
+import { computed, ref } from 'vue'
 
 import { apiClient } from '@/api'
 import type { ApiClient } from '@/api/types'
@@ -22,6 +22,10 @@ import {
 
 const DEFAULT_PAGE_SIZE = 20
 const BULK_DELETE_CHUNK_SIZE = 100
+
+function cloneLotDetail(detail: LotDetailResponse): LotDetailResponse {
+  return JSON.parse(JSON.stringify(detail)) as LotDetailResponse
+}
 
 function createEmptyInProgress(): InProgressSummary {
   return {
@@ -89,6 +93,9 @@ export const useLotsStore = defineStore('lots', () => {
   const isSimulationModified = computed(() => {
     const current = currentLotDetail.value
     if (!current) return false
+    if (typeof current.economics.is_simulation_modified === 'boolean') {
+      return current.economics.is_simulation_modified
+    }
     const baseline = baselineLotDetailsById.value[current.lot_id]
     if (!baseline) return false
 
@@ -253,7 +260,7 @@ export const useLotsStore = defineStore('lots', () => {
       const response = await client.lots.getDetail(lotId)
       if (requestId !== latestDetailRequestId) return null
 
-      baselineLotDetailsById.value[lotId] = structuredClone(toRaw(response))
+      baselineLotDetailsById.value[lotId] = cloneLotDetail(response)
       currentLotDetail.value = response
       return response
     } catch (error: unknown) {
@@ -273,33 +280,59 @@ export const useLotsStore = defineStore('lots', () => {
     }
   }
 
-  async function recalculateLot(
+  function applyRecalculateToState(
     lotId: string,
-    payload: RecalculateRequest,
-    client: ApiClient = apiClient,
-  ): Promise<RecalculateResponse | null> {
-    const requestId = ++latestRecalcRequestId
-    isRecalculating.value = true
-    recalculateError.value = null
-
-    try {
-      const response = await client.lots.recalculate(lotId, payload)
-      if (requestId !== latestRecalcRequestId || currentLotDetail.value?.lot_id !== lotId) {
-        return null
-      }
-
-      currentLotDetail.value = {
+    response: RecalculateResponse,
+    options: { resetBaseline: boolean },
+  ): void {
+    if (currentLotDetail.value?.lot_id === lotId) {
+      const updatedDetail: LotDetailResponse = {
         ...currentLotDetail.value,
         updated_at: response.recalculated_at,
         verdict: response.verdict,
         economics: {
           ...currentLotDetail.value.economics,
           is_repairs_included: response.include_repairs,
+          is_simulation_modified: options.resetBaseline ? false : response.is_simulation_modified,
           customs: response.customs,
           wise_cost_ladder: response.wise_cost_ladder,
         },
       }
+      currentLotDetail.value = updatedDetail
+      if (options.resetBaseline) {
+        baselineLotDetailsById.value[lotId] = cloneLotDetail(updatedDetail)
+      }
+    }
 
+    items.value = items.value.map((item) =>
+      item.lot_id === lotId
+        ? {
+            ...item,
+            turnkey_cost_rub: response.turnkey_cost_rub,
+            net_benefit_rub: response.net_benefit_rub,
+            verdict: response.verdict.verdict,
+            verdict_headline: response.verdict.short_verdict_label,
+          }
+        : item,
+    )
+  }
+
+  async function runEconomicsMutation(
+    lotId: string,
+    execute: () => Promise<RecalculateResponse>,
+    fallbackError: string,
+    options: { resetBaseline: boolean },
+  ): Promise<RecalculateResponse | null> {
+    const requestId = ++latestRecalcRequestId
+    isRecalculating.value = true
+    recalculateError.value = null
+
+    try {
+      const response = await execute()
+      if (requestId !== latestRecalcRequestId || currentLotDetail.value?.lot_id !== lotId) {
+        return null
+      }
+      applyRecalculateToState(lotId, response, options)
       return response
     } catch (error: unknown) {
       if (requestId !== latestRecalcRequestId || currentLotDetail.value?.lot_id !== lotId) {
@@ -310,7 +343,7 @@ export const useLotsStore = defineStore('lots', () => {
           ? error.detail
           : error instanceof Error
             ? error.message
-            : 'Не удалось пересчитать экономику лота.'
+            : fallbackError
       return null
     } finally {
       if (requestId === latestRecalcRequestId) {
@@ -319,14 +352,29 @@ export const useLotsStore = defineStore('lots', () => {
     }
   }
 
-  function resetLotSimulation(lotId: string): void {
-    latestRecalcRequestId += 1
-    isRecalculating.value = false
-    recalculateError.value = null
-    const baseline = baselineLotDetailsById.value[lotId]
-    if (baseline) {
-      currentLotDetail.value = structuredClone(toRaw(baseline))
-    }
+  async function recalculateLot(
+    lotId: string,
+    payload: RecalculateRequest,
+    client: ApiClient = apiClient,
+  ): Promise<RecalculateResponse | null> {
+    return runEconomicsMutation(
+      lotId,
+      () => client.lots.recalculate(lotId, payload),
+      'Не удалось пересчитать экономику лота.',
+      { resetBaseline: false },
+    )
+  }
+
+  async function resetLotSimulation(
+    lotId: string,
+    client: ApiClient = apiClient,
+  ): Promise<RecalculateResponse | null> {
+    return runEconomicsMutation(
+      lotId,
+      () => client.lots.resetSimulation(lotId),
+      'Не удалось сбросить параметры симуляции.',
+      { resetBaseline: true },
+    )
   }
 
   function applyLifecycleToDetail(

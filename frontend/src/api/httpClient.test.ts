@@ -345,6 +345,48 @@ describe('httpClient (ofetch)', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
+  it('calls POST /lots/:id/recalculate/reset for resetSimulation', async () => {
+    tokenStorage.setFromAuthResponse({
+      access_token: 'access-reset',
+      refresh_token: 'refresh-reset',
+      token_type: 'bearer',
+      expires_in_sec: 3600,
+      user: sampleUser,
+    })
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(extractUrl(input)).toBe('/api/v1/lots/lot-uuid-1/recalculate/reset')
+      expect(init?.method).toBe('POST')
+      expect(extractAuthHeader(input, init)).toBe('Bearer access-reset')
+      return jsonResponse(
+        {
+          lot_id: 'lot-uuid-1',
+          recalculated_at: '2026-11-14T00:00:00Z',
+          applied_bid_jpy: 790_000,
+          applied_bid_rub: 462_150,
+          is_commercial_util: false,
+          include_repairs: true,
+          customs: {},
+          wise_cost_ladder: {},
+          turnkey_cost_rub: 1_104_899,
+          market_price_rf_rub: 1_520_000,
+          net_benefit_rub: 415_101,
+          benefit_percentage: 37.6,
+          verdict: {},
+          is_simulation_modified: false,
+          pdf_report_stale: false,
+        },
+        200,
+      )
+    })
+
+    const client = createHttpApiClient({ fetch: fetchMock })
+    const res = await client.lots.resetSimulation('lot-uuid-1')
+    expect(res.is_simulation_modified).toBe(false)
+    expect(res.pdf_report_stale).toBe(false)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('sends multipart FormData for createBatch and appendBatchItems and polls batch status', async () => {
     tokenStorage.setFromAuthResponse({
       access_token: 'access-batch',

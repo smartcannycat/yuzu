@@ -1,5 +1,6 @@
 import math
 from datetime import date
+from typing import Any
 
 from django.db import transaction
 from django.utils import timezone
@@ -26,15 +27,14 @@ from apps.lots.models import (
     WiseCostLadder,
     WiseCostStep,
 )
-from apps.lots.starter_lots import _COROLLA_FIXTURE
+
+_LEGACY_COROLLA_FRAME_ID = "NRE210-2005418"
 
 
 def _resolve_calculation_date(lot: Lot, on_date: date | None) -> date:
     if on_date is not None:
         return on_date
-    if lot.frame_id == _COROLLA_FIXTURE["lot_fields"]["frame_id"] and not hasattr(
-        lot, "batch_item"
-    ):
+    if lot.frame_id == _LEGACY_COROLLA_FRAME_ID and not hasattr(lot, "batch_item"):
         # TODO(BE-05/BE-11): benchmark freeze. The canonical Corolla
         # fixture pins the declaration date so the seeded lot keeps
         # reproducing the "3-5 years" corridor of the API contract
@@ -321,3 +321,56 @@ def _missing_customs_inputs(lot: Lot, bid_jpy: int | None) -> list[str]:
     if not lot.customs_rates_input and (customs is None or not hasattr(customs, "rates_snapshot")):
         missing.append("снимок курсов валют (шлюз ЦБ РФ)")
     return missing
+
+
+def build_baseline_snapshot(
+    lot: Lot,
+    customs_model: CustomsCalculation,
+    ladder: WiseCostLadder,
+) -> dict[str, Any]:
+    """Build an immutable JSON snapshot of the lot's initial economics parameters."""
+    return {
+        "bid_jpy": int(lot.auction_bid_jpy or ladder.car_bid_jpy),
+        "is_commercial_util": bool(customs_model.util_mode_selected_commercial),
+        "include_repairs": bool(lot.is_repairs_included),
+        "power_hp": lot.power_hp,
+        "power_hp_source": lot.power_hp_source,
+        "freight_rub": int(customs_model.freight_vladivostok_rub),
+    }
+
+
+def ensure_lot_baseline(
+    lot: Lot,
+    customs_model: CustomsCalculation,
+    ladder: WiseCostLadder,
+) -> dict[str, Any]:
+    """Persist ``baseline_economics`` on ``lot`` if not captured yet and return it."""
+    if isinstance(lot.baseline_economics, dict) and "bid_jpy" in lot.baseline_economics:
+        return dict(lot.baseline_economics)
+    snapshot = build_baseline_snapshot(lot, customs_model, ladder)
+    lot.baseline_economics = snapshot
+    lot.save(update_fields=["baseline_economics", "updated_at"])
+    return snapshot
+
+
+def is_simulation_modified(
+    lot: Lot,
+    customs_model: CustomsCalculation,
+    ladder: WiseCostLadder,
+) -> bool:
+    """Return True when the current persisted simulation differs from baseline."""
+    base = lot.baseline_economics
+    if not isinstance(base, dict) or "bid_jpy" not in base:
+        return False
+    freight_base = base.get("freight_rub")
+    return (
+        int(ladder.car_bid_jpy) != int(base["bid_jpy"])
+        or bool(customs_model.util_mode_selected_commercial)
+        != bool(base.get("is_commercial_util", False))
+        or bool(lot.is_repairs_included) != bool(base.get("include_repairs", True))
+        or lot.power_hp != base.get("power_hp")
+        or (
+            freight_base is not None
+            and int(customs_model.freight_vladivostok_rub) != int(freight_base)
+        )
+    )

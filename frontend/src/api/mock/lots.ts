@@ -204,6 +204,7 @@ export function queryMockLots(
 export function createMockLotsApi(defaultDelay: number, persistState = false): LotsApi {
   const workspace = createMockLotsWorkspace({ persistState })
   const detailCache = new Map<string, LotDetailResponse>()
+  const baselineCache = new Map<string, LotDetailResponse>()
 
   function syncDetailLifecycle(detail: LotDetailResponse, summary: LotSummary): LotDetailResponse {
     return {
@@ -240,8 +241,37 @@ export function createMockLotsApi(defaultDelay: number, persistState = false): L
     }
 
     const detail = buildMockLotDetail(summary)
+    baselineCache.set(lotId, structuredClone(detail))
     detailCache.set(lotId, detail)
     return detail
+  }
+
+  function isModifiedAgainstBaseline(
+    baseline: LotDetailResponse,
+    response: RecalculateResponse,
+  ): boolean {
+    return (
+      response.applied_bid_jpy !== baseline.economics.wise_cost_ladder.car_bid_jpy ||
+      response.is_commercial_util !== baseline.economics.customs.is_commercial_util ||
+      response.include_repairs !== baseline.economics.is_repairs_included ||
+      response.customs.freight_vladivostok_rub !==
+        baseline.economics.customs.freight_vladivostok_rub
+    )
+  }
+
+  function persistMockDetail(current: LotDetailResponse, response: RecalculateResponse): void {
+    detailCache.set(current.lot_id, {
+      ...current,
+      updated_at: response.recalculated_at,
+      verdict: response.verdict,
+      economics: {
+        ...current.economics,
+        is_repairs_included: response.include_repairs,
+        is_simulation_modified: response.is_simulation_modified ?? false,
+        customs: response.customs,
+        wise_cost_ladder: response.wise_cost_ladder,
+      },
+    })
   }
 
   return {
@@ -258,8 +288,40 @@ export function createMockLotsApi(defaultDelay: number, persistState = false): L
 
     async recalculate(lotId: string, payload: RecalculateRequest): Promise<RecalculateResponse> {
       await delay(Math.min(defaultDelay, 120))
-      const base = resolveLotDetail(lotId)
-      return recalculateMockLotDetail(base, payload)
+      const current = resolveLotDetail(lotId)
+      const baseline = baselineCache.get(lotId) ?? current
+      const raw = recalculateMockLotDetail(current, payload)
+      const response: RecalculateResponse = {
+        ...raw,
+        is_simulation_modified: isModifiedAgainstBaseline(baseline, raw),
+      }
+      persistMockDetail(current, response)
+      return response
+    },
+
+    async resetSimulation(lotId: string): Promise<RecalculateResponse> {
+      await delay(Math.min(defaultDelay, 120))
+      const current = resolveLotDetail(lotId)
+      const baseline = structuredClone(baselineCache.get(lotId) ?? current)
+      detailCache.set(lotId, structuredClone(baseline))
+      const ladder = baseline.economics.wise_cost_ladder
+      return {
+        lot_id: baseline.lot_id,
+        recalculated_at: new Date().toISOString(),
+        applied_bid_jpy: ladder.car_bid_jpy,
+        applied_bid_rub: ladder.car_bid_rub,
+        is_commercial_util: baseline.economics.customs.is_commercial_util,
+        include_repairs: baseline.economics.is_repairs_included,
+        customs: baseline.economics.customs,
+        wise_cost_ladder: ladder,
+        turnkey_cost_rub: ladder.turnkey_cost_rub,
+        market_price_rf_rub: ladder.market_price_rf_rub,
+        net_benefit_rub: ladder.net_benefit_rub,
+        benefit_percentage: ladder.benefit_percentage,
+        verdict: baseline.verdict,
+        is_simulation_modified: false,
+        pdf_report_stale: false,
+      }
     },
 
     async updateLifecycle(lotId: string, payload: LotLifecyclePatchRequest): Promise<LotSummary> {
@@ -279,6 +341,7 @@ export function createMockLotsApi(defaultDelay: number, persistState = false): L
       await delay(Math.min(defaultDelay, 120))
       workspace.deleteLot(lotId)
       detailCache.delete(lotId)
+      baselineCache.delete(lotId)
     },
 
     async bulkDeleteLots(payload: LotBulkDeleteRequest): Promise<LotBulkDeleteResponse> {
@@ -286,6 +349,7 @@ export function createMockLotsApi(defaultDelay: number, persistState = false): L
       const result = workspace.bulkDeleteLots(payload.lot_ids)
       for (const deletedId of result.deleted_ids) {
         detailCache.delete(deletedId)
+        baselineCache.delete(deletedId)
       }
       return result
     },

@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yuzu-ml-service"
+version = "0.1.0"
+description = "FastAPI microservice for Japanese auction sheet OCR and normalization"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "google-genai>=1.0.0",
+    "httpx>=0.28.0",
+    "pillow>=11.0.0",
+    "pillow-heif>=0.20.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.7.0",
+    "python-dotenv>=1.0.0",
+    "python-multipart>=0.0.18",
+    "uvicorn[standard]>=0.34.0",
+]
+
+[tool.setuptools]
+package-dir = { "ml_service" = "." }
+packages = [
+    "ml_service",
+    "ml_service.api",
+    "ml_service.domains",
+    "ml_service.factories",
+    "ml_service.infrastructure",
+    "ml_service.services",
+]

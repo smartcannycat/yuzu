@@ -12,9 +12,17 @@ from django.utils import timezone
 from apps.core.enums import ExternalCacheSource, FuelType, ItemProcessingStatus, WorkType
 from apps.core.models import ExternalCache
 from apps.lots import pipeline
-from apps.lots.integrations.farpost.client import FarpostFetchError, PartCriteria, PartOffer
+from apps.lots.integrations.farpost import service as farpost_service
+from apps.lots.integrations.farpost.client import (
+    FarpostFetchError,
+    FarpostRateLimitedError,
+    PartCriteria,
+    PartOffer,
+)
 from apps.lots.integrations.farpost.service import (
+    _body_code,
     _cache_key,
+    _search_model,
     estimate_repair,
     save_repair_estimate,
     search_cached,
@@ -28,6 +36,12 @@ CRITERIA = PartCriteria(
 OFFER = PartOffer(
     "123", "https://www.farpost.ru/vladivostok/zapchasti/door-123.html", "Дверь", 18000, True
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_farpost_cooldown(monkeypatch):
+    monkeypatch.setattr(farpost_service, "_local_cooldown_until", 0.0)
+    monkeypatch.setattr(farpost_service, "get_redis_client", lambda: None)
 
 
 @pytest.fixture
@@ -156,7 +170,7 @@ def test_cache_ttl_negative_marker_and_stale_age():
     assert search_cached(source(error=True), CRITERIA, deadline=deadline) == ([OFFER], False)
     key = _cache_key(CRITERIA)
     entry = ExternalCache.objects.get(key=key)
-    assert timedelta(minutes=59) < entry.expires_at - timezone.now() <= timedelta(hours=1)
+    assert timedelta(hours=5, minutes=59) < entry.expires_at - timezone.now() <= timedelta(hours=6)
     ExternalCache.objects.filter(key=key).update(expires_at=timezone.now() - timedelta(seconds=1))
     assert search_cached(source([]), CRITERIA, deadline=deadline) == ([], False)
     assert ExternalCache.objects.get(key=key).payload["offers"][0]["price_rub"] == 18000
@@ -282,7 +296,7 @@ def test_existing_detail_endpoint_exposes_saved_estimate(user_factory, api_clien
 
     user = user_factory()
     seed_starter_lots(user)
-    vehicle = Lot.objects.get(user=user, make="Toyota")
+    vehicle = Lot.objects.get(user=user, frame_id="GB5-3179736")
     save_repair_estimate(vehicle, client=source(error=True))
     token = str(RefreshToken.for_user(user).access_token)
     response = api_client.get(f"/api/v1/lots/{vehicle.pk}", HTTP_AUTHORIZATION=f"Bearer {token}")
@@ -303,7 +317,7 @@ def test_existing_economics_includes_saved_repair_exactly_once(user_factory):
 
     user = user_factory()
     seed_starter_lots(user)
-    vehicle = Lot.objects.get(user=user, make="Toyota")
+    vehicle = Lot.objects.get(user=user, frame_id="GB5-3179736")
     summary = save_repair_estimate(vehicle, client=source(error=True))
     recompute_lot_economics(vehicle, include_repairs=False)
     vehicle.refresh_from_db()
@@ -331,3 +345,50 @@ def test_ml_compound_defects_shared_raw_code_do_not_duplicate_work(lot):
     assert len(result.service_works) == 1
     assert result.total_works_rub == 10000
     client.search.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_body_code_and_model_normalization_support_single_digit_jdm_series(user_factory):
+    freed = Lot.objects.create(
+        user=user_factory(),
+        make="Honda",
+        model="Freed Hybrid",
+        model_code="6BA-GB5",
+        frame_id="GB5-3179736",
+        paint_code="NH883P",
+        fuel_type=FuelType.HYBRID,
+    )
+    assert _body_code(freed) == "GB5"
+    assert _search_model(freed.model) == "Freed"
+    fit = Lot(make="Honda", model="Fit", model_code="DBA-GE6", frame_id="")
+    assert _body_code(fit) == "GE6"
+    corolla = Lot(make="Toyota", model="Corolla", model_code="3BA-NRE210W", frame_id="")
+    assert _body_code(corolla) == "NRE210W"
+
+
+@pytest.mark.django_db
+def test_validated_per_panel_fallback_prices(lot):
+    defect(lot, "X", "windshield")
+    defect(lot, "X", "front_left_fender")
+    defect(lot, "X", "front_bumper")
+    result = estimate_repair(lot, client=source([]))
+    by_panel = {item.panel_id: item.price_from_rub for item in result.parts}
+    assert by_panel == {
+        "windshield": 7500,
+        "front_left_fender": 12000,
+        "front_bumper": 16000,
+    }
+
+
+@pytest.mark.django_db
+def test_rate_limit_cooldown_stops_remaining_panel_requests(lot, monkeypatch):
+    monkeypatch.setattr(farpost_service, "_local_cooldown_until", 0.0)
+    monkeypatch.setattr(farpost_service, "get_redis_client", lambda: None)
+    defect(lot, "X", "front_left_door")
+    defect(lot, "X", "front_right_door")
+    client = Mock()
+    client.search.side_effect = FarpostRateLimitedError("verify redirect")
+    result = estimate_repair(lot, client=client)
+    assert client.search.call_count == 1
+    assert len(result.parts) == 2
+    assert all(p.is_statistical_fallback for p in result.parts)

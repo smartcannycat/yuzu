@@ -43,7 +43,7 @@ USER appuser
 EXPOSE 8000
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["granian", "--interface", "asginl", "config.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["granian", "--interface", "asginl", "config.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-paths", "/app/apps", "--reload-paths", "/app/config"]
 
 # ==========================================
 # Stage 3: Production builder (without dev deps)

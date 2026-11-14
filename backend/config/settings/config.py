@@ -30,6 +30,7 @@ class AppSettings(BaseSettings):
         "http://127.0.0.1:3000",
     ]
     CORS_ALLOW_ALL_ORIGINS: bool = False
+    CSRF_TRUSTED_ORIGINS: list[str] | str = []
 
     # Database Settings (PostgreSQL is the default for dev, test, and prod)
     USE_SQLITE: bool = False
@@ -53,17 +54,37 @@ class AppSettings(BaseSettings):
     # External Services
     ML_SERVICE_URL: str = "http://127.0.0.1:8001"
     ML_SERVICE_TIMEOUT_SEC: float = 30.0
+    ML_SERVICE_API_KEY: str = ""
     CBRF_API_URL: str = "https://www.cbr-xml-daily.ru/daily_json.js"
     HTTP_CLIENT_TIMEOUT_SEC: float = 10.0
-    FARPOST_TIMEOUT_SEC: float = Field(default=5.0, gt=0, allow_inf_nan=False)
-    FARPOST_BUDGET_SEC: float = Field(default=20.0, gt=0, allow_inf_nan=False)
+    FARPOST_TIMEOUT_SEC: float = Field(default=8.0, gt=0, allow_inf_nan=False)
+    FARPOST_BUDGET_SEC: float = Field(default=30.0, gt=0, allow_inf_nan=False)
+    FARPOST_REQUEST_INTERVAL_SEC: float = Field(default=1.5, ge=0, allow_inf_nan=False)
+    FARPOST_COOLDOWN_SEC: int = Field(default=180, ge=0)
+    FARPOST_CACHE_TTL_HOURS: int = Field(default=6, ge=1)
 
     # CBRF currency gateway (BE-05)
     CBRF_TIMEOUT_SEC: float = Field(default=5.0, gt=0, allow_inf_nan=False)
     CBRF_JPY_SPREAD: float = Field(default=0.03, ge=0, allow_inf_nan=False)
     CBRF_FALLBACK_RATES: dict[str, str | float] | None = None
 
-    @field_validator("ALLOWED_HOSTS", "CORS_ALLOWED_ORIGINS")
+    # Aleado cross-audit gateway (BE-08)
+    ALEADO_BASE_URL: str = "https://auc.aleado.com"
+    ALEADO_USERNAME: str = ""
+    ALEADO_PASSWORD: str = ""
+    ALEADO_TIMEOUT_SEC: float = Field(default=20.0, gt=0, allow_inf_nan=False)
+    ALEADO_REQUEST_INTERVAL_SEC: float = Field(default=1.0, gt=0, allow_inf_nan=False)
+    ALEADO_VERIFY_CANDIDATES: int = Field(default=10, ge=0, le=50)
+
+    # Redis / Celery worker, rate limiting & media retention
+    REDIS_URL: str = ""
+    CELERY_BROKER_URL: str = ""
+    CELERY_TASK_ALWAYS_EAGER: bool = False
+    RATE_LIMIT_ENABLED: bool = True
+    MEDIA_PURGE_DELETED_AFTER_DAYS: int = Field(default=7, ge=0)
+    MEDIA_PURGE_BATCH_ORIGINALS_AFTER_HOURS: int = Field(default=24, ge=0)
+
+    @field_validator("ALLOWED_HOSTS", "CORS_ALLOWED_ORIGINS", "CSRF_TRUSTED_ORIGINS")
     @classmethod
     def parse_comma_separated_list(cls, value: list[str] | str) -> list[str]:
         if isinstance(value, str):

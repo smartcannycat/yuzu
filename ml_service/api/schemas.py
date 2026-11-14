@@ -50,6 +50,15 @@ class HealthResponse(StrictBaseModel):
     reference_year: int
 
 
+class ChassisOcrResponse(StrictBaseModel):
+    """Chassis number read from a small chassis-number image."""
+
+    frame_id: str | None = None
+    raw: str | None = None
+    confidence: Literal["high", "medium", "low"] = "low"
+    cached: bool = False
+
+
 class DefectResponse(StrictBaseModel):
     """Normalized body panel defect entry."""
 
