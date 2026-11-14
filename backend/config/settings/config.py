@@ -30,6 +30,7 @@ class AppSettings(BaseSettings):
         "http://127.0.0.1:3000",
     ]
     CORS_ALLOW_ALL_ORIGINS: bool = False
+    CSRF_TRUSTED_ORIGINS: list[str] | str = []
 
     # Database Settings (PostgreSQL is the default for dev, test, and prod)
     USE_SQLITE: bool = False
@@ -83,7 +84,7 @@ class AppSettings(BaseSettings):
     MEDIA_PURGE_DELETED_AFTER_DAYS: int = Field(default=7, ge=0)
     MEDIA_PURGE_BATCH_ORIGINALS_AFTER_HOURS: int = Field(default=24, ge=0)
 
-    @field_validator("ALLOWED_HOSTS", "CORS_ALLOWED_ORIGINS")
+    @field_validator("ALLOWED_HOSTS", "CORS_ALLOWED_ORIGINS", "CSRF_TRUSTED_ORIGINS")
     @classmethod
     def parse_comma_separated_list(cls, value: list[str] | str) -> list[str]:
         if isinstance(value, str):

@@ -1,0 +1,1348 @@
+{
+  "vezel_rv3": {
+    "scan_file": "vezel_rv3_scan.jpg",
+    "thumb_file": "vezel_rv3_thumb.jpg",
+    "lot_fields": {
+      "lot_number": "55009",
+      "auction_house": "MIRIVE",
+      "auction_branch": "埼玉",
+      "auction_date": null,
+      "auction_strictness_index": 0.7,
+      "make": "Honda",
+      "model": "Vezel",
+      "trim": "G",
+      "model_code": "6BA-RV3",
+      "chassis_number": "RV3-1005521",
+      "frame_id": "RV3-1005521",
+      "frame_id_confidence": "exact",
+      "year": 2022,
+      "first_reg_year": 2022,
+      "first_reg_month": 2,
+      "first_reg_date_str": "02.2022 (Возраст 4 года 9 мес.)",
+      "is_pass_corridor_3_5": true,
+      "engine_cc": 1500,
+      "power_hp": 118,
+      "power_hp_source": "drom_catalog",
+      "is_under_160_hp": true,
+      "mileage_km": 56410,
+      "odometer_status": "confirmed",
+      "transmission": "АКПП",
+      "drive_type": null,
+      "fuel_type": "gasoline",
+      "color_ru": "винный",
+      "paint_code": "R565M",
+      "overall_grade": "4",
+      "exterior_grade": "C",
+      "interior_grade": "B",
+      "shaken_until": null,
+      "recycling_fee_yen": 11740,
+      "recycling_fee_paid": true,
+      "equipment_ru": [
+        "гидроусилитель руля",
+        "электростеклоподъемники",
+        "литые диски",
+        "подушка безопасности",
+        "ABS"
+      ],
+      "inspector_notes_ru": [
+        "лобовое стекло: скол, царапина, трещина, следы ремонта, требуется замена",
+        "салон: царапины, потертости, загрязнения, пятна, прожоги, отверстия, порезы, разрывы, трещины",
+        "аудиосистема: отсутствует, отверстие / шины: зимние"
+      ],
+      "inspector_notes_raw": [
+        "Fガラス (キズ・小石・ヒビ・リペア跡・X要)",
+        "内装 (キズ・スレ・汚れ・シミ・コゲ・穴・キレ・破れ・割れ)",
+        "オーディオ (無し・穴) / タイヤ (スタッドレス)"
+      ],
+      "seller_comments_ru": [
+        "навигатор",
+        "хонда сенсинг",
+        "светодиодные фары, штатные 16-дюймовые литые диски",
+        "смарт ключ и кнопка запуска"
+      ],
+      "extra_ru": [
+        "у царапины, вмятины",
+        "царапины на дисках",
+        "дефекты зеркал заднего вида"
+      ],
+      "ocr_warnings": [
+        "drive_type_not_marked_on_sheet"
+      ],
+      "low_confidence_fields": [],
+      "auction_bid_jpy": null,
+      "turnkey_cost_rub": 1818870,
+      "market_price_rf_rub": 2607500,
+      "net_benefit_rub": 788630,
+      "benefit_percentage": 43.4,
+      "verdict": "yellow",
+      "verdict_headline": "🟡 ВНИМАНИЕ: ЕСТЬ НЮАНСЫ",
+      "meti_sanction_risk": false,
+      "baseline_economics": {
+        "bid_jpy": 2500000,
+        "power_hp": 118,
+        "freight_rub": 94474,
+        "include_repairs": true,
+        "power_hp_source": "drom_catalog",
+        "is_commercial_util": false
+      }
+    },
+    "defects": [
+      {
+        "panel_id": "hood",
+        "panel_ru": "капот",
+        "defect_types": [
+          "A"
+        ],
+        "severity": 1,
+        "raw_code": "A1",
+        "description_ru": "капот — царапина, степень 1"
+      },
+      {
+        "panel_id": "front_left_fender",
+        "panel_ru": "переднее левое крыло",
+        "defect_types": [
+          "A"
+        ],
+        "severity": 1,
+        "raw_code": "A1",
+        "description_ru": "переднее левое крыло — царапина, степень 1"
+      },
+      {
+        "panel_id": "rear_right_quarter",
+        "panel_ru": "заднее правое крыло",
+        "defect_types": [
+          "A"
+        ],
+        "severity": 1,
+        "raw_code": "A1",
+        "description_ru": "заднее правое крыло — царапина, степень 1"
+      }
+    ],
+    "risk_flags": {
+      "is_flooded": false,
+      "airbag_deployed": false,
+      "hail_damage": false,
+      "underbody_rust": false,
+      "underbody_corrosion": false,
+      "core_support_repair": false,
+      "pillar_or_frame_repair": false,
+      "panel_replaced_xx": false,
+      "panel_needs_replacement_x": false,
+      "odometer_issue": false,
+      "color_changed": false,
+      "windshield_damage": true,
+      "repaired_grade_r_ra": false
+    },
+    "verdict": {
+      "verdict": "yellow",
+      "headline": "🟡 ВНИМАНИЕ: ЕСТЬ НЮАНСЫ",
+      "short_verdict_label": "🟡 ВНИМАНИЕ: ЕСТЬ НЮАНСЫ",
+      "badge_text": "Выгода: +788 630 ₽ (повреждение лобового стекла)",
+      "net_benefit_rub": 788630,
+      "benefit_percentage": 43.4,
+      "body_summary_ru": "Кузов: повреждение лобового стекла",
+      "interior_summary_ru": "Оценка аукциона 4; пробег 56 410 км",
+      "reasoning_bullets": [
+        "Чистая выгода: +788 630 ₽ (43.4%)",
+        "Итого под ключ: 1 818 870 ₽",
+        "Рыночная цена РФ: 2 607 500 ₽"
+      ]
+    },
+    "market": {
+      "market_price_rf_rub": 2607500,
+      "analogs_count": 8,
+      "price_min_rub": 2550000,
+      "price_max_rub": 2700000,
+      "search_region_ru": "ДФО / Владивосток",
+      "excludes_under_order": true,
+      "filtered_out_under_order_count": 23,
+      "is_fallback": false,
+      "fallback_reason_ru": null,
+      "drom_search_url": "https://auto.drom.ru/region25/honda/vezel/bez-probega/?unsold=1&damaged=2&whereabouts%5B%5D=0&minyear=2022&maxyear=2022&mv=1.4&xv=1.6&fueltype=1"
+    },
+    "audit": {
+      "status": "not_found",
+      "source_name": "Aleado.com",
+      "is_archive_available": true,
+      "risk_level": "INFO",
+      "has_critical_anomaly": false,
+      "headline_ru": "Совпадений по номеру кузова в каталоге Aleado не найдено (проверено 10 кандидатов); лот присутствует в текущем каталоге Aleado",
+      "times_auctioned": 0
+    },
+    "audit_anomalies": [],
+    "audit_history": [],
+    "safety": {
+      "overall_status": "ok",
+      "overall_label_ru": "В норме"
+    },
+    "safety_items": [
+      {
+        "system_key": "structural_frame",
+        "label_ru": "Силовой каркас и лонжероны",
+        "status": "ok",
+        "detail_ru": "Нарушений геометрии и ремонта несущих элементов не отмечено"
+      },
+      {
+        "system_key": "airbags_srs",
+        "label_ru": "Подушки безопасности (SRS)",
+        "status": "ok",
+        "detail_ru": "Отметок о срабатывании или отсутствии подушек нет"
+      },
+      {
+        "system_key": "engine_transmission",
+        "label_ru": "ДВС и трансмиссия",
+        "status": "ok",
+        "detail_ru": "Замечаний инспектора по работе двигателя и КПП нет"
+      },
+      {
+        "system_key": "underbody_corrosion",
+        "label_ru": "Днище и пороги",
+        "status": "ok",
+        "detail_ru": "Сквозная коррозия не отмечена"
+      },
+      {
+        "system_key": "flood_or_fire",
+        "label_ru": "Следы затопления / пожара / града",
+        "status": "ok",
+        "detail_ru": "Стоп-факторов в бланке не зафиксировано"
+      }
+    ],
+    "customs": {
+      "age_corridor": "3_to_5_years",
+      "duty_calculation_mode": "eur_per_cc",
+      "engine_cc": 1500,
+      "duty_rate_eur_per_cc": 1.7,
+      "effective_duty_pct": null,
+      "customs_duty_eur": 2550.0,
+      "customs_duty_rub": 232132,
+      "excise_rub": 0,
+      "import_vat_rub": 0,
+      "is_under_160_hp": true,
+      "util_mode_selected_commercial": false,
+      "is_commercial_util": false,
+      "utilization_fee_rub": 5200,
+      "customs_clearance_fee_rub": 8530,
+      "freight_vladivostok_rub": 94474,
+      "broker_svh_sbkts_rub": 99000,
+      "meti_sanction_risk": false
+    },
+    "rates": {
+      "jpy_rub_bank": 0.5293,
+      "jpy_rate_source": "Расчётный ориентир: ЦБ РФ + 3%",
+      "eur_rub_cbrf": 91.0322,
+      "usd_rub_cbrf": 82.1516,
+      "cbrf_date": "14.11.2026"
+    },
+    "farpost": {
+      "total_parts_from_rub": 0,
+      "total_works_rub": 6000,
+      "grand_total_repair_rub": 6000,
+      "has_color_matched_parts": false,
+      "included_in_turnkey_hint_ru": "Оценка ремонта; включение в стоимость под ключ определяется расчётом экономики"
+    },
+    "farpost_parts": [],
+    "farpost_works": [
+      {
+        "work_type": "pdr_and_polish",
+        "label_ru": "PDR / полировка: Переднее левое крыло (оценка по матрице)",
+        "amount_rub": 2000,
+        "zero_cost_reason_ru": null
+      },
+      {
+        "work_type": "pdr_and_polish",
+        "label_ru": "PDR / полировка: Капот (оценка по матрице)",
+        "amount_rub": 2000,
+        "zero_cost_reason_ru": null
+      },
+      {
+        "work_type": "pdr_and_polish",
+        "label_ru": "PDR / полировка: Заднее правое крыло (оценка по матрице)",
+        "amount_rub": 2000,
+        "zero_cost_reason_ru": null
+      }
+    ],
+    "wise_cost": {
+      "car_bid_jpy": 2500000,
+      "car_bid_rub": 1323250,
+      "turnkey_cost_rub": 1818870,
+      "market_price_rf_rub": 2607500,
+      "net_benefit_rub": 788630,
+      "benefit_percentage": 43.4
+    },
+    "wise_cost_steps": [
+      {
+        "step_number": 1,
+        "name_ru": "Ставка на аукционе",
+        "amount_rub": 1323250,
+        "original_currency": "JPY",
+        "original_amount": 2500000.0,
+        "is_optional": false
+      },
+      {
+        "step_number": 2,
+        "name_ru": "Расходы в Японии (FOB и сбор)",
+        "amount_rub": 50284,
+        "original_currency": "JPY",
+        "original_amount": 95000.0,
+        "is_optional": false
+      },
+      {
+        "step_number": 3,
+        "name_ru": "Фрахт Тояма-ВЛК",
+        "amount_rub": 94474,
+        "original_currency": "USD",
+        "original_amount": 1150.0,
+        "is_optional": false
+      },
+      {
+        "step_number": 4,
+        "name_ru": "Таможенная пошлина ЕАЭС и сбор",
+        "amount_rub": 240662,
+        "original_currency": "EUR",
+        "original_amount": 2550.0,
+        "is_optional": false
+      },
+      {
+        "step_number": 5,
+        "name_ru": "Утилизационный сбор РФ",
+        "amount_rub": 5200,
+        "original_currency": "RUB",
+        "original_amount": 5200.0,
+        "is_optional": false
+      },
+      {
+        "step_number": 6,
+        "name_ru": "СВХ, брокер, СБКТС, ЭПТС",
+        "amount_rub": 99000,
+        "original_currency": "RUB",
+        "original_amount": 99000.0,
+        "is_optional": false
+      },
+      {
+        "step_number": 7,
+        "name_ru": "Запчасти Farpost и ремонт",
+        "amount_rub": 6000,
+        "original_currency": "RUB",
+        "original_amount": 6000.0,
+        "is_optional": true
+      }
+    ]
+  },
+  "freed_gb5": {
+    "scan_file": "freed_gb5_scan.jpg",
+    "thumb_file": "freed_gb5_thumb.jpg",
+    "lot_fields": {
+      "lot_number": "11005",
+      "auction_house": "MIRIVE",
+      "auction_branch": "Saitama",
+      "auction_date": null,
+      "auction_strictness_index": 0.7,
+      "make": "Honda",
+      "model": "Freed",
+      "trim": "G Honda Sensing",
+      "model_code": "6BA-GB5",
+      "chassis_number": "GB5-3179736",
+      "frame_id": "GB5-3179736",
+      "frame_id_confidence": "exact",
+      "year": 2022,
+      "first_reg_year": 2022,
+      "first_reg_month": 2,
+      "first_reg_date_str": "02.2022 (Возраст 4 года 9 мес.)",
+      "is_pass_corridor_3_5": true,
+      "engine_cc": 1500,
+      "power_hp": 129,
+      "power_hp_source": "drom_catalog",
+      "is_under_160_hp": true,
+      "mileage_km": 56365,
+      "odometer_status": "confirmed",
+      "transmission": "АКПП",
+      "drive_type": "2WD",
+      "fuel_type": "gasoline",
+      "color_ru": "белый перламутр",
+      "paint_code": "NH883P",
+      "overall_grade": "R",
+      "exterior_grade": "C",
+      "interior_grade": "B",
+      "shaken_until": null,
+      "recycling_fee_yen": 10060,
+      "recycling_fee_paid": true,
+      "equipment_ru": [
+        "усилитель руля",
+        "стеклоподъемники",
+        "подушки безопасности",
+        "ABS",
+        "навигация",
+        "цифровое ТВ",
+        "кондиционер"
+      ],
+      "inspector_notes_ru": [
+        "лобовое стекло: скол",
+        "салон: царапины, потертости, загрязнения",
+        "правая нижняя стойка заменена",
+        "левая нижняя стойка окрашена",
+        "левая задняя колесная арка (внешняя часть) деформирована",
+        "правая передняя внутренняя панель заменена и искривлена, левая передняя внутренняя панель деформирована",
+        "нижняя рамка радиатора деформирована"
+      ],
+      "inspector_notes_raw": [
+        "Fガラス(飛び石)",
+        "内装(キズ・スレ・汚れ)",
+        "右下ピラーXX",
+        "左下ピラーBP済み",
+        "左Rタイヤハウスアウター歪み",
+        "右FインパネXX曲がり左Fインパネ歪み",
+        "ロアサポート歪み"
+      ],
+      "seller_comments_ru": [
+        "кнопка старт-стоп",
+        "круиз-контроль",
+        "камера заднего вида",
+        "подогрев сидений",
+        "электропривод сдвижной двери",
+        "ETC"
+      ],
+      "extra_ru": [
+        "колесные диски: царапины",
+        "колпаки колес: царапины",
+        "боковые зеркала: царапины",
+        "есть следы ремонта кузова"
+      ],
+      "ocr_warnings": [],
+      "low_confidence_fields": [],
+      "auction_bid_jpy": null,
+      "turnkey_cost_rub": 1288182,
+      "market_price_rf_rub": 1520000,
+      "net_benefit_rub": 231818,
+      "benefit_percentage": 18.0,
+      "verdict": "red",
+      "verdict_headline": "🔴 ПОКУПКУ НЕ РЕКОМЕНДУЕМ",
+      "meti_sanction_risk": false,
+      "baseline_economics": {
+        "bid_jpy": 1040000,
+        "power_hp": 129,
+        "freight_rub": 94474,
+        "include_repairs": true,
+        "power_hp_source": "drom_catalog",
+        "is_commercial_util": false
+      }
+    },
+    "defects": [
+      {
+        "panel_id": "front_bumper",
+        "panel_ru": "передний бампер",
+        "defect_types": [
+          "A"
+        ],
+        "severity": 1,
+        "raw_code": "AU1",
+        "description_ru": "передний бампер — царапина, степень 1"
+      },
+      {
+        "panel_id": "front_bumper",
+        "panel_ru": "передний бампер",
+        "defect_types": [
+          "U"
+        ],
+        "severity": 1,
+        "raw_code": "AU1",
+        "description_ru": "передний бампер — вмятина, степень 1"
+      },
+      {
+        "panel_id": "rear_bumper",
+        "panel_ru": "задний бампер",
+        "defect_types": [
+          "A"
+        ],
+        "severity": 1,
+        "raw_code": "AU1",
+        "description_ru": "задний бампер — царапина, степень 1"
+      },
+      {
+        "panel_id": "rear_bumper",
+        "panel_ru": "задний бампер",
+        "defect_types": [
+          "U"
+        ],
+        "severity": 1,
+        "raw_code": "AU1",
+        "description_ru": "задний бампер — вмятина, степень 1"
+      },
+      {
+        "panel_id": "hood",
+        "panel_ru": "капот",
+        "defect_types": [
+          "XX"
+        ],
+        "severity": null,
+        "raw_code": "XX",
+        "description_ru": "капот — замена детали"
+      },
+      {
+        "panel_id": "roof",
+        "panel_ru": "крыша",
+        "defect_types": [
+          "U"
+        ],
+        "severity": 3,
+        "raw_code": "U3",
+        "description_ru": "крыша — вмятина, степень 3"
+      },
+      {
+        "panel_id": "front_left_fender",
+        "panel_ru": "переднее левое крыло",
+        "defect_types": [
+          "X"
+        ],
+        "severity": null,
+        "raw_code": "X",
+        "description_ru": "переднее левое крыло — требуется замена"
+      },
+      {
+        "panel_id": "front_right_fender",
+        "panel_ru": "переднее правое крыло",
+        "defect_types": [
+          "X"
+        ],
+        "severity": null,
+        "raw_code": "X",
+        "description_ru": "переднее правое крыло — требуется замена"
+      },
+      {
+        "panel_id": "front_left_door",
+        "panel_ru": "передняя левая дверь",
+        "defect_types": [
+          "A"
+        ],
+        "severity": 2,
+        "raw_code": "A2/U1",
+        "description_ru": "передняя левая дверь — царапина, степень 2"
+      },
+      {
+        "panel_id": "front_left_door",
+        "panel_ru": "передняя левая дверь",
+        "defect_types": [
+          "U"
+        ],
+        "severity": 1,
+        "raw_code": "A2/U1",
+        "description_ru": "передняя левая дверь — вмятина, степень 1"
+      },
+      {
+        "panel_id": "front_right_door",
+        "panel_ru": "передняя правая дверь",
+        "defect_types": [
+          "XX"
+        ],
+        "severity": null,
+        "raw_code": "XX",
+        "description_ru": "передняя правая дверь — замена детали"
+      },
+      {
+        "panel_id": "rear_left_door",
+        "panel_ru": "задняя левая дверь",
+        "defect_types": [
+          "A"
+        ],
+        "severity": 1,
+        "raw_code": "A1/U2",
+        "description_ru": "задняя левая дверь — царапина, степень 1"
+      },
+      {
+        "panel_id": "rear_left_door",
+        "panel_ru": "задняя левая дверь",
+        "defect_types": [
+          "U"
+        ],
+        "severity": 2,
+        "raw_code": "A1/U2",
+        "description_ru": "задняя левая дверь — вмятина, степень 2"
+      },
+      {
+        "panel_id": "rear_right_door",
+        "panel_ru": "задняя правая дверь",
+        "defect_types": [
+          "A"
+        ],
+        "severity": 2,
+        "raw_code": "A2",
+        "description_ru": "задняя правая дверь — царапина, степень 2"
+      },
+      {
+        "panel_id": "rear_left_quarter",
+        "panel_ru": "заднее левое крыло",
+        "defect_types": [
+          "W"
+        ],
+        "severity": 2,
+        "raw_code": "W2",
+        "description_ru": "заднее левое крыло — ремонт/волна окраса, степень 2"
+      },
+      {
+        "panel_id": "rear_right_quarter",
+        "panel_ru": "заднее правое крыло",
+        "defect_types": [
+          "A"
+        ],
+        "severity": 2,
+        "raw_code": "AU2",
+        "description_ru": "заднее правое крыло — царапина, степень 2"
+      },
+      {
+        "panel_id": "rear_right_quarter",
+        "panel_ru": "заднее правое крыло",
+        "defect_types": [
+          "U"
+        ],
+        "severity": 2,
+        "raw_code": "AU2",
+        "description_ru": "заднее правое крыло — вмятина, степень 2"
+      },
+      {
+        "panel_id": "left_sill",
+        "panel_ru": "левый порог",
+        "defect_types": [
+          "W"
+        ],
+        "severity": 2,
+        "raw_code": "W2",
+        "description_ru": "левый порог — ремонт/волна окраса, степень 2"
+      },
+      {
+        "panel_id": "right_sill",
+        "panel_ru": "правый порог",
+        "defect_types": [
+          "U"
+        ],
+        "severity": 2,
+        "raw_code": "U2",
+        "description_ru": "правый порог — вмятина, степень 2"
+      },
+      {
+        "panel_id": "tailgate",
+        "panel_ru": "дверь багажника",
+        "defect_types": [
+          "U"
+        ],
+        "severity": 2,
+        "raw_code": "U2",
+        "description_ru": "дверь багажника — вмятина, степень 2"
+      }
+    ],
+    "risk_flags": {
+      "is_flooded": false,
+      "airbag_deployed": false,
+      "hail_damage": false,
+      "underbody_rust": false,
+      "underbody_corrosion": false,
+      "core_support_repair": false,
+      "pillar_or_frame_repair": true,
+      "panel_replaced_xx": true,
+      "panel_needs_replacement_x": true,
+      "odometer_issue": false,
+      "color_changed": false,
+      "windshield_damage": true,
+      "repaired_grade_r_ra": true
+    },
+    "verdict": {
+      "verdict": "red",
+      "headline": "🔴 ПОКУПКУ НЕ РЕКОМЕНДУЕМ",
+      "short_verdict_label": "🔴 ПОКУПКУ НЕ РЕКОМЕНДУЕМ",
+      "badge_text": "Стоп-факторы: ремонт силовой структуры, аварийный статус (R/RA)",
+      "net_benefit_rub": 231818,
+      "benefit_percentage": 18.0,
+      "body_summary_ru": "Кузов: детали под замену, повреждение лобового стекла, заменённые элементы",
+      "interior_summary_ru": "Оценка аукциона R; пробег 56 365 км",
+      "reasoning_bullets": [
+        "Чистая выгода: +231 818 ₽ (18.0%)",
+        "Итого под ключ: 1 288 182 ₽",
+        "Рыночная цена РФ: 1 520 000 ₽",
+        "Стоп-фактор: ремонт силовой структуры",
+        "Стоп-фактор: аварийный статус (R/RA)"
+      ]
+    },
+    "market": {
+      "market_price_rf_rub": 1520000,
+      "analogs_count": 6,
+      "price_min_rub": 1390000,
+      "price_max_rub": 2020000,
+      "search_region_ru": "ДФО / Владивосток",
+      "excludes_under_order": true,
+      "filtered_out_under_order_count": 20,
+      "is_fallback": false,
+      "fallback_reason_ru": null,
+      "drom_search_url": "https://auto.drom.ru/region25/honda/freed/bez-probega/?unsold=1&damaged=2&whereabouts%5B%5D=0&minyear=2022&maxyear=2022&mv=1.4&xv=1.6&fueltype=1"
+    },
+    "audit": {
+      "status": "not_found",
+      "source_name": "Aleado.com",
+      "is_archive_available": true,
+      "risk_level": "INFO",
+      "has_critical_anomaly": false,
+      "headline_ru": "Совпадений по номеру кузова в каталоге Aleado не найдено (проверено 10 кандидатов); лот присутствует в текущем каталоге Aleado",
+      "times_auctioned": 0
+    },
+    "audit_anomalies": [],
+    "audit_history": [],
+    "safety": {
+      "overall_status": "critical",
+      "overall_label_ru": "Есть критические замечания"
+    },
+    "safety_items": [
+      {
+        "system_key": "structural_frame",
+        "label_ru": "Силовой каркас и лонжероны",
+        "status": "critical",
+        "detail_ru": "Отмечен ремонт стоек или лонжеронов (ピラー/フレーム)"
+      },
+      {
+        "system_key": "airbags_srs",
+        "label_ru": "Подушки безопасности (SRS)",
+        "status": "ok",
+        "detail_ru": "Отметок о срабатывании или отсутствии подушек нет"
+      },
+      {
+        "system_key": "engine_transmission",
+        "label_ru": "ДВС и трансмиссия",
+        "status": "ok",
+        "detail_ru": "Замечаний инспектора по работе двигателя и КПП нет"
+      },
+      {
+        "system_key": "underbody_corrosion",
+        "label_ru": "Днище и пороги",
+        "status": "ok",
+        "detail_ru": "Сквозная коррозия не отмечена"
+      },
+      {
+        "system_key": "flood_or_fire",
+        "label_ru": "Следы затопления / пожара / града",
+        "status": "ok",
+        "detail_ru": "Стоп-факторов в бланке не зафиксировано"
+      }
+    ],
+    "customs": {
+      "age_corridor": "3_to_5_years",
+      "duty_calculation_mode": "eur_per_cc",
+      "engine_cc": 1500,
+      "duty_rate_eur_per_cc": 1.7,
+      "effective_duty_pct": null,
+      "customs_duty_eur": 2550.0,
+      "customs_duty_rub": 232132,
+      "excise_rub": 0,
+      "import_vat_rub": 0,
+      "is_under_160_hp": true,
+      "util_mode_selected_commercial": false,
+      "is_commercial_util": false,
+      "utilization_fee_rub": 5200,
+      "customs_clearance_fee_rub": 3120,
+      "freight_vladivostok_rub": 94474,
+      "broker_svh_sbkts_rub": 99000,
+      "meti_sanction_risk": false
+    },
+    "rates": {
+      "jpy_rub_bank": 0.5293,
+      "jpy_rate_source": "Расчётный ориентир: ЦБ РФ + 3%",
+      "eur_rub_cbrf": 91.0322,
+      "usd_rub_cbrf": 82.1516,
+      "cbrf_date": "14.11.2026"
+    },
+    "farpost": {
+      "total_parts_from_rub": 116000,
+      "total_works_rub": 137500,
+      "grand_total_repair_rub": 253500,
+      "has_color_matched_parts": false,
+      "included_in_turnkey_hint_ru": "Оценка ремонта; включение в стоимость под ключ определяется расчётом экономики"
+    },
+    "farpost_parts": [
+      {
+        "panel_id": "front_left_fender",
+        "defect_code": "X",
+        "part_name_ru": "Переднее левое крыло",
+        "subtitle_ru": "Статистическая оценка; наличие и цвет не подтверждены",
+        "price_from_rub": 29000,
+        "in_stock_vladivostok": false,
+        "is_statistical_fallback": true
+      },
+      {
+        "panel_id": "front_right_door",
+        "defect_code": "XX",
+        "part_name_ru": "Передняя правая дверь",
+        "subtitle_ru": "Статистическая оценка; наличие и цвет не подтверждены",
+        "price_from_rub": 29000,
+        "in_stock_vladivostok": false,
+        "is_statistical_fallback": true
+      },
+      {
+        "panel_id": "front_right_fender",
+        "defect_code": "X",
+        "part_name_ru": "Переднее правое крыло",
+        "subtitle_ru": "Статистическая оценка; наличие и цвет не подтверждены",
+        "price_from_rub": 29000,
+        "in_stock_vladivostok": false,
+        "is_statistical_fallback": true
+      },
+      {
+        "panel_id": "hood",
+        "defect_code": "XX",
+        "part_name_ru": "Капот",
+        "subtitle_ru": "Статистическая оценка; наличие и цвет не подтверждены",
+        "price_from_rub": 29000,
+        "in_stock_vladivostok": false,
+        "is_statistical_fallback": true
+      }
+    ],
+    "farpost_works": [
+      {
+        "work_type": "pdr_and_polish",
+        "label_ru": "PDR / полировка: Передний бампер (оценка по матрице)",
+        "amount_rub": 2500,
+        "zero_cost_reason_ru": null
+      },
+      {
+        "work_type": "pdr_and_polish",
+        "label_ru": "PDR / полировка: Передняя левая дверь (оценка по матрице)",
+        "amount_rub": 2500,
+        "zero_cost_reason_ru": null
+      },
+      {
+        "work_type": "paint",
+        "label_ru": "Покраска с материалами: Передняя левая дверь (оценка по матрице)",
+        "amount_rub": 10000,
+        "zero_cost_reason_ru": null
+      },
+      {
+        "work_type": "mount_dismount",
+        "label_ru": "Снятие и монтаж: Переднее левое крыло (оценка по матрице)",
+        "amount_rub": 2500,
+        "zero_cost_reason_ru": null
+      },
+      {
+        "work_type": "paint",
+        "label_ru": "Покраска с материалами: Переднее левое крыло (оценка по матрице)",
+        "amount_rub": 10000,
+        "zero_cost_reason_ru": null
+      },
+      {
+        "work_type": "mount_dismount",
+        "label_ru": "Снятие и монтаж: Передняя правая дверь (оценка по матрице)",
+        "amount_rub": 2500,
+        "zero_cost_reason_ru": null
+      },
+      {
+        "work_type": "paint",
+        "label_ru": "Покраска с материалами: Передняя правая дверь (оценка по матрице)",
+        "amount_rub": 10000,
+        "zero_cost_reason_ru": null
+      },
+      {
+        "work_type": "mount_dismount",
+        "label_ru": "Снятие и монтаж: Переднее правое крыло (оценка по матрице)",
+        "amount_rub": 2500,
+        "zero_cost_reason_ru": null
+      },
+      {
+        "work_type": "paint",
+        "label_ru": "Покраска с материалами: Переднее правое крыло (оценка по матрице)",
+        "amount_rub": 10000,
+        "zero_cost_reason_ru": null
+      },
+      {
+        "work_type": "mount_dismount",
+        "label_ru": "Снятие и монтаж: Капот (оценка по матрице)",
+        "amount_rub": 2500,
+        "zero_cost_reason_ru": null
+      },
+      {
+        "work_type": "paint",
+        "label_ru": "Покраска с материалами: Капот (оценка по матрице)",
+        "amount_rub": 10000,
+        "zero_cost_reason_ru": null
+      },
+      {
+        "work_type": "paint",
+        "label_ru": "Покраска с материалами: Левый порог (оценка по матрице)",
+        "amount_rub": 6500,
+        "zero_cost_reason_ru": null
+      },
+      {
+        "work_type": "pdr_and_polish",
+        "label_ru": "PDR / полировка: Задний бампер (оценка по матрице)",
+        "amount_rub": 2500,
+        "zero_cost_reason_ru": null
+      },
+      {
+        "work_type": "pdr_and_polish",
+        "label_ru": "PDR / полировка: Задняя левая дверь (оценка по матрице)",
+        "amount_rub": 5500,
+        "zero_cost_reason_ru": null
+      },
+      {
+        "work_type": "paint",
+        "label_ru": "Покраска с материалами: Заднее левое крыло (оценка по матрице)",
+        "amount_rub": 6500,
+        "zero_cost_reason_ru": null
+      },
+      {
+        "work_type": "paint",
+        "label_ru": "Покраска с материалами: Задняя правая дверь (оценка по матрице)",
+        "amount_rub": 10000,
+        "zero_cost_reason_ru": null
+      },
+      {
+        "work_type": "pdr_and_polish",
+        "label_ru": "PDR / полировка: Заднее правое крыло (оценка по матрице)",
+        "amount_rub": 5500,
+        "zero_cost_reason_ru": null
+      },
+      {
+        "work_type": "paint",
+        "label_ru": "Покраска с материалами: Заднее правое крыло (оценка по матрице)",
+        "amount_rub": 10000,
+        "zero_cost_reason_ru": null
+      },
+      {
+        "work_type": "pdr_and_polish",
+        "label_ru": "PDR / полировка: Правый порог (оценка по матрице)",
+        "amount_rub": 5500,
+        "zero_cost_reason_ru": null
+      },
+      {
+        "work_type": "bodywork",
+        "label_ru": "Кузовное восстановление: Крыша (оценка по матрице)",
+        "amount_rub": 15000,
+        "zero_cost_reason_ru": null
+      },
+      {
+        "work_type": "pdr_and_polish",
+        "label_ru": "PDR / полировка: Крышка багажника (оценка по матрице)",
+        "amount_rub": 5500,
+        "zero_cost_reason_ru": null
+      }
+    ],
+    "wise_cost": {
+      "car_bid_jpy": 1040000,
+      "car_bid_rub": 550472,
+      "turnkey_cost_rub": 1288182,
+      "market_price_rf_rub": 1520000,
+      "net_benefit_rub": 231818,
+      "benefit_percentage": 18.0
+    },
+    "wise_cost_steps": [
+      {
+        "step_number": 1,
+        "name_ru": "Ставка на аукционе",
+        "amount_rub": 550472,
+        "original_currency": "JPY",
+        "original_amount": 1040000.0,
+        "is_optional": false
+      },
+      {
+        "step_number": 2,
+        "name_ru": "Расходы в Японии (FOB и сбор)",
+        "amount_rub": 50284,
+        "original_currency": "JPY",
+        "original_amount": 95000.0,
+        "is_optional": false
+      },
+      {
+        "step_number": 3,
+        "name_ru": "Фрахт Тояма-ВЛК",
+        "amount_rub": 94474,
+        "original_currency": "USD",
+        "original_amount": 1150.0,
+        "is_optional": false
+      },
+      {
+        "step_number": 4,
+        "name_ru": "Таможенная пошлина ЕАЭС и сбор",
+        "amount_rub": 235252,
+        "original_currency": "EUR",
+        "original_amount": 2550.0,
+        "is_optional": false
+      },
+      {
+        "step_number": 5,
+        "name_ru": "Утилизационный сбор РФ",
+        "amount_rub": 5200,
+        "original_currency": "RUB",
+        "original_amount": 5200.0,
+        "is_optional": false
+      },
+      {
+        "step_number": 6,
+        "name_ru": "СВХ, брокер, СБКТС, ЭПТС",
+        "amount_rub": 99000,
+        "original_currency": "RUB",
+        "original_amount": 99000.0,
+        "is_optional": false
+      },
+      {
+        "step_number": 7,
+        "name_ru": "Запчасти Farpost и ремонт",
+        "amount_rub": 253500,
+        "original_currency": "RUB",
+        "original_amount": 253500.0,
+        "is_optional": true
+      }
+    ]
+  },
+  "accord_cv3": {
+    "scan_file": "accord_cv3_scan.jpg",
+    "thumb_file": "accord_cv3_thumb.jpg",
+    "lot_fields": {
+      "lot_number": "09521",
+      "auction_house": "USS",
+      "auction_branch": "Noda",
+      "auction_date": null,
+      "auction_strictness_index": 0.75,
+      "make": "Honda",
+      "model": "Accord HV",
+      "trim": "EX",
+      "model_code": "6AA-CV3",
+      "chassis_number": "CV3-1001740",
+      "frame_id": "CV3-1001740",
+      "frame_id_confidence": "exact",
+      "year": 2020,
+      "first_reg_year": 2020,
+      "first_reg_month": 4,
+      "first_reg_date_str": "04.2020 (Возраст 6 лет 7 мес.)",
+      "is_pass_corridor_3_5": false,
+      "engine_cc": 1990,
+      "power_hp": 145,
+      "power_hp_source": "drom_catalog",
+      "is_under_160_hp": true,
+      "mileage_km": 40364,
+      "odometer_status": "confirmed",
+      "transmission": "АКПП",
+      "drive_type": null,
+      "fuel_type": "hybrid",
+      "color_ru": "Черный",
+      "paint_code": "NH731P",
+      "overall_grade": "0",
+      "exterior_grade": null,
+      "interior_grade": null,
+      "shaken_until": "04.2027",
+      "recycling_fee_yen": 14490,
+      "recycling_fee_paid": true,
+      "equipment_ru": [
+        "Усилитель руля",
+        "Электростеклоподъемники",
+        "ABS",
+        "Подушки безопасности",
+        "ESC",
+        "AEB",
+        "Навигация",
+        "ТВ",
+        "Люк",
+        "Автоматический кондиционер"
+      ],
+      "inspector_notes_ru": [
+        "Зеркала: царапины",
+        "Отделка: царапины",
+        "Экстерьер: царапины и вмятины",
+        "Салон: загрязнения",
+        "Лобовое стекло: сколы",
+        "Горят несколько индикаторов неисправности",
+        "Автомобиль после ДТП, осмотр обязателен"
+      ],
+      "inspector_notes_raw": [
+        "Dミラー A",
+        "トリム A",
+        "外装 A・U",
+        "室内 汚れ",
+        "Fガラス トビ石",
+        "警告灯 複数点灯",
+        "事故現状車両現車確認必要"
+      ],
+      "seller_comments_ru": [
+        "Выставлено дилером",
+        "Впервые на аукционе"
+      ],
+      "extra_ru": [
+        "Глубина протектора: передние 3мм, задние 4мм",
+        "Автомобиль категории 0 (аварийный)",
+        "рамка радиатора — R — рамка радиатора — следы ремонта"
+      ],
+      "ocr_warnings": [
+        "drive_type_not_marked_on_sheet",
+        "Unknown panel_id from ML service: 'other' (raw_code='R'); defect skipped"
+      ],
+      "low_confidence_fields": [],
+      "auction_bid_jpy": null,
+      "turnkey_cost_rub": 2536278,
+      "market_price_rf_rub": 3000000,
+      "net_benefit_rub": 463722,
+      "benefit_percentage": 18.3,
+      "verdict": "red",
+      "verdict_headline": "🔴 ПОКУПКУ НЕ РЕКОМЕНДУЕМ",
+      "meti_sanction_risk": true,
+      "baseline_economics": {
+        "bid_jpy": 2500000,
+        "power_hp": 145,
+        "freight_rub": 94474,
+        "include_repairs": true,
+        "power_hp_source": "drom_catalog",
+        "is_commercial_util": false
+      }
+    },
+    "defects": [
+      {
+        "panel_id": "front_bumper",
+        "panel_ru": "передний бампер",
+        "defect_types": [
+          "R"
+        ],
+        "severity": null,
+        "raw_code": "R",
+        "description_ru": "передний бампер — следы ремонта"
+      },
+      {
+        "panel_id": "hood",
+        "panel_ru": "капот",
+        "defect_types": [
+          "R"
+        ],
+        "severity": null,
+        "raw_code": "R",
+        "description_ru": "капот — следы ремонта"
+      },
+      {
+        "panel_id": "front_left_fender",
+        "panel_ru": "переднее левое крыло",
+        "defect_types": [
+          "R"
+        ],
+        "severity": null,
+        "raw_code": "R",
+        "description_ru": "переднее левое крыло — следы ремонта"
+      },
+      {
+        "panel_id": "front_right_fender",
+        "panel_ru": "переднее правое крыло",
+        "defect_types": [
+          "R"
+        ],
+        "severity": null,
+        "raw_code": "R",
+        "description_ru": "переднее правое крыло — следы ремонта"
+      }
+    ],
+    "risk_flags": {
+      "is_flooded": false,
+      "airbag_deployed": false,
+      "hail_damage": false,
+      "underbody_rust": false,
+      "underbody_corrosion": false,
+      "core_support_repair": true,
+      "pillar_or_frame_repair": true,
+      "panel_replaced_xx": false,
+      "panel_needs_replacement_x": false,
+      "odometer_issue": false,
+      "color_changed": false,
+      "windshield_damage": true,
+      "repaired_grade_r_ra": true
+    },
+    "verdict": {
+      "verdict": "red",
+      "headline": "🔴 ПОКУПКУ НЕ РЕКОМЕНДУЕМ",
+      "short_verdict_label": "🔴 ПОКУПКУ НЕ РЕКОМЕНДУЕМ",
+      "badge_text": "Стоп-факторы: ремонт рамки радиатора, ремонт силовой структуры, аварийный статус (R/RA)",
+      "net_benefit_rub": 463722,
+      "benefit_percentage": 18.3,
+      "body_summary_ru": "Кузов: повреждение лобового стекла",
+      "interior_summary_ru": "Оценка аукциона 0; пробег 40 364 км",
+      "reasoning_bullets": [
+        "Чистая выгода: +463 722 ₽ (18.3%)",
+        "Итого под ключ: 2 536 278 ₽",
+        "Рыночная цена РФ: 3 000 000 ₽",
+        "Стоп-фактор: ремонт рамки радиатора",
+        "Стоп-фактор: ремонт силовой структуры",
+        "Стоп-фактор: аварийный статус (R/RA)"
+      ]
+    },
+    "market": {
+      "market_price_rf_rub": 3000000,
+      "analogs_count": 5,
+      "price_min_rub": 2750000,
+      "price_max_rub": 3150000,
+      "search_region_ru": "Вся РФ",
+      "excludes_under_order": true,
+      "filtered_out_under_order_count": 2,
+      "is_fallback": true,
+      "fallback_reason_ru": "Мало точных аналогов в ДФО — выборка расширена на всю РФ (без пробега по РФ, ±2 года)",
+      "drom_search_url": "https://auto.drom.ru/honda/accord/bez-probega/?unsold=1&damaged=2&whereabouts%5B%5D=0&minyear=2018&maxyear=2022&mv=1.8&xv=2.2"
+    },
+    "audit": {
+      "status": "not_found",
+      "source_name": "Aleado.com",
+      "is_archive_available": true,
+      "risk_level": "INFO",
+      "has_critical_anomaly": false,
+      "headline_ru": "Совпадений по номеру кузова в каталоге Aleado не найдено (проверено 10 кандидатов)",
+      "times_auctioned": 0
+    },
+    "audit_anomalies": [],
+    "audit_history": [],
+    "safety": {
+      "overall_status": "critical",
+      "overall_label_ru": "Есть критические замечания"
+    },
+    "safety_items": [
+      {
+        "system_key": "structural_frame",
+        "label_ru": "Силовой каркас и лонжероны",
+        "status": "critical",
+        "detail_ru": "Отмечен ремонт стоек или лонжеронов (ピラー/フレーム)"
+      },
+      {
+        "system_key": "airbags_srs",
+        "label_ru": "Подушки безопасности (SRS)",
+        "status": "ok",
+        "detail_ru": "Отметок о срабатывании или отсутствии подушек нет"
+      },
+      {
+        "system_key": "engine_transmission",
+        "label_ru": "ДВС и трансмиссия",
+        "status": "ok",
+        "detail_ru": "Замечаний инспектора по работе двигателя и КПП нет"
+      },
+      {
+        "system_key": "underbody_corrosion",
+        "label_ru": "Днище и пороги",
+        "status": "ok",
+        "detail_ru": "Сквозная коррозия не отмечена"
+      },
+      {
+        "system_key": "flood_or_fire",
+        "label_ru": "Следы затопления / пожара / града",
+        "status": "ok",
+        "detail_ru": "Стоп-факторов в бланке не зафиксировано"
+      }
+    ],
+    "customs": {
+      "age_corridor": "over_5_years",
+      "duty_calculation_mode": "eur_per_cc",
+      "engine_cc": 1990,
+      "duty_rate_eur_per_cc": 4.8,
+      "effective_duty_pct": null,
+      "customs_duty_eur": 9552.0,
+      "customs_duty_rub": 869540,
+      "excise_rub": 0,
+      "import_vat_rub": 0,
+      "is_under_160_hp": true,
+      "util_mode_selected_commercial": false,
+      "is_commercial_util": false,
+      "utilization_fee_rub": 5200,
+      "customs_clearance_fee_rub": 8530,
+      "freight_vladivostok_rub": 94474,
+      "broker_svh_sbkts_rub": 99000,
+      "meti_sanction_risk": true
+    },
+    "rates": {
+      "jpy_rub_bank": 0.5293,
+      "jpy_rate_source": "Расчётный ориентир: ЦБ РФ + 3%",
+      "eur_rub_cbrf": 91.0322,
+      "usd_rub_cbrf": 82.1516,
+      "cbrf_date": "14.11.2026"
+    },
+    "farpost": {
+      "total_parts_from_rub": 0,
+      "total_works_rub": 86000,
+      "grand_total_repair_rub": 86000,
+      "has_color_matched_parts": false,
+      "included_in_turnkey_hint_ru": "Оценка ремонта; включение в стоимость под ключ определяется расчётом экономики"
+    },
+    "farpost_parts": [],
+    "farpost_works": [
+      {
+        "work_type": "bodywork",
+        "label_ru": "Кузовное восстановление: Передний бампер (оценка по матрице)",
+        "amount_rub": 21500,
+        "zero_cost_reason_ru": null
+      },
+      {
+        "work_type": "bodywork",
+        "label_ru": "Кузовное восстановление: Переднее левое крыло (оценка по матрице)",
+        "amount_rub": 21500,
+        "zero_cost_reason_ru": null
+      },
+      {
+        "work_type": "bodywork",
+        "label_ru": "Кузовное восстановление: Переднее правое крыло (оценка по матрице)",
+        "amount_rub": 21500,
+        "zero_cost_reason_ru": null
+      },
+      {
+        "work_type": "bodywork",
+        "label_ru": "Кузовное восстановление: Капот (оценка по матрице)",
+        "amount_rub": 21500,
+        "zero_cost_reason_ru": null
+      }
+    ],
+    "wise_cost": {
+      "car_bid_jpy": 2500000,
+      "car_bid_rub": 1323250,
+      "turnkey_cost_rub": 2536278,
+      "market_price_rf_rub": 3000000,
+      "net_benefit_rub": 463722,
+      "benefit_percentage": 18.3
+    },
+    "wise_cost_steps": [
+      {
+        "step_number": 1,
+        "name_ru": "Ставка на аукционе",
+        "amount_rub": 1323250,
+        "original_currency": "JPY",
+        "original_amount": 2500000.0,
+        "is_optional": false
+      },
+      {
+        "step_number": 2,
+        "name_ru": "Расходы в Японии (FOB и сбор)",
+        "amount_rub": 50284,
+        "original_currency": "JPY",
+        "original_amount": 95000.0,
+        "is_optional": false
+      },
+      {
+        "step_number": 3,
+        "name_ru": "Фрахт Тояма-ВЛК",
+        "amount_rub": 94474,
+        "original_currency": "USD",
+        "original_amount": 1150.0,
+        "is_optional": false
+      },
+      {
+        "step_number": 4,
+        "name_ru": "Таможенная пошлина ЕАЭС и сбор",
+        "amount_rub": 878070,
+        "original_currency": "EUR",
+        "original_amount": 9552.0,
+        "is_optional": false
+      },
+      {
+        "step_number": 5,
+        "name_ru": "Утилизационный сбор РФ",
+        "amount_rub": 5200,
+        "original_currency": "RUB",
+        "original_amount": 5200.0,
+        "is_optional": false
+      },
+      {
+        "step_number": 6,
+        "name_ru": "СВХ, брокер, СБКТС, ЭПТС",
+        "amount_rub": 99000,
+        "original_currency": "RUB",
+        "original_amount": 99000.0,
+        "is_optional": false
+      },
+      {
+        "step_number": 7,
+        "name_ru": "Запчасти Farpost и ремонт",
+        "amount_rub": 86000,
+        "original_currency": "RUB",
+        "original_amount": 86000.0,
+        "is_optional": true
+      }
+    ]
+  }
+}

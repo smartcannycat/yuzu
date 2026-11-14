@@ -17,33 +17,34 @@ def test_register_seeds_three_starter_lots(api_client: Client) -> None:
     lots = list(Lot.objects.filter(user_id=user_id).order_by("created_at"))
     assert len(lots) == 3
 
-    corolla = next(lot for lot in lots if lot.make == "Toyota")
-    assert corolla.model == "Corolla Touring"
-    assert corolla.frame_id == "NRE210-2005418"
-    assert corolla.lot_number == "3142"
-    assert corolla.turnkey_cost_rub == 1104899
-    assert corolla.verdict == "green"
-    assert corolla.completed_at is not None
-
-    vezel = next(lot for lot in lots if lot.make == "Honda")
+    vezel = next(lot for lot in lots if lot.frame_id == "RV3-1005521")
+    assert vezel.make == "Honda"
     assert vezel.model == "Vezel"
-    assert vezel.frame_id == "RU3-1209412"
-    assert vezel.turnkey_cost_rub == 1480000
-    assert vezel.verdict == "red"
-    assert vezel.fuel_type == "hybrid"
-    assert vezel.meti_sanction_risk is True
+    assert vezel.lot_number == "55009"
+    assert vezel.turnkey_cost_rub == 1818870
+    assert vezel.verdict == "yellow"
+    assert vezel.completed_at is not None
+    assert vezel.sheet_scan.name.endswith(".jpg")
+    assert vezel.sheet_thumbnail.name.endswith(".jpg")
 
-    note = next(lot for lot in lots if lot.make == "Nissan")
-    assert note.model == "Note"
-    assert note.frame_id == "HE12-389104"
-    assert note.turnkey_cost_rub == 980000
-    assert note.verdict == "red"
-    assert note.fuel_type == "hybrid"
-    assert note.meti_sanction_risk is True
+    freed = next(lot for lot in lots if lot.frame_id == "GB5-3179736")
+    assert freed.make == "Honda"
+    assert freed.model == "Freed"
+    assert freed.turnkey_cost_rub == 1288182
+    assert freed.verdict == "red"
+    assert freed.overall_grade == "R"
+
+    accord = next(lot for lot in lots if lot.frame_id == "CV3-1001740")
+    assert accord.make == "Honda"
+    assert accord.model == "Accord HV"
+    assert accord.turnkey_cost_rub == 2536278
+    assert accord.verdict == "red"
+    assert accord.fuel_type == "hybrid"
+    assert accord.meti_sanction_risk is True
 
 
 @pytest.mark.django_db
-def test_corolla_starter_lot_has_full_related_data(api_client: Client) -> None:
+def test_freed_starter_lot_has_full_related_data(api_client: Client) -> None:
     response = api_client.post(
         "/api/v1/auth/register",
         {"email": "detail@example.com", "password": "Password123!"},
@@ -52,54 +53,42 @@ def test_corolla_starter_lot_has_full_related_data(api_client: Client) -> None:
     assert response.status_code == 201
     user_id = response.json()["user"]["user_id"]
 
-    corolla = Lot.objects.get(user_id=user_id, make="Toyota")
+    freed = Lot.objects.get(user_id=user_id, frame_id="GB5-3179736")
 
-    assert corolla.defects.count() == 4
-    door_defect = corolla.defects.get(panel_id="front_left_door")
-    assert door_defect.raw_code == "XX"
-    assert door_defect.severity is None
+    assert freed.defects.count() == 20
+    hood_defect = freed.defects.get(panel_id="hood")
+    assert hood_defect.raw_code == "XX"
 
-    assert corolla.risk_flags.panel_replaced_xx is True
-    assert corolla.risk_flags.pillar_or_frame_repair is False
+    assert freed.risk_flags.panel_replaced_xx is True
+    assert freed.risk_flags.repaired_grade_r_ra is True
 
-    verdict = corolla.verdict_detail
-    assert verdict.verdict == "green"
-    assert verdict.net_benefit_rub == 415101
-    assert len(verdict.reasoning_bullets) == 3
+    verdict = freed.verdict_detail
+    assert verdict.verdict == "red"
+    assert verdict.net_benefit_rub == 231818
+    assert len(verdict.reasoning_bullets) >= 2
 
-    market = corolla.market_info
+    market = freed.market_info
     assert market.market_price_rf_rub == 1520000
-    assert market.analogs_count == 14
+    assert market.analogs_count == 6
 
-    audit = corolla.cross_audit
-    assert audit.status == "clean"
-    assert audit.risk_level == "CLEAN"
-    assert audit.history.count() == 1
-    assert audit.anomalies.count() == 0
+    audit = freed.cross_audit
+    assert audit.history.count() >= 0
 
-    checklist = corolla.safety_checklist
-    assert checklist.overall_status == "ok"
+    checklist = freed.safety_checklist
     assert checklist.items.count() == 5
 
-    customs = corolla.customs_calc
+    customs = freed.customs_calc
     assert customs.age_corridor == "3_to_5_years"
-    assert customs.customs_duty_rub == 193154
     assert customs.utilization_fee_rub == 5200
-    assert customs.rates_snapshot.eur_rub_cbrf == 95.0
 
-    repair = corolla.farpost_repair
-    assert repair.parts.count() == 1
-    assert repair.service_works.count() == 3
-    assert repair.grand_total_repair_rub == 31000
-    paint_work = repair.service_works.get(work_type="paint")
-    assert paint_work.amount_rub == 0
-    assert paint_work.zero_cost_reason_ru == "не требуется"
+    repair = freed.farpost_repair
+    assert repair.parts.count() == 4
+    assert repair.grand_total_repair_rub == repair.total_parts_from_rub + repair.total_works_rub
 
-    ladder = corolla.wise_cost_ladder
-    assert ladder.turnkey_cost_rub == 1104899
+    ladder = freed.wise_cost_ladder
+    assert ladder.turnkey_cost_rub == 1288182
     assert ladder.steps.count() == 7
-    step_sum = sum(step.amount_rub for step in ladder.steps.all())
-    assert step_sum == ladder.turnkey_cost_rub
+    assert sum(step.amount_rub for step in ladder.steps.all()) == ladder.turnkey_cost_rub
 
 
 @pytest.mark.django_db

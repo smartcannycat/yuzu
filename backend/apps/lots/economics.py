@@ -27,15 +27,14 @@ from apps.lots.models import (
     WiseCostLadder,
     WiseCostStep,
 )
-from apps.lots.starter_lots import _COROLLA_FIXTURE
+
+_LEGACY_COROLLA_FRAME_ID = "NRE210-2005418"
 
 
 def _resolve_calculation_date(lot: Lot, on_date: date | None) -> date:
     if on_date is not None:
         return on_date
-    if lot.frame_id == _COROLLA_FIXTURE["lot_fields"]["frame_id"] and not hasattr(
-        lot, "batch_item"
-    ):
+    if lot.frame_id == _LEGACY_COROLLA_FRAME_ID and not hasattr(lot, "batch_item"):
         # TODO(BE-05/BE-11): benchmark freeze. The canonical Corolla
         # fixture pins the declaration date so the seeded lot keeps
         # reproducing the "3-5 years" corridor of the API contract

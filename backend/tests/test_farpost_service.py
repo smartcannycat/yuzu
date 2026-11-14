@@ -296,7 +296,7 @@ def test_existing_detail_endpoint_exposes_saved_estimate(user_factory, api_clien
 
     user = user_factory()
     seed_starter_lots(user)
-    vehicle = Lot.objects.get(user=user, make="Toyota")
+    vehicle = Lot.objects.get(user=user, frame_id="GB5-3179736")
     save_repair_estimate(vehicle, client=source(error=True))
     token = str(RefreshToken.for_user(user).access_token)
     response = api_client.get(f"/api/v1/lots/{vehicle.pk}", HTTP_AUTHORIZATION=f"Bearer {token}")
@@ -317,7 +317,7 @@ def test_existing_economics_includes_saved_repair_exactly_once(user_factory):
 
     user = user_factory()
     seed_starter_lots(user)
-    vehicle = Lot.objects.get(user=user, make="Toyota")
+    vehicle = Lot.objects.get(user=user, frame_id="GB5-3179736")
     summary = save_repair_estimate(vehicle, client=source(error=True))
     recompute_lot_economics(vehicle, include_repairs=False)
     vehicle.refresh_from_db()

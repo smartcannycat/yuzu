@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from io import BytesIO
+from pathlib import Path
 from typing import TYPE_CHECKING
 from xml.sax.saxutils import escape
 
@@ -15,6 +16,8 @@ if TYPE_CHECKING:
     from apps.lots.models import BatchItem, Lot
 
 logger = logging.getLogger(__name__)
+
+_STARTER_ASSETS_DIR = Path(__file__).resolve().parent / "starter_assets"
 
 _SCAN_MAX_PX = 2400
 _THUMB_MAX_PX = 480
@@ -147,8 +150,16 @@ def render_starter_sheet_svg(lot: Lot) -> str:
     )
 
 
-def attach_starter_sheet_media(lot: Lot) -> None:
-    """Attach generated SVG scan and thumbnail files to a starter benchmark lot."""
+def attach_starter_sheet_media(lot: Lot, *, scan_file: str = "", thumb_file: str = "") -> None:
+    """Attach real starter JPEG scan/thumbnail assets or fallback to an SVG preview."""
+    scan_path = _STARTER_ASSETS_DIR / scan_file if scan_file else None
+    thumb_path = _STARTER_ASSETS_DIR / thumb_file if thumb_file else None
+    if scan_path and thumb_path and scan_path.is_file() and thumb_path.is_file():
+        lot.sheet_scan.save(scan_path.name, ContentFile(scan_path.read_bytes()), save=False)
+        lot.sheet_thumbnail.save(thumb_path.name, ContentFile(thumb_path.read_bytes()), save=False)
+        lot.save(update_fields=["sheet_scan", "sheet_thumbnail", "updated_at"])
+        return
+
     svg_bytes = render_starter_sheet_svg(lot).encode("utf-8")
     lot.sheet_scan.save("sheet.svg", ContentFile(svg_bytes), save=False)
     lot.sheet_thumbnail.save("thumb.svg", ContentFile(svg_bytes), save=False)

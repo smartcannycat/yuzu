@@ -55,6 +55,7 @@ AUTH_USER_MODEL = "users.User"
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -155,9 +156,14 @@ MEDIA_ROOT = media_root_path if media_root_path.is_absolute() else BASE_DIR / me
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# CORS
+# CORS & CSRF
 CORS_ALLOWED_ORIGINS = app_settings.CORS_ALLOWED_ORIGINS
 CORS_ALLOW_ALL_ORIGINS = app_settings.CORS_ALLOW_ALL_ORIGINS
+CSRF_TRUSTED_ORIGINS = list(app_settings.CSRF_TRUSTED_ORIGINS) or [
+    origin
+    for origin in app_settings.CORS_ALLOWED_ORIGINS
+    if origin.startswith(("http://", "https://"))
+]
 
 # Production reverse-proxy and cookie hardening
 if app_settings.is_production:

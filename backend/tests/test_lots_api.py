@@ -95,12 +95,12 @@ def test_lots_list_requires_auth_and_lists_starter_lots_with_media(api_client: C
     for item in body["items"]:
         assert item["thumbnail_url"]
         assert item["thumbnail_url"].startswith("/media/")
-        assert item["thumbnail_url"].endswith(".svg")
+        assert item["thumbnail_url"].endswith(".jpg")
 
-    filtered = api_client.get("/api/v1/lots?make=Toyota&verdict=green", **headers)
+    filtered = api_client.get("/api/v1/lots?make=Honda&verdict=yellow", **headers)
     assert filtered.status_code == 200
     assert filtered.json()["pagination"]["total_items"] == 1
-    assert filtered.json()["items"][0]["frame_id"] == "NRE210-2005418"
+    assert filtered.json()["items"][0]["frame_id"] == "RV3-1005521"
 
 
 @pytest.mark.django_db
@@ -108,7 +108,7 @@ def test_lot_detail_isolates_users_and_exposes_media_links(api_client: Client) -
     headers_a, user_a_id = _register_and_auth(api_client, "a@example.com")
     headers_b, _ = _register_and_auth(api_client, "b@example.com")
 
-    lot = Lot.objects.get(user_id=user_a_id, make="Toyota")
+    lot = Lot.objects.get(user_id=user_a_id, frame_id="RV3-1005521")
     detail_res = api_client.get(f"/api/v1/lots/{lot.id}", **headers_a)
     assert detail_res.status_code == 200
     detail = detail_res.json()
@@ -125,7 +125,7 @@ def test_recalculate_updates_economics_and_rejects_deleted_or_incomplete_lots(
     api_client: Client,
 ) -> None:
     headers, user_id = _register_and_auth(api_client, "recalc@example.com")
-    lot = Lot.objects.get(user_id=user_id, make="Toyota")
+    lot = Lot.objects.get(user_id=user_id, frame_id="RV3-1005521")
 
     ok = api_client.post(
         f"/api/v1/lots/{lot.id}/recalculate",

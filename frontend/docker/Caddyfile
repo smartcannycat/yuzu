@@ -19,6 +19,14 @@
 		reverse_proxy {$API_UPSTREAM:http://api:8000}
 	}
 
+	handle /admin* {
+		reverse_proxy {$API_UPSTREAM:http://api:8000}
+	}
+
+	handle /static/* {
+		reverse_proxy {$API_UPSTREAM:http://api:8000}
+	}
+
 	handle_path /media/* {
 		root * {$MEDIA_ROOT_DIR:/app/media}
 		header Cache-Control "public, max-age=604800"
