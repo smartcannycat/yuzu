@@ -22,6 +22,7 @@ from apps.core.enums import (
     WorkType,
 )
 from apps.lots.lifecycle import compute_lot_expires_at
+from apps.lots.media import attach_starter_sheet_media
 from apps.lots.models import (
     CrossAuditReport,
     CurrencyRatesSnapshot,
@@ -263,6 +264,14 @@ def _build_fixture(
                 _WISE_COST_TEMPLATE, step_amounts, strict=True
             )
         ],
+        "baseline_economics": {
+            "bid_jpy": int(bid_jpy),
+            "is_commercial_util": bool(customs_overrides.get("is_commercial_util", False)),
+            "include_repairs": bool(lot_fields.get("is_repairs_included", True)),
+            "power_hp": lot_fields.get("power_hp"),
+            "power_hp_source": lot_fields.get("power_hp_source"),
+            "freight_rub": customs_overrides.get("freight_vladivostok_rub"),
+        },
     }
 
 
@@ -691,9 +700,21 @@ def _create_lot_relations(
 
 def _seed_lot_from_fixture(user: User, now, fixture: dict[str, Any]) -> Lot:
     lot_fields = fixture["lot_fields"]
+    baseline = fixture.get("baseline_economics")
     expires_at = compute_lot_expires_at(now, lot_fields.get("auction_date"))
-    lot = Lot.objects.create(user=user, completed_at=now, expires_at=expires_at, **lot_fields)
+    extra_fields: dict[str, Any] = {}
+    if isinstance(baseline, dict) and "bid_jpy" in baseline:
+        extra_fields["auction_bid_jpy"] = int(baseline["bid_jpy"])
+        extra_fields["baseline_economics"] = dict(baseline)
+    lot = Lot.objects.create(
+        user=user,
+        completed_at=now,
+        expires_at=expires_at,
+        **lot_fields,
+        **extra_fields,
+    )
     _create_lot_relations(lot, now, fixture=fixture)
+    attach_starter_sheet_media(lot)
     return lot
 
 
@@ -729,5 +750,7 @@ def backfill_starter_lots(*, defer_fields=(), customs_model=CustomsCalculation) 
                 fixture=fixture,
                 customs_model=customs_model,
             )
+            if not lot.sheet_scan or not lot.sheet_thumbnail:
+                attach_starter_sheet_media(lot)
             repaired += 1
     return repaired

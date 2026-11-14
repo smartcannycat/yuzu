@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from apps.core.redis_utils import acquire_distributed_interval_slot
 from apps.lots.integrations.aleado.parser import (
     AleadoLotDetail,
     AleadoLotRow,
@@ -99,6 +100,7 @@ class AleadoClient:
         self.timeout_sec = timeout_sec
         self.request_interval_sec = request_interval_sec
         self._sleep = sleep_fn or time.sleep
+        self._uses_custom_transport = transport is not None
         self._logged_in = False
         self._client = httpx.Client(
             base_url=self.base_url,
@@ -120,6 +122,16 @@ class AleadoClient:
     # --- low-level plumbing -------------------------------------------------
 
     def _throttle(self) -> None:
+        if not self._uses_custom_transport and self.request_interval_sec > 0:
+            wait_sec = acquire_distributed_interval_slot(
+                "yuzu:aleado:next_request_at",
+                self.request_interval_sec,
+            )
+            if wait_sec is not None:
+                if wait_sec > 0:
+                    self._sleep(wait_sec)
+                return
+
         with AleadoClient._throttle_lock:
             last = AleadoClient._global_last_request_at
             if last is not None and self.request_interval_sec > 0:

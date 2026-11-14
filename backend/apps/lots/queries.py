@@ -12,6 +12,7 @@ from apps.core.enums import (
 )
 from apps.core.exceptions import NotFoundProblemError
 from apps.lots import schemas
+from apps.lots.economics import is_simulation_modified
 from apps.lots.lifecycle import archive_expired_lots_for_user
 from apps.lots.models import (
     Batch,
@@ -415,6 +416,7 @@ def _build_economics(lot: Lot) -> schemas.EconomicsDetail:
         bid_slider_max_jpy=lot.bid_slider_max_jpy,
         bid_slider_step_jpy=lot.bid_slider_step_jpy,
         is_repairs_included=lot.is_repairs_included,
+        is_simulation_modified=is_simulation_modified(lot, lot.customs_calc, lot.wise_cost_ladder),
         customs=_build_customs_out(lot.customs_calc),
         farpost_repair=_build_farpost_out(lot.farpost_repair),
         wise_cost_ladder=_build_wise_cost_out(lot.wise_cost_ladder),

@@ -159,6 +159,7 @@ class Lot(models.Model):
     bid_slider_max_jpy = models.PositiveIntegerField(default=2500000)
     bid_slider_step_jpy = models.PositiveIntegerField(default=10000)
     is_repairs_included = models.BooleanField(default=True)
+    baseline_economics = models.JSONField(null=True, blank=True)
 
     auction_date = models.CharField(max_length=20, blank=True, null=True)
     is_archived = models.BooleanField(default=False)

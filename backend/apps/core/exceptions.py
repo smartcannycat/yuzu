@@ -50,3 +50,9 @@ class ConflictProblemError(ApiProblemError):
     status_code = 409
     default_type = f"{ERROR_TYPE_BASE}/conflict"
     default_title = "Конфликт данных"
+
+
+class TooManyRequestsProblemError(ApiProblemError):
+    status_code = 429
+    default_type = f"{ERROR_TYPE_BASE}/rate-limit-exceeded"
+    default_title = "Слишком много запросов"

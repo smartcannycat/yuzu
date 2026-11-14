@@ -1,9 +1,8 @@
 import logging
-import sys
-import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from pathlib import Path
 
 from django.conf import settings
@@ -24,9 +23,11 @@ from apps.core.exceptions import (
     ConflictProblemError,
     NotFoundProblemError,
 )
+from apps.core.redis_utils import get_redis_client
 from apps.lots.economics import (
     _missing_customs_inputs,
     _resolve_start_bid_jpy,
+    ensure_lot_baseline,
     recompute_lot_economics,
 )
 from apps.lots.integrations.aleado.service import AleadoCrossAuditService
@@ -34,6 +35,7 @@ from apps.lots.integrations.currency.service import build_currency_service, to_c
 from apps.lots.integrations.drom.schemas import DromFetchError, DromMarketResult, DromSearchCriteria
 from apps.lots.integrations.farpost.service import save_repair_estimate
 from apps.lots.lifecycle import compute_lot_expires_at
+from apps.lots.media import attach_uploaded_sheet_media_from_item
 from apps.lots.models import (
     Batch,
     BatchItem,
@@ -142,9 +144,9 @@ def _create_batch_items(
 
 
 def _schedule_batch_pipeline(batch_id: uuid.UUID) -> None:
-    transaction.on_commit(
-        lambda: threading.Thread(target=run_batch_pipeline, args=(batch_id,), daemon=True).start()
-    )
+    from apps.lots.tasks import process_batch_task
+
+    transaction.on_commit(lambda: process_batch_task.delay(str(batch_id)))
 
 
 @transaction.atomic
@@ -498,6 +500,10 @@ def _step_customs_calc(item: BatchItem) -> bool:
     try:
         recompute_lot_economics(lot, bid_jpy=bid_jpy)
         lot.refresh_from_db()
+        customs_model = CustomsCalculation.objects.filter(lot=lot).first()
+        ladder_model = WiseCostLadder.objects.filter(lot=lot).first()
+        if customs_model is not None and ladder_model is not None:
+            ensure_lot_baseline(lot, customs_model, ladder_model)
     except Exception:
         logger.exception("Customs recomputation failed for lot %s", lot.pk)
         _fail_item(item, TaskStep.FAILED, "Не удалось рассчитать таможные платежи")
@@ -569,6 +575,7 @@ def _run_ocr_stage(item: BatchItem) -> bool:
         if not item.lot.make or not item.lot.model:
             _fail_item(item, TaskStep.FAILED, "Распознавание не вернуло марку и модель")
             return False
+        attach_uploaded_sheet_media_from_item(item)
         return True
     except Exception:
         logger.exception("Parser failed for batch item %s", item.pk)
@@ -671,31 +678,50 @@ def run_batch_pipeline(batch_id: uuid.UUID) -> None:
         connection.close()
 
 
-def recover_batches_on_startup() -> None:
-    """Requeue interrupted batches when the application server starts."""
-    if "pytest" in sys.modules:
-        return
-    # Skip when the database schema is not migrated yet (fresh databases,
-    # manage.py migrate itself runs AppConfig.ready() before applying).
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT 1 FROM information_schema.tables WHERE table_name = 'lots_batches'"
-            )
-            if cursor.fetchone() is None:
-                return
-    except Exception:
-        logger.exception("Batch recovery check failed")
-        return
+def recover_batches_on_startup(
+    *,
+    stale_before: datetime | None = None,
+    use_startup_lock: bool = True,
+) -> int:
+    """Requeue interrupted batches when a background worker starts or recovers."""
+    if use_startup_lock:
+        client = get_redis_client()
+        if client is not None:
+            try:
+                if not client.set("yuzu:recovery:startup_lock", "1", nx=True, ex=60):
+                    return 0
+            except Exception:
+                logger.warning("Could not acquire Redis startup recovery lock", exc_info=True)
+
     stuck_statuses = [BatchStatus.QUEUED, BatchStatus.PROCESSING]
     batches = Batch.objects.filter(status__in=stuck_statuses)
+    if stale_before is not None:
+        batches = batches.filter(updated_at__lte=stale_before)
+
+    from apps.lots.tasks import process_batch_task
+
+    requeued = 0
     for batch in batches:
-        BatchItem.objects.filter(
-            batch=batch,
-            status=ItemProcessingStatus.PROCESSING,
-        ).update(
-            status=ItemProcessingStatus.QUEUED,
-            current_step=TaskStep.GATEKEEPER,
-        )
-        Batch.objects.filter(id=batch.id).update(status=BatchStatus.QUEUED)
-        threading.Thread(target=run_batch_pipeline, args=(batch.id,), daemon=True).start()
+        with transaction.atomic():
+            locked = Batch.objects.select_for_update().filter(
+                id=batch.id,
+                status__in=stuck_statuses,
+            )
+            if stale_before is not None:
+                locked = locked.filter(updated_at__lte=stale_before)
+            target = locked.first()
+            if target is None:
+                continue
+            BatchItem.objects.filter(
+                batch=target,
+                status=ItemProcessingStatus.PROCESSING,
+            ).update(
+                status=ItemProcessingStatus.QUEUED,
+                current_step=TaskStep.GATEKEEPER,
+                updated_at=timezone.now(),
+            )
+            target.status = BatchStatus.QUEUED
+            target.save(update_fields=["status", "updated_at"])
+        process_batch_task.delay(str(batch.id))
+        requeued += 1
+    return requeued

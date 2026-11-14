@@ -176,3 +176,31 @@ NINJA_JWT = {
     "USER_ID_FIELD": "id",
     "USER_ID_CLAIM": "user_id",
 }
+
+# Redis, Celery & Rate Limiting
+REDIS_URL = app_settings.REDIS_URL or app_settings.CELERY_BROKER_URL
+CELERY_BROKER_URL = (
+    app_settings.CELERY_BROKER_URL or app_settings.REDIS_URL or "redis://127.0.0.1:6379/0"
+)
+CELERY_TASK_ALWAYS_EAGER = app_settings.CELERY_TASK_ALWAYS_EAGER or app_settings.is_testing
+CELERY_TASK_EAGER_PROPAGATES = True
+CELERY_TASK_ACKS_LATE = True
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+CELERY_TASK_IGNORE_RESULT = True
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_TIMEZONE = "UTC"
+CELERY_BEAT_SCHEDULE = {
+    "recover-stuck-batches": {
+        "task": "apps.lots.tasks.recover_stuck_batches_task",
+        "schedule": 300.0,
+    },
+    "purge-stale-media": {
+        "task": "apps.lots.tasks.purge_stale_media_task",
+        "schedule": 3600.0,
+    },
+}
+
+RATE_LIMIT_ENABLED = app_settings.RATE_LIMIT_ENABLED and not app_settings.is_testing
+MEDIA_PURGE_DELETED_AFTER_DAYS = app_settings.MEDIA_PURGE_DELETED_AFTER_DAYS
+MEDIA_PURGE_BATCH_ORIGINALS_AFTER_HOURS = app_settings.MEDIA_PURGE_BATCH_ORIGINALS_AFTER_HOURS
