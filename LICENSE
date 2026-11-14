@@ -1,0 +1,40 @@
+Elastic License 2.0 (ELv2)
+Copyright (c) 2026 Команда проекта YUZU (yuzu.auto / yuzu.nlzr.net). Все права защищены.
+
+КРАТКАЯ СПРАВКА (НЕ ЗАМЕНЯЕТ ТЕКСТ ЛИЦЕНЗИИ НИЖЕ):
+- Разрешено: просматривать исходный код, клонировать и запускать проект локально для проверки, оценки (в рамках хакатона) и внутренних тестов.
+- Запрещено:
+  1. Предоставлять проект или его части третьим лицам в качестве хостинга, управляемого сервиса (SaaS), API или конкурирующего продукта.
+  2. Обходить лицензионные ограничения, а также удалять или изменять упоминания авторских прав, логотипы и бренд YUZU.
+
+========================================================================
+
+Elastic License 2.0
+
+This Elastic License 2.0 ("License") applies to the YUZU software and source code ("Software") provided by the YUZU Team ("Licensor").
+
+1. License Grant
+
+Conditioned upon compliance with all of the terms and conditions of this License, Licensor hereby grants you a non-exclusive, non-transferable, non-sublicensable, worldwide, royalty-free license to use, copy, modify, create derivative works of, and distribute the Software, solely for your internal business or non-commercial evaluation purposes, subject to the limitations in Section 2.
+
+2. Limitations
+
+2.1. No Managed Service / No Competing SaaS.
+You may not provide the Software, or any derivative work thereof, to third parties as a hosted or managed service, Software-as-a-Service (SaaS), API, bot, or commercial product where the service provides substantially the functionality of the Software (including, without limitation, automated parsing of vehicle auction sheets, cross-auction Frame ID auditing, or vehicle import cost estimation).
+
+2.2. No Circumvention or Removal of Proprietary Notices.
+You may not:
+(a) alter, remove, or obscure any licensing, copyright, trademark, or branding notices (including the "YUZU" name, logo, and mascot) of Licensor in the Software; or
+(b) circumvent, disable, or bypass any technical limitations or access controls in the Software.
+
+3. Reservation of Rights and Trademarks
+
+No right, title, or interest in or to any trademark, service mark, logo, or trade name of Licensor (including "YUZU", "YUZU.auto", and the YUZU mascot illustrations) is granted under this License. All rights not expressly granted herein are reserved by Licensor.
+
+4. Termination
+
+If you breach any term of this License, your rights to use the Software under this License will terminate automatically and immediately without notice.
+
+5. Disclaimer of Warranty and Limitation of Liability
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
