@@ -103,3 +103,12 @@ class ParserResponse(MlServiceBaseModel):
     low_confidence_fields: list[str] = Field(default_factory=list)
     sheet: NormalizedSheet | None = None
     meta: ParserMeta = Field(default_factory=ParserMeta)
+
+
+class ChassisRead(MlServiceBaseModel):
+    """Chassis number read from an Aleado chassis-number image."""
+
+    frame_id: str | None = None
+    raw: str | None = None
+    confidence: str | None = None
+    cached: bool = False

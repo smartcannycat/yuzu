@@ -23,6 +23,13 @@ class FastHeaderPreviewSchema(BaseModel):
     lot_number: str | None = None
 
 
+class ChassisRead(BaseModel):
+    """Chassis/frame number read from a tiny Aleado chassis-number image."""
+
+    frame_id: str | None = None
+    confidence: Literal["high", "medium", "low"] = "low"
+
+
 class DefectExtractionSchema(BaseModel):
     """Structured defect mark extracted from the vehicle body diagram."""
 

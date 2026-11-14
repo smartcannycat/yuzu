@@ -29,6 +29,7 @@ from apps.lots.economics import (
     _resolve_start_bid_jpy,
     recompute_lot_economics,
 )
+from apps.lots.integrations.aleado.service import AleadoCrossAuditService
 from apps.lots.integrations.currency.service import build_currency_service, to_customs_rates_input
 from apps.lots.integrations.drom.schemas import DromFetchError, DromMarketResult, DromSearchCriteria
 from apps.lots.integrations.farpost.service import save_repair_estimate
@@ -342,11 +343,18 @@ def _step_cross_audit(item: BatchItem) -> bool:
         _fail_item(item, TaskStep.FAILED, "Лот не привязан к элементу пачки")
         return False
     try:
-        build_cross_audit_baseline(lot)
+        # Real cross-audit through the Aleado catalog (BE-08). Any failure
+        # of the external source falls back to the honest sheet-based
+        # baseline so the step never fails because of a third party.
+        AleadoCrossAuditService().audit_lot(lot)
     except Exception:
-        logger.exception("Cross audit baseline failed for item %s", item.pk)
-        _fail_item(item, TaskStep.FAILED, "Не удалось зафиксировать результаты кросс-аудита")
-        return False
+        logger.exception("Aleado cross audit failed for item %s", item.pk)
+        try:
+            build_cross_audit_baseline(lot)
+        except Exception:
+            logger.exception("Cross audit baseline failed for item %s", item.pk)
+            _fail_item(item, TaskStep.FAILED, "Не удалось зафиксировать результаты кросс-аудита")
+            return False
     try:
         build_safety_checklist(lot)
     except Exception:

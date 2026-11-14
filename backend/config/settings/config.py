@@ -64,6 +64,14 @@ class AppSettings(BaseSettings):
     CBRF_JPY_SPREAD: float = Field(default=0.03, ge=0, allow_inf_nan=False)
     CBRF_FALLBACK_RATES: dict[str, str | float] | None = None
 
+    # Aleado cross-audit gateway (BE-08)
+    ALEADO_BASE_URL: str = "https://auc.aleado.com"
+    ALEADO_USERNAME: str = ""
+    ALEADO_PASSWORD: str = ""
+    ALEADO_TIMEOUT_SEC: float = Field(default=20.0, gt=0, allow_inf_nan=False)
+    ALEADO_REQUEST_INTERVAL_SEC: float = Field(default=1.0, gt=0, allow_inf_nan=False)
+    ALEADO_VERIFY_CANDIDATES: int = Field(default=10, ge=0, le=50)
+
     @field_validator("ALLOWED_HOSTS", "CORS_ALLOWED_ORIGINS")
     @classmethod
     def parse_comma_separated_list(cls, value: list[str] | str) -> list[str]:

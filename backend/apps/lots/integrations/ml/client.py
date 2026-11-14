@@ -88,6 +88,44 @@ class MlServiceClient:
             logger.warning("ML service returned an invalid payload: %s", exc)
             raise MlServiceError(f"ML service returned an invalid payload: {exc}") from exc
 
+    def read_chassis(
+        self,
+        image_bytes: bytes,
+        mime_type: str = "image/jpeg",
+    ) -> schemas.ChassisRead | None:
+        """Read the chassis number from a chassis-number image via the ML service.
+
+        Returns ``None`` when the model could not read the image.
+
+        Raises:
+            MlServiceUnavailableError: timeout, connection failure, or HTTP 503.
+            MlServiceError: any other unexpected HTTP status or invalid payload.
+        """
+        endpoint = "/api/v1/chassis/read"
+        filename = "chassis.jpg" if mime_type != "image/png" else "chassis.png"
+        try:
+            response = self._client.post(
+                endpoint,
+                files={"file": (filename, image_bytes, mime_type)},
+            )
+        except httpx.TimeoutException as exc:
+            raise MlServiceUnavailableError(f"ML service timed out: {exc}") from exc
+        except httpx.HTTPError as exc:
+            raise MlServiceUnavailableError(f"ML service is unreachable: {exc}") from exc
+
+        if response.status_code == 503:
+            raise MlServiceUnavailableError(f"ML service is unavailable: {_detail(response)}")
+        if response.status_code >= 400:
+            raise MlServiceError(
+                f"ML service returned HTTP {response.status_code}: {_detail(response)}"
+            )
+
+        try:
+            return schemas.ChassisRead.model_validate_json(response.content)
+        except ValueError as exc:
+            logger.warning("ML service returned an invalid chassis payload: %s", exc)
+            raise MlServiceError(f"ML service returned an invalid payload: {exc}") from exc
+
 
 def _detail(response: httpx.Response) -> str:
     try:

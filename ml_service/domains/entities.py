@@ -54,6 +54,17 @@ class GatekeeperDecisionEntity:
 
 
 @dataclass(slots=True, frozen=True)
+class ChassisOcrEntity:
+    """Chassis number read from a small chassis-number image."""
+
+    frame_id: str | None = None
+    raw: str | None = None
+    confidence: str = "low"
+    cached: bool = False
+    duration_ms: int = 0
+
+
+@dataclass(slots=True, frozen=True)
 class FastHeaderPreviewEntity:
     """Fast low-resolution header preview returned ahead of full extraction."""
 

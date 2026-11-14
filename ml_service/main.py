@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from ml_service.api.router import register_exception_handlers, router
 from ml_service.config import Settings, get_settings
 from ml_service.factories.sheet_factory import SheetFactory
+from ml_service.infrastructure.chassis_ocr_client import ChassisOcrClient
 from ml_service.infrastructure.gemini_vision_client import AsyncGeminiVisionClient
 from ml_service.infrastructure.image_cropper import PillowImageCropper
 from ml_service.infrastructure.image_loader import AsyncImageLoader
@@ -68,6 +69,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             default_auction_strictness=resolved_settings.default_auction_strictness,
         )
         cache = ResultCache(cache_dir=resolved_settings.cache_dir)
+        chassis_ocr_client = ChassisOcrClient(
+            vision_client=vision_client,
+            cache_dir=resolved_settings.cache_dir,
+        )
 
         parser_service = SheetParserService(
             image_loader=image_loader,
@@ -89,6 +94,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app_instance.state.key_pool = key_pool
         app_instance.state.parser_service = parser_service
         app_instance.state.batch_service = batch_service
+        app_instance.state.chassis_ocr_client = chassis_ocr_client
         try:
             yield
         finally:
