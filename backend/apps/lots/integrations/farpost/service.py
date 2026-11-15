@@ -1,5 +1,7 @@
 """Estimate parts and STO work, then atomically persist the existing repair contract."""
 
+from __future__ import annotations
+
 import hashlib
 import json
 import logging
@@ -22,8 +24,10 @@ from apps.lots.integrations.farpost.client import (
     FarpostClient,
     FarpostFetchError,
     FarpostRateLimitedError,
+    ParseResult,
     PartCriteria,
     PartOffer,
+    matches_paint_code,
 )
 from apps.lots.models import DamagedPartItem, FarpostRepairSummary, Lot, ServiceWorkItem
 from apps.lots.schemas import FarpostRepairSummary as RepairSchema
@@ -32,8 +36,13 @@ from config.settings.config import get_settings
 logger = logging.getLogger(__name__)
 
 _FARPOST_COOLDOWN_KEY = "yuzu:farpost:cooldown"
-_MODEL_TRIM_RE = re.compile(r"\b(?:hv|hybrid|phev|phv|e:hev|e-power|epower|4wd|awd|2wd)\b", re.I)
-_BODY_CODE_RE = re.compile(r"[A-Z]{1,5}\d{1,4}[A-Z]?")
+_MODEL_TRIM_RE = re.compile(
+    r"\b(?:hv|hybrid|phev|phv|e:hev|e-power|epower|4wd|awd|2wd|"
+    r"custom|crosstar|spada|g4|modulo|nismo|gr\s*sport)\b",
+    re.I,
+)
+_BODY_CODE_RE = re.compile(r"[A-Z]{1,5}\d{1,4}[A-Z]{0,2}")
+_VIN_RE = re.compile(r"^[A-HJ-NPR-Z0-9]{17}$")
 
 _cooldown_lock = threading.Lock()
 _local_cooldown_until = 0.0
@@ -65,6 +74,12 @@ LABELS = {
     WorkType.PDR_AND_POLISH: "PDR / полировка",
     WorkType.BODYWORK: "Кузовное восстановление",
 }
+_FALLBACK_SUBTITLES = {
+    "missing_identity": "Статистическая оценка; не определён код кузова",
+    "rate_limited": "Статистическая оценка; Farpost временно ограничил выдачу",
+    "fetch_error": "Статистическая оценка; источник Farpost временно недоступен",
+    "not_found": "Статистическая оценка; на Farpost нет подходящих предложений",
+}
 
 
 @lru_cache
@@ -73,8 +88,9 @@ def repair_matrix() -> dict:
 
 
 def _cache_key(criteria: PartCriteria) -> str:
-    identity = json.dumps(asdict(criteria), sort_keys=True, ensure_ascii=True).encode()
-    return "farpost:parts:v1:" + hashlib.sha256(identity).hexdigest()
+    normalized = replace(criteria, paint_code="")
+    identity = json.dumps(asdict(normalized), sort_keys=True, ensure_ascii=True).encode()
+    return "farpost:parts:v2:" + hashlib.sha256(identity).hexdigest()
 
 
 def _read_offers(entry: ExternalCache | None) -> list[PartOffer] | None:
@@ -84,7 +100,17 @@ def _read_offers(entry: ExternalCache | None) -> list[PartOffer] | None:
         rows = entry.payload["offers"]
         if not isinstance(rows, list):
             return None
-        offers = [PartOffer(**row) for row in rows]
+        offers = [
+            PartOffer(
+                offer_id=row["offer_id"],
+                url=row["url"],
+                title=row["title"],
+                price_rub=row["price_rub"],
+                color_matched=row["color_matched"],
+                snippet=row.get("snippet", "") if isinstance(row.get("snippet", ""), str) else "",
+            )
+            for row in rows
+        ]
         if any(
             type(o.price_rub) is not int
             or o.price_rub <= 0
@@ -140,34 +166,51 @@ def _stale_fallback(entry: ExternalCache | None) -> tuple[list[PartOffer], bool]
     return [], True
 
 
-def search_cached(
+def _search_cached_with_reason(
     client: FarpostClient,
     criteria: PartCriteria,
     *,
     deadline: float,
-) -> tuple[list[PartOffer], bool]:
-    """Keep successful offers separate from short-lived valid empty results."""
+) -> tuple[list[PartOffer], bool, str]:
+    """Read-through cache keyed independently of paint_code with typed fallback reasons."""
     settings = get_settings()
-    key = _cache_key(criteria)
+    query_criteria = replace(criteria, paint_code="")
+    key = _cache_key(query_criteria)
     entry = ExternalCache.objects.filter(key=key, source=ExternalCacheSource.FARPOST).first()
     offers = _read_offers(entry)
     if offers is not None and not entry.is_expired:
-        return offers, False
-    empty = ExternalCache.objects.filter(key=key + ":empty").first()
+        return offers, False, ""
+    empty = ExternalCache.objects.filter(
+        key=key + ":empty", source=ExternalCacheSource.FARPOST
+    ).first()
     if empty is not None and not empty.is_expired:
-        return [], False
+        return [], False, "not_found"
     if _is_rate_limit_cooldown_active():
         logger.info("Farpost cooldown active; using fallback for %s", criteria.panel_id)
-        return _stale_fallback(entry)
+        stale_offers, stale = _stale_fallback(entry)
+        return stale_offers, stale, "rate_limited"
     try:
-        offers = client.search(criteria, deadline=deadline)
+        if (
+            isinstance(client, FarpostClient)
+            and getattr(type(client), "search", None) is FarpostClient.search
+        ):
+            parse_result = client.search_with_metadata(query_criteria, deadline=deadline)
+        else:
+            parse_result = ParseResult(
+                offers=client.search(query_criteria, deadline=deadline),
+                exact_feed_count=None,
+            )
     except FarpostRateLimitedError as exc:
         logger.warning("Farpost rate limited on %s: %s", criteria.panel_id, exc)
         _activate_rate_limit_cooldown(settings.FARPOST_COOLDOWN_SEC)
-        return _stale_fallback(entry)
+        stale_offers, stale = _stale_fallback(entry)
+        return stale_offers, stale, "rate_limited"
     except FarpostFetchError as exc:
         logger.warning("Farpost search failed for %s: %s", criteria.panel_id, exc)
-        return _stale_fallback(entry)
+        stale_offers, stale = _stale_fallback(entry)
+        return stale_offers, stale, "fetch_error"
+
+    offers = parse_result.offers
     if offers:
         ExternalCache.objects.update_or_create(
             key=key,
@@ -178,7 +221,11 @@ def search_cached(
             },
         )
         ExternalCache.objects.filter(key=key + ":empty").delete()
-    else:
+        return offers, False, ""
+
+    # Only negative-cache when Farpost confirms 0 listings (or mock/unparsed feed count),
+    # never when exactFeedCount > 0 simply had incompatible/unlabeled rows on pages 1-2.
+    if parse_result.exact_feed_count is None or parse_result.exact_feed_count == 0:
         ExternalCache.objects.update_or_create(
             key=key + ":empty",
             defaults={
@@ -187,7 +234,18 @@ def search_cached(
                 "expires_at": timezone.now() + timedelta(minutes=10),
             },
         )
-    return offers, False
+    return [], False, "not_found"
+
+
+def search_cached(
+    client: FarpostClient,
+    criteria: PartCriteria,
+    *,
+    deadline: float,
+) -> tuple[list[PartOffer], bool]:
+    """Keep successful offers separate from short-lived valid empty results."""
+    offers, stale, _reason = _search_cached_with_reason(client, criteria, deadline=deadline)
+    return offers, stale
 
 
 def _search_model(model: str) -> str:
@@ -200,8 +258,12 @@ def _body_code(lot: Lot) -> str:
     candidates: list[str] = []
     for value in (lot.frame_id, lot.chassis_number):
         upper = (value or "").upper().strip()
-        if upper:
-            candidates.append(upper.split("-", 1)[0])
+        if not upper:
+            continue
+        if "-" not in upper and _VIN_RE.fullmatch(upper):
+            # 17-char VINs do not start with a searchable Farpost chassis series.
+            continue
+        candidates.append(upper.split("-", 1)[0])
     if lot.model_code:
         upper = lot.model_code.upper().strip()
         if "-" in upper:
@@ -247,12 +309,46 @@ def _operations(codes: set[str], matrix: dict) -> dict[str, int]:
     return work
 
 
+def _select_best_offer(
+    offers: list[PartOffer],
+    *,
+    paint_code: str,
+    paint_cost_rub: int,
+    panel: str,
+    stale: bool,
+) -> tuple[PartOffer | None, bool]:
+    if not offers:
+        return None, False
+    best_plain = min(offers, key=lambda item: (item.price_rub, item.offer_id))
+    if stale or not paint_code or panel == "windshield":
+        return best_plain, False
+    colored = [
+        item
+        for item in offers
+        if item.color_matched or matches_paint_code(f"{item.title} {item.snippet}", paint_code)
+    ]
+    if not colored:
+        return best_plain, False
+    best_colored = min(colored, key=lambda item: (item.price_rub, item.offer_id))
+    if best_colored.price_rub <= best_plain.price_rub + paint_cost_rub:
+        return best_colored, True
+    return best_plain, False
+
+
+def _work_label(kind: WorkType, name: str, panel: str) -> str:
+    if kind == WorkType.BODYWORK or panel in FIXED_PANELS:
+        return f"{LABELS[kind]}: {name} (расчёт по матрице)"
+    return f"{LABELS[kind]}: {name} (норматив СТО)"
+
+
 def estimate_repair(lot: Lot, *, client: FarpostClient | None = None) -> RepairSchema:
     settings = get_settings()
     managed = client is None
     active_client = client or FarpostClient(
         timeout_sec=settings.FARPOST_TIMEOUT_SEC,
         request_interval_sec=settings.FARPOST_REQUEST_INTERVAL_SEC,
+        request_jitter_sec=settings.FARPOST_REQUEST_JITTER_SEC,
+        proxy_urls=settings.FARPOST_PROXY_URLS,
     )
     deadline = time.monotonic() + settings.FARPOST_BUDGET_SEC
     matrix = repair_matrix()
@@ -280,27 +376,31 @@ def estimate_repair(lot: Lot, *, client: FarpostClient | None = None) -> RepairS
                     part_name,
                     side,
                     position,
-                    paint_code,
+                    "",
                 )
-                offers, stale = [], False
+                offers, stale, reason = [], False, "missing_identity"
                 if criteria.make and criteria.model and criteria.body_code:
-                    offers, stale = search_cached(active_client, criteria, deadline=deadline)
-                    if not offers and criteria.paint_code and not stale:
-                        criteria = replace(criteria, paint_code="")
-                        offers, stale = search_cached(active_client, criteria, deadline=deadline)
-                offer = min(offers, key=lambda item: item.price_rub) if offers else None
-                matched = bool(offer and offer.color_matched and not stale)
+                    offers, stale, reason = _search_cached_with_reason(
+                        active_client, criteria, deadline=deadline
+                    )
+                offer, matched = _select_best_offer(
+                    offers,
+                    paint_code=paint_code,
+                    paint_cost_rub=matrix["paint"],
+                    panel=panel,
+                    stale=stale,
+                )
                 has_color_matched_parts |= matched
                 if offer and not stale:
                     subtitle = (
-                        f"Контрактная деталь в заводской цвет {lot.paint_code}"
+                        f"Контрактная деталь в заводской цвет {paint_code}"
                         if matched
                         else "Контрактная деталь; цвет не подтверждён, требуется окраска"
                     )
                 elif offer:
                     subtitle = "Предварительная цена из кэша; наличие и цвет не подтверждены"
                 else:
-                    subtitle = "Статистическая оценка; наличие и цвет не подтверждены"
+                    subtitle = _FALLBACK_SUBTITLES.get(reason, _FALLBACK_SUBTITLES["not_found"])
                 parts.append(
                     {
                         "panel_id": panel,
@@ -323,7 +423,7 @@ def estimate_repair(lot: Lot, *, client: FarpostClient | None = None) -> RepairS
                 works.append(
                     {
                         "work_type": kind,
-                        "label_ru": f"{LABELS[kind]}: {name} (оценка по матрице)",
+                        "label_ru": _work_label(kind, name, panel),
                         "amount_rub": amount,
                         "zero_cost_reason_ru": "не требуется"
                         if kind == WorkType.PAINT and amount == 0
@@ -331,7 +431,7 @@ def estimate_repair(lot: Lot, *, client: FarpostClient | None = None) -> RepairS
                     }
                 )
     finally:
-        if managed and hasattr(type(active_client), "__exit__"):
+        if managed and hasattr(type(active_client), "__enter__"):
             active_client.__exit__(None, None, None)
     total_parts = sum(part["price_from_rub"] for part in parts)
     total_works = sum(work["amount_rub"] for work in works)

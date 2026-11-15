@@ -1,23 +1,38 @@
 """Read public Farpost listing pages and validate compatible local parts."""
 
+from __future__ import annotations
+
 import json
+import random
 import re
 import threading
 import time
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from urllib.parse import urljoin, urlparse
 
-import httpx
-from bs4 import BeautifulSoup
+from scrapling import Selector
 
 from apps.core.redis_utils import acquire_distributed_interval_slot
+from apps.lots.integrations.http_client import (
+    HttpFetchResponse,
+    HttpTransportError,
+    ProxyRotator,
+    ResilientHttpSession,
+    decode_html_bytes,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    import httpx
 
 _FARPOST_THROTTLE_KEY = "yuzu:farpost:throttle"
 _MIN_SANE_PART_PRICE_RUB = 1000
 _MAX_RESPONSE_BYTES = 3_000_000
+_PAGE_SIZE = 50
 
 _DEFAULT_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:136.0) Gecko/20100101 Firefox/136.0",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.5,en;q=0.3",
 }
@@ -70,6 +85,13 @@ class PartOffer:
     title: str
     price_rub: int
     color_matched: bool
+    snippet: str = ""
+
+
+@dataclass(frozen=True)
+class ParseResult:
+    offers: list[PartOffer]
+    exact_feed_count: int | None
 
 
 _ACCESSORIES = re.compile(
@@ -78,6 +100,14 @@ _ACCESSORIES = re.compile(
     r"решетк|усилител|абсорбер|кронштейн|подкрыл|брызговик|"
     r"фара|фонар|повторител|жабо|трапец|ограничител|форточк|"
     r"коврик|полк[аи]|шторк|упор|эмблем|шильдик|омывател|моторчик",
+    re.I,
+)
+_ASSEMBLY_SUFFIX_RE = re.compile(
+    r"(?:\bв\s+сборе\b.*|\b(?:с|со|без|под)\s+(?:обшивк|ручк|петл|молдинг|уплотнител|"
+    r"стеклопод[ъь]емник|замк|замок|проводк|накладк|зеркал|заглушк|креплен|решетк|"
+    r"усилител|абсорбер|кронштейн|подкрыл|брызговик|фара|фонар|повторител|омывател|"
+    r"туманк|парктроник|датчик|камер|форточк|ограничител|моторчик|эмблем|шильдик|"
+    r"шторк|упор|трапец|стекл)\w*.*)",
     re.I,
 )
 _NON_WINDSHIELD_GLASS = re.compile(r"^\s*стекл[оа]\b|стекло\s+двер|дверн\w*\s+стекл", re.I)
@@ -101,20 +131,61 @@ _MAKE_ALIASES: dict[str, tuple[str, ...]] = {
     "mitsubishi": ("mitsubishi", "митсубиси", "мицубиси"),
     "daihatsu": ("daihatsu", "дайхатсу"),
     "lexus": ("lexus", "лексус"),
+    "mercedes": ("mercedes", "mercedesbenz", "мерседес", "мерседесбенц"),
+    "mercedesbenz": ("mercedesbenz", "mercedes", "мерседес", "мерседесбенц"),
+    "bmw": ("bmw", "бмв"),
+    "audi": ("audi", "ауди"),
+    "volkswagen": ("volkswagen", "vw", "фольксваген"),
+    "mini": ("mini", "мини"),
+    "hyundai": ("hyundai", "хендай", "хундай", "хендэ"),
+    "kia": ("kia", "киа"),
+    "volvo": ("volvo", "вольво"),
+    "porsche": ("porsche", "порше"),
+    "landrover": ("landrover", "лендровер"),
+    "ford": ("ford", "форд"),
+    "chevrolet": ("chevrolet", "шевроле"),
+    "geely": ("geely", "джили"),
+    "chery": ("chery", "чери"),
+    "haval": ("haval", "хавал", "хавейл"),
 }
+
+_SISTER_MAKES: dict[str, frozenset[str]] = {
+    "toyota": frozenset({"toyota", "lexus", "daihatsu"}),
+    "lexus": frozenset({"lexus", "toyota"}),
+    "daihatsu": frozenset({"daihatsu", "toyota"}),
+    "nissan": frozenset({"nissan", "infiniti"}),
+    "infiniti": frozenset({"infiniti", "nissan"}),
+    "honda": frozenset({"honda", "acura"}),
+    "acura": frozenset({"acura", "honda"}),
+    "hyundai": frozenset({"hyundai", "kia", "genesis"}),
+    "kia": frozenset({"kia", "hyundai", "genesis"}),
+    "genesis": frozenset({"genesis", "hyundai", "kia"}),
+}
+
 _MODEL_ALIASES: dict[str, tuple[str, ...]] = {
     "freed": ("freed", "фрид"),
+    "freedspike": ("freedspike", "freed", "фридспайк", "фрид"),
     "fit": ("fit", "фит"),
     "vezel": ("vezel", "везел"),
     "corolla": ("corolla", "королла"),
     "corollafielder": ("corollafielder", "fielder", "филдер", "короллафилдер"),
     "corollatouring": ("corollatouring", "короллатуринг"),
     "prius": ("prius", "приус"),
+    "priusalpha": ("priusalpha", "приусальфа"),
     "aqua": ("aqua", "аква"),
     "vitz": ("vitz", "витц"),
     "yaris": ("yaris", "ярис"),
+    "yariscross": ("yariscross", "ярискросс"),
+    "tank": ("tank", "танк"),
+    "roomy": ("roomy", "руми"),
+    "raize": ("raize", "райз"),
+    "rocky": ("rocky", "рокки"),
+    "rush": ("rush", "раш"),
+    "probox": ("probox", "пробокс"),
+    "succeed": ("succeed", "саксид"),
     "stepwgn": ("stepwgn", "степвагон", "степвагн"),
     "note": ("note", "ноут", "нот"),
+    "roox": ("roox", "рукс"),
     "serena": ("serena", "серена"),
     "xtrail": ("xtrail", "икстрейл"),
     "rav4": ("rav4", "рав4"),
@@ -124,28 +195,64 @@ _MODEL_ALIASES: dict[str, tuple[str, ...]] = {
     "voxy": ("voxy", "вокси"),
     "noah": ("noah", "ноах"),
     "camry": ("camry", "камри"),
+    "crown": ("crown", "краун"),
+    "wish": ("wish", "виш"),
+    "estima": ("estima", "эстима"),
+    "chr": ("chr", "схр"),
+    "landcruiser": ("landcruiser", "лендкрузер", "крузер"),
+    "landcruiserprado": ("landcruiserprado", "prado", "прадо"),
     "sienta": ("sienta", "сиента"),
     "insight": ("insight", "инсайт"),
+    "shuttle": ("shuttle", "шатл"),
+    "odyssey": ("odyssey", "одиссей"),
+    "civic": ("civic", "цивик"),
     "nbox": ("nbox", "нбокс"),
+    "nwgn": ("nwgn", "нвгн"),
     "impreza": ("impreza", "импреза"),
     "levorg": ("levorg", "леворг"),
     "forester": ("forester", "форестер"),
+    "xv": ("xv", "хв"),
+    "legacy": ("legacy", "легаси"),
+    "outback": ("outback", "аутбек"),
+    "delica": ("delica", "делика"),
+    "delicad5": ("delicad5", "delica", "деликад5", "делика"),
+    "outlander": ("outlander", "аутлендер"),
+    "eclipsecross": ("eclipsecross", "эклипскросс"),
     "demio": ("demio", "демио"),
     "axela": ("axela", "аксела"),
     "cx5": ("cx5", "сх5"),
     "swift": ("swift", "свифт"),
+    "jimny": ("jimny", "джимни"),
+    "solio": ("solio", "солио"),
+    "hustler": ("hustler", "хастлер"),
     "spacia": ("spacia", "спейсия"),
+    "wagonr": ("wagonr", "вагонр"),
     "tanto": ("tanto", "танто"),
 }
 
 _LEFT_RE = re.compile(
-    r"(?:(?<![a-zа-я0-9])л\.?(?![a-zа-я0-9])|лев|[пз][/\\.]л\b|\b(?:lh|fl|rl)\b)", re.I
+    r"(?:(?<![a-zа-я0-9])(?:л\.?(?![a-zа-я0-9])|лев|слева\b)|[пз][/\\.]л\b|\b(?:lh|fl|rl)\b)",
+    re.I,
 )
-_RIGHT_RE = re.compile(r"(?:прав|пр\.?(?![a-zа-я0-9])|[пз][/\\.]п\b|\b(?:rh|fr|rr)\b)", re.I)
+_RIGHT_RE = re.compile(
+    r"(?:(?<![a-zа-я0-9])(?:прав|пр\.?(?![a-zа-я0-9])|справа\b)|[пз][/\\.]п\b|\b(?:rh|fr|rr)\b)",
+    re.I,
+)
 _FRONT_RE = re.compile(
-    r"(?:перед|пер\.?(?![a-zа-я0-9])|п[/\\.]л\b|п[/\\.]п\b|\b(?:front|fl|fr)\b)", re.I
+    r"(?:(?<![a-zа-я0-9])(?:перед|пер\.?(?![a-zа-я0-9])|спереди\b)|п[/\\.]л\b|п[/\\.]п\b|\b(?:front|fl|fr)\b)",
+    re.I,
 )
-_REAR_RE = re.compile(r"(?:зад|з[/\\.]л\b|з[/\\.]п\b|\b(?:rear|rl|rr)\b)", re.I)
+_REAR_RE = re.compile(
+    r"(?:(?<![a-zа-я0-9])(?:зад|сзади\b)|з[/\\.]л\b|з[/\\.]п\b|\b(?:rear|rl|rr)\b)",
+    re.I,
+)
+_FENDER_RE = re.compile(r"\bкрыл(?:о|а|у|е|ья|ьев)\b", re.I)
+_LITER_TOKEN_RE = re.compile(r"\b\d+(?:[.,]\d+)?\s*л\.?(?![a-zа-я0-9])", re.I)
+
+
+def _strip_liter_tokens(value: str) -> str:
+    """Remove engine displacement tokens (e.g. '1.5 л') so 'л' is not misread as 'левая'."""
+    return _LITER_TOKEN_RE.sub(" ", value)
 
 
 def _compact(value: str) -> str:
@@ -158,15 +265,49 @@ def _contains_code(text: str, code: str) -> bool:
     return bool(re.search(pattern, text.lower()))
 
 
-def _matches_make_and_model(text: str, criteria: PartCriteria) -> bool:
+_COMPOUND_ALIAS_PATTERNS: dict[str, str] = {
+    "mercedesbenz": r"mercedes[\s-]*benz",
+    "мерседесбенц": r"мерседес[\s-]*бенц",
+    "landrover": r"land[\s-]*rover",
+    "лендровер": r"ленд[\s-]*ровер",
+}
+_MAKE_CONFLICT_PATTERNS: dict[str, re.Pattern[str]] = {
+    make_name: re.compile(
+        r"(?<![a-zа-я0-9])(?:"
+        + "|".join(_COMPOUND_ALIAS_PATTERNS.get(v, re.escape(v)) for v in variants)
+        + r")(?![a-zа-я0-9])",
+        re.I,
+    )
+    for make_name, variants in _MAKE_ALIASES.items()
+}
+
+
+def _has_conflicting_make(text: str, make_key: str) -> bool:
+    allowed = _SISTER_MAKES.get(make_key, frozenset({make_key}))
+    normalized = text.casefold().replace("ё", "е")
+    for other_make, pattern in _MAKE_CONFLICT_PATTERNS.items():
+        if other_make in allowed:
+            continue
+        if pattern.search(normalized):
+            return True
+    return False
+
+
+def _matches_make_and_model(
+    text: str, criteria: PartCriteria, *, has_exact_body_code: bool = False
+) -> bool:
     compact_text = _compact(text)
     make_key = _compact(criteria.make)
     model_key = _compact(criteria.model)
     make_variants = _MAKE_ALIASES.get(make_key, (make_key,))
     model_variants = _MODEL_ALIASES.get(model_key, (model_key,))
-    return any(v and v in compact_text for v in make_variants) and any(
-        v and v in compact_text for v in model_variants
-    )
+    make_matched = any(v and v in compact_text for v in make_variants)
+    model_matched = any(v and v in compact_text for v in model_variants)
+    if make_matched and model_matched:
+        return True
+    if has_exact_body_code and (make_matched or model_matched):
+        return not _has_conflicting_make(text, make_key)
+    return False
 
 
 _TAILGATE_RE = re.compile(
@@ -180,21 +321,27 @@ def _matches_part_name(name: str, criteria: PartCriteria) -> bool:
     if criteria.panel_id == "windshield":
         return "стекл" in lowered and ("лобов" in lowered or "ветров" in lowered)
     if criteria.panel_id == "tailgate":
-        has_side_door = bool(_LEFT_RE.search(name) or _RIGHT_RE.search(name))
+        side_clean = _strip_liter_tokens(name)
+        has_side_door = bool(_LEFT_RE.search(side_clean) or _RIGHT_RE.search(side_clean))
         return (
             "багажник" in lowered
             or "дверь задка" in lowered
             or bool(_TAILGATE_RE.search(lowered))
             or ("задн" in lowered and "двер" in lowered and not has_side_door)
         )
+    if criteria.panel_id in {"front_left_fender", "front_right_fender"}:
+        return bool(_FENDER_RE.search(lowered))
+    if criteria.part_name == "дверь":
+        return "двер" in lowered
     return criteria.part_name.casefold() in lowered
 
 
 def _matches_side_and_position(name: str, criteria: PartCriteria) -> bool:
+    cleaned_name = _strip_liter_tokens(name)
     if criteria.side:
         want_left = criteria.side.casefold().startswith("лев")
-        has_left = bool(_LEFT_RE.search(name))
-        has_right = bool(_RIGHT_RE.search(name))
+        has_left = bool(_LEFT_RE.search(cleaned_name))
+        has_right = bool(_RIGHT_RE.search(cleaned_name))
         if want_left and (not has_left or has_right):
             return False
         if not want_left and (not has_right or has_left):
@@ -202,22 +349,24 @@ def _matches_side_and_position(name: str, criteria: PartCriteria) -> bool:
     if criteria.position and criteria.panel_id != "windshield":
         pos = criteria.position.casefold()
         if pos.startswith("перед"):
-            if not _FRONT_RE.search(name) or _REAR_RE.search(name):
+            if not _FRONT_RE.search(cleaned_name) or _REAR_RE.search(cleaned_name):
                 return False
         elif pos.startswith("зад"):
-            if not _REAR_RE.search(name) or _FRONT_RE.search(name):
+            if not _REAR_RE.search(cleaned_name) or _FRONT_RE.search(cleaned_name):
                 return False
-        elif pos[:5] not in name.casefold():
+        elif pos[:5] not in cleaned_name.casefold():
             return False
     return True
 
 
-def _matches_paint_code(text: str, paint_code: str) -> bool:
+def matches_paint_code(text: str, paint_code: str) -> bool:
+    """Return True when text explicitly confirms the factory paint code."""
     if not paint_code:
         return False
-    code_pat = re.escape(paint_code)
+    code_pat = r"[ \t]*".join(map(re.escape, paint_code))
     context_pattern = (
-        r"(?:цвет|код\s+краски|окрас|paint|color)[^.;\n]{0,30}?"
+        r"(?:цвет|код\s+краски|окрас|paint|color)"
+        r"(?:(?!\b(?:не|другой|пробег|цена)\b)[^.;\n]){0,24}?"
         + r"(?<![a-zа-я0-9])"
         + code_pat
         + r"(?![a-zа-я0-9])"
@@ -231,10 +380,20 @@ def _matches_paint_code(text: str, paint_code: str) -> bool:
     return False
 
 
-def _throttle_wait(deadline: float, interval_sec: float) -> None:
+_matches_paint_code = matches_paint_code
+
+
+def _is_accessory_listing(name: str) -> bool:
+    """Reject standalone trim/mounts while keeping complete doors or bumpers sold in assembly."""
+    head = _ASSEMBLY_SUFFIX_RE.sub("", name).strip()
+    return bool(_ACCESSORIES.search(head))
+
+
+def _throttle_wait(deadline: float, interval_sec: float, jitter_sec: float = 0.0) -> None:
     global _local_next_request_at
-    if interval_sec <= 0:
+    if interval_sec <= 0 and jitter_sec <= 0:
         return
+    jitter = random.uniform(0.0, jitter_sec) if jitter_sec > 0 else 0.0
     wait_sec = acquire_distributed_interval_slot(_FARPOST_THROTTLE_KEY, interval_sec)
     if wait_sec is None:
         with _local_throttle_lock:
@@ -242,43 +401,82 @@ def _throttle_wait(deadline: float, interval_sec: float) -> None:
             scheduled = max(now, _local_next_request_at)
             wait_sec = scheduled - now
             _local_next_request_at = scheduled + interval_sec
-    if wait_sec > 0:
-        if time.monotonic() + wait_sec >= deadline:
+    total_wait = wait_sec + jitter
+    if total_wait > 0:
+        if time.monotonic() + total_wait >= deadline:
             raise FarpostFetchError("Farpost search budget exhausted")
-        time.sleep(wait_sec)
+        time.sleep(total_wait)
 
 
-def parse_offers(html: str, criteria: PartCriteria, *, source_url: str) -> list[PartOffer]:
-    soup = BeautifulSoup(html, "html.parser")
-    title = soup.title.get_text(" ", strip=True) if soup.title else ""
-    if re.search(r"вы не робот|captcha|подозрительный трафик", title + soup.get_text(" "), re.I):
+def _extract_exact_feed_count(page: Selector) -> tuple[int | None, bool]:
+    events = page.css("script#ctr-viewdir-event")
+    if not events:
+        return None, False
+    try:
+        payload = json.loads(events[0].text or "")
+        return int(payload["exactFeedCount"]), True
+    except (ValueError, TypeError, KeyError):
+        return None, False
+
+
+def _extract_price_quote(price_node: Selector) -> str:
+    data_price = str(price_node.attrib.get("data-price", ""))
+    if data_price:
+        quoted = Selector(data_price).get_all_text(separator=" ", strip=True)
+        if quoted:
+            return quoted
+    inner = price_node.css('[data-role="price"]')
+    if inner:
+        return inner[0].get_all_text(separator=" ", strip=True)
+    return price_node.get_all_text(separator=" ", strip=True)
+
+
+def parse_listing_page(html: str, criteria: PartCriteria, *, source_url: str) -> ParseResult:
+    page = Selector(html)
+    title_nodes = page.css("title")
+    title = title_nodes[0].get_all_text(separator=" ", strip=True) if title_nodes else ""
+    body_text = page.get_all_text(separator=" ", strip=True)
+    if re.search(r"вы не робот|captcha|подозрительный трафик", f"{title} {body_text}", re.I):
         raise FarpostRateLimitedError("Farpost returned an anti-bot challenge")
-    # Require explicit server-rendered confirmation of the requested inventory filter.
-    local_filter = soup.select_one('input[name="goodPresentState"][value="present"][checked]')
-    rows = soup.select(".bull-item")
-    event = soup.select_one("script#ctr-viewdir-event")
-    if local_filter is None or urlparse(source_url).path.split("/")[1:2] != ["vladivostok"]:
+    if urlparse(source_url).path.split("/")[1:2] != ["vladivostok"]:
         raise FarpostFetchError("Farpost did not confirm local stock filtering")
+
+    exact_feed_count, event_valid = _extract_exact_feed_count(page)
+    local_filter = page.css('input[name="goodPresentState"][value="present"][checked]')
+    if not local_filter:
+        # When exactFeedCount == 0, Farpost unchecks goodPresentState and shows relaxed suggestions.
+        if event_valid and exact_feed_count == 0:
+            return ParseResult(offers=[], exact_feed_count=0)
+        raise FarpostFetchError("Farpost did not confirm local stock filtering")
+
+    rows = page.css(".bull-item")
     if not rows:
-        try:
-            count = json.loads(event.string or "")["exactFeedCount"] if event else None
-        except (ValueError, TypeError, KeyError) as exc:
-            raise FarpostFetchError("Unrecognized Farpost listing markup") from exc
-        if count == 0:
-            return []
+        if not event_valid:
+            raise FarpostFetchError("Unrecognized Farpost listing markup")
+        if exact_feed_count == 0:
+            return ParseResult(offers=[], exact_feed_count=0)
         raise FarpostFetchError("Farpost returned no recognizable listing rows")
+
     offers: dict[str, PartOffer] = {}
     recognizable = False
     for row in rows:
-        link = row.select_one('[data-role="bulletin-link"]')
-        price = row.select_one(".price-block__final-price")
-        if link is None or price is None:
+        link_nodes = row.css('[data-role="bulletin-link"]')
+        if not link_nodes:
             continue
         recognizable = True
-        name = link.get_text(" ", strip=True)
-        annotation = row.select_one(".bull-item__annotation")
-        text = name + " " + (annotation.get_text(" ", strip=True) if annotation else "")
-        path = str(link.get("href", ""))
+        price_nodes = row.css(".price-block__final-price")
+        if not price_nodes:
+            continue
+        link = link_nodes[0]
+        name = link.get_all_text(separator=" ", strip=True)
+        ann_nodes = row.css(".bull-item__annotation") or row.css(".bull-item__annotation-row")
+        annotation_text = (
+            " ".join(n.get_all_text(separator=" ", strip=True) for n in ann_nodes).strip()
+            if ann_nodes
+            else ""
+        )
+        text = f"{name} {annotation_text}".strip()
+        path = str(link.attrib.get("href", ""))
         url = urljoin(source_url, path)
         parsed = urlparse(url)
         listing_path = parsed.path.removeprefix("/ni/")
@@ -293,42 +491,43 @@ def parse_offers(html: str, criteria: PartCriteria, *, source_url: str) -> list[
             _NON_WINDSHIELD_GLASS.search(name)
         )
         if (
-            _ACCESSORIES.search(name)
+            _is_accessory_listing(name)
             or is_glass_for_non_glass
             or _DAMAGE.search(clean)
             or _UNAVAILABLE.search(text)
             or _NEW_OR_AFTERMARKET.search(text)
         ):
             continue
-        if not _matches_make_and_model(text, criteria):
+        has_body_code = bool(criteria.body_code and _contains_code(text, criteria.body_code))
+        if not has_body_code:
             continue
-        if not criteria.body_code or not _contains_code(text, criteria.body_code):
+        if not _matches_make_and_model(text, criteria, has_exact_body_code=has_body_code):
             continue
         if not _matches_part_name(name, criteria):
             continue
         if not _matches_side_and_position(name, criteria):
             continue
-        # Unknown colors never count as a match and do not remove painting costs.
-        matched = _matches_paint_code(text, criteria.paint_code)
+        matched = matches_paint_code(text, criteria.paint_code)
         if criteria.paint_code and not matched:
             continue
-        quoted = BeautifulSoup(str(price.get("data-price", "")), "html.parser").get_text(
-            " ", strip=True
-        )
-        if not quoted:
-            node = price.select_one('[data-role="price"]')
-            quoted = node.get_text(" ", strip=True) if node else ""
+        quoted = _extract_price_quote(price_nodes[0])
         amount = re.fullmatch(r"\s*([\d\s\xa0]+)\s*₽\s*", quoted)
         if amount is None:
             continue
         value = int(re.sub(r"\D", "", amount[1]))
-        offer_id = str(row.get("data-good-id") or row.get("data-bulletin-id") or "")
+        offer_id = str(row.attrib.get("data-good-id") or row.attrib.get("data-bulletin-id") or "")
         if value < _MIN_SANE_PART_PRICE_RUB or not offer_id:
             continue
-        offers[offer_id] = PartOffer(offer_id, url, name, value, matched)
+        snippet = annotation_text[:600]
+        offers[offer_id] = PartOffer(offer_id, url, name, value, matched, snippet=snippet)
     if not recognizable:
         raise FarpostFetchError("Farpost listing structure changed")
-    return sorted(offers.values(), key=lambda offer: (offer.price_rub, offer.offer_id))
+    sorted_offers = sorted(offers.values(), key=lambda offer: (offer.price_rub, offer.offer_id))
+    return ParseResult(offers=sorted_offers, exact_feed_count=exact_feed_count)
+
+
+def parse_offers(html: str, criteria: PartCriteria, *, source_url: str) -> list[PartOffer]:
+    return parse_listing_page(html, criteria, source_url=source_url).offers
 
 
 class FarpostClient:
@@ -337,69 +536,120 @@ class FarpostClient:
         *,
         timeout_sec: float = 8.0,
         request_interval_sec: float = 0.0,
+        request_jitter_sec: float = 0.0,
+        proxy_urls: Sequence[str] = (),
         transport: httpx.BaseTransport | None = None,
     ):
         self.timeout_sec = timeout_sec
         self.request_interval_sec = request_interval_sec
+        self.request_jitter_sec = request_jitter_sec
         self.transport = transport
-        self._session: httpx.Client | None = None
+        self._proxy_rotator = ProxyRotator(proxy_urls) if proxy_urls else None
+        self._session: ResilientHttpSession | None = None
 
-    def __enter__(self) -> "FarpostClient":
+    def _build_session(self) -> ResilientHttpSession:
+        return ResilientHttpSession(
+            headers=_DEFAULT_HEADERS,
+            timeout_sec=self.timeout_sec,
+            impersonate="chrome",
+            proxy_rotator=self._proxy_rotator,
+            transport=self.transport,
+        )
+
+    def __enter__(self) -> FarpostClient:
         if self._session is None:
-            self._session = httpx.Client(
-                transport=self.transport,
-                headers=_DEFAULT_HEADERS,
-                follow_redirects=True,
-            )
+            self._session = self._build_session()
+            self._session.__enter__()
         return self
 
     def __exit__(self, *args: object) -> None:
         if self._session is not None:
-            self._session.close()
+            self._session.__exit__(*args)
             self._session = None
 
     def _fetch_html(
-        self, client: httpx.Client, criteria: PartCriteria, deadline: float
+        self,
+        session: ResilientHttpSession,
+        criteria: PartCriteria,
+        deadline: float,
+        *,
+        page: int = 1,
     ) -> tuple[str, str]:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise FarpostFetchError("Farpost search budget exhausted")
-        response = client.get(
+        params: dict[str, str | int] = {
+            "query": criteria.query,
+            "goodPresentState": "present",
+            "condition[]": "used",
+            "sortBy": "pricea",
+        }
+        if page > 1:
+            params["page"] = page
+        response: HttpFetchResponse = session.get(
             "https://www.farpost.ru/vladivostok/zapchasti/",
-            params={
-                "query": criteria.query,
-                "goodPresentState": "present",
-                "condition[]": "used",
-                "sortBy": "pricea",
-            },
+            params=params,
             timeout=min(self.timeout_sec, remaining),
+            max_bytes=_MAX_RESPONSE_BYTES,
         )
-        if response.status_code == 429 or urlparse(str(response.url)).path.startswith("/verify"):
+        if response.status_code == 429 or urlparse(response.url).path.startswith("/verify"):
             raise FarpostRateLimitedError("Farpost rate limited or anti-bot verification requested")
-        response.raise_for_status()
+        if response.status_code >= 400:
+            raise FarpostFetchError(f"Farpost returned HTTP {response.status_code}")
         if time.monotonic() > deadline:
             raise FarpostFetchError("Farpost search budget exhausted")
-        if len(response.content) > _MAX_RESPONSE_BYTES:
-            raise FarpostFetchError("Farpost page exceeds the size limit")
-        head = response.content[:4000].lower()
-        encoding = "cp1251" if b"windows-1251" in head else "utf-8"
-        return response.content.decode(encoding, errors="replace"), str(response.url)
+        return decode_html_bytes(response.content, response.headers), response.url
 
-    def search(self, criteria: PartCriteria, *, deadline: float) -> list[PartOffer]:
+    def _fetch_and_parse_page(
+        self,
+        criteria: PartCriteria,
+        *,
+        deadline: float,
+        page: int = 1,
+    ) -> ParseResult:
+        max_attempts = min(len(self._proxy_rotator), 3) if self._proxy_rotator else 1
+        last_rate_err: FarpostRateLimitedError | None = None
+        for attempt in range(max_attempts):
+            if self.transport is None:
+                _throttle_wait(deadline, self.request_interval_sec, self.request_jitter_sec)
+            try:
+                if self._session is not None:
+                    html, final_url = self._fetch_html(self._session, criteria, deadline, page=page)
+                else:
+                    with self._build_session() as session:
+                        html, final_url = self._fetch_html(session, criteria, deadline, page=page)
+                return parse_listing_page(html, criteria, source_url=final_url)
+            except FarpostRateLimitedError as exc:
+                last_rate_err = exc
+                if attempt < max_attempts - 1 and deadline - time.monotonic() > 1.0:
+                    continue
+                raise
+            except HttpTransportError as exc:
+                raise FarpostFetchError(f"Farpost request failed: {exc}") from exc
+        assert last_rate_err is not None
+        raise last_rate_err
+
+    def search_with_metadata(self, criteria: PartCriteria, *, deadline: float) -> ParseResult:
         if time.monotonic() >= deadline:
             raise FarpostFetchError("Farpost search budget exhausted")
-        if self.transport is None:
-            _throttle_wait(deadline, self.request_interval_sec)
-        try:
-            if self._session is not None:
-                html, final_url = self._fetch_html(self._session, criteria, deadline)
-            else:
-                with httpx.Client(
-                    transport=self.transport,
-                    headers=_DEFAULT_HEADERS,
-                    follow_redirects=True,
-                ) as client:
-                    html, final_url = self._fetch_html(client, criteria, deadline)
-        except httpx.HTTPError as exc:
-            raise FarpostFetchError(f"Farpost request failed: {exc}") from exc
-        return parse_offers(html, criteria, source_url=final_url)
+        result = self._fetch_and_parse_page(criteria, deadline=deadline, page=1)
+        if (
+            not result.offers
+            and result.exact_feed_count is not None
+            and result.exact_feed_count > _PAGE_SIZE
+            and deadline - time.monotonic() > min(self.timeout_sec, 3.0)
+        ):
+            try:
+                page2 = self._fetch_and_parse_page(criteria, deadline=deadline, page=2)
+            except FarpostRateLimitedError:
+                raise
+            except FarpostFetchError:
+                return result
+            return ParseResult(
+                offers=page2.offers,
+                exact_feed_count=result.exact_feed_count,
+            )
+        return result
+
+    def search(self, criteria: PartCriteria, *, deadline: float) -> list[PartOffer]:
+        return self.search_with_metadata(criteria, deadline=deadline).offers

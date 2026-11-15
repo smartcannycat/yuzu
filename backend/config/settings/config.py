@@ -60,8 +60,11 @@ class AppSettings(BaseSettings):
     FARPOST_TIMEOUT_SEC: float = Field(default=8.0, gt=0, allow_inf_nan=False)
     FARPOST_BUDGET_SEC: float = Field(default=30.0, gt=0, allow_inf_nan=False)
     FARPOST_REQUEST_INTERVAL_SEC: float = Field(default=1.5, ge=0, allow_inf_nan=False)
-    FARPOST_COOLDOWN_SEC: int = Field(default=180, ge=0)
-    FARPOST_CACHE_TTL_HOURS: int = Field(default=6, ge=1)
+    FARPOST_REQUEST_JITTER_SEC: float = Field(default=0.4, ge=0, allow_inf_nan=False)
+    FARPOST_COOLDOWN_SEC: int = Field(default=45, ge=0)
+    FARPOST_CACHE_TTL_HOURS: int = Field(default=24, ge=1)
+    FARPOST_PROXY_URLS: list[str] | str = []
+    DROM_PROXY_URLS: list[str] | str = []
 
     # CBRF currency gateway (BE-05)
     CBRF_TIMEOUT_SEC: float = Field(default=5.0, gt=0, allow_inf_nan=False)
@@ -84,7 +87,13 @@ class AppSettings(BaseSettings):
     MEDIA_PURGE_DELETED_AFTER_DAYS: int = Field(default=7, ge=0)
     MEDIA_PURGE_BATCH_ORIGINALS_AFTER_HOURS: int = Field(default=24, ge=0)
 
-    @field_validator("ALLOWED_HOSTS", "CORS_ALLOWED_ORIGINS", "CSRF_TRUSTED_ORIGINS")
+    @field_validator(
+        "ALLOWED_HOSTS",
+        "CORS_ALLOWED_ORIGINS",
+        "CSRF_TRUSTED_ORIGINS",
+        "FARPOST_PROXY_URLS",
+        "DROM_PROXY_URLS",
+    )
     @classmethod
     def parse_comma_separated_list(cls, value: list[str] | str) -> list[str]:
         if isinstance(value, str):

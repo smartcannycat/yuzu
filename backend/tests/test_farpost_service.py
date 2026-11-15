@@ -85,15 +85,26 @@ def test_color_match_adds_part_and_mount_but_no_paint(lot, code):
 
 
 @pytest.mark.django_db
-def test_other_color_is_searched_only_after_exact_color_fails(lot):
+def test_other_color_uses_single_query_and_optimizes_part_plus_paint(lot):
     defect(lot, "X")
-    client = source()
-    client.search.side_effect = [[], [replace(OFFER, color_matched=False, price_rub=15000)]]
+    plain_offer = replace(OFFER, offer_id="1", title="Дверь", color_matched=False, price_rub=15000)
+    client = source([plain_offer])
     result = estimate_repair(lot, client=client)
-    assert [c.args[0].paint_code for c in client.search.call_args_list] == ["070", ""]
+    assert [c.args[0].paint_code for c in client.search.call_args_list] == [""]
     assert result.total_parts_from_rub == 15000
     assert result.total_works_rub == 12500
     assert not result.has_color_matched_parts
+
+    # Colored offer at 20 000 <= 15 000 + 10 000 paint should win over cheaper plain offer.
+    colored_offer = replace(
+        OFFER, offer_id="2", title="Дверь цвет 070", color_matched=False, price_rub=20000
+    )
+    client_opt = source([plain_offer, colored_offer])
+    ExternalCache.objects.all().delete()
+    result_opt = estimate_repair(lot, client=client_opt)
+    assert result_opt.total_parts_from_rub == 20000
+    assert result_opt.total_works_rub == 2500
+    assert result_opt.has_color_matched_parts
 
 
 @pytest.mark.django_db
@@ -170,7 +181,9 @@ def test_cache_ttl_negative_marker_and_stale_age():
     assert search_cached(source(error=True), CRITERIA, deadline=deadline) == ([OFFER], False)
     key = _cache_key(CRITERIA)
     entry = ExternalCache.objects.get(key=key)
-    assert timedelta(hours=5, minutes=59) < entry.expires_at - timezone.now() <= timedelta(hours=6)
+    assert (
+        timedelta(hours=23, minutes=59) < entry.expires_at - timezone.now() <= timedelta(hours=24)
+    )
     ExternalCache.objects.filter(key=key).update(expires_at=timezone.now() - timedelta(seconds=1))
     assert search_cached(source([]), CRITERIA, deadline=deadline) == ([], False)
     assert ExternalCache.objects.get(key=key).payload["offers"][0]["price_rub"] == 18000
