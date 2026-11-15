@@ -1,5 +1,7 @@
 """Factory assembling normalized domain results from raw Vision LLM extractions."""
 
+import re
+
 from ml_service.domains.entities import (
     FastHeaderPreviewEntity,
     GatekeeperDecisionEntity,
@@ -11,7 +13,13 @@ from ml_service.domains.entities import (
     RawExtractionEntity,
     RiskFlagsEntity,
 )
-from ml_service.domains.enums import AuctionHouse, DefectCode, FrameIdConfidence, OdometerStatus, ParseStatus
+from ml_service.domains.enums import (
+    AuctionHouse,
+    DefectCode,
+    FrameIdConfidence,
+    OdometerStatus,
+    ParseStatus,
+)
 from ml_service.factories.markdown_renderer import render_markdown
 from ml_service.factories.normalizers import (
     CHASSIS_RE,
@@ -29,7 +37,7 @@ from ml_service.factories.normalizers import (
     synthesize_frame_id,
 )
 
-_REPAIRED_GRADES = {"R", "RA", "0", "★", "***", "99", "1", "2"}
+_REPAIRED_GRADE_RE = re.compile(r"^(?:R|RA|RB|RC|R\d|[*★]+|0|1|2|99)$")
 
 
 def _normalize_defects(
@@ -93,11 +101,15 @@ def _normalize_defects(
 
 def _is_repaired_grade(overall_grade: str) -> bool:
     grade_up = overall_grade.strip().upper()
-    return grade_up in _REPAIRED_GRADES or grade_up.startswith("R") or "R" in grade_up
+    if not grade_up:
+        return False
+    return bool(_REPAIRED_GRADE_RE.match(grade_up)) or any(
+        _REPAIRED_GRADE_RE.match(tok) for tok in re.split(r"[\s/,+]+", grade_up) if tok
+    )
 
 
 class SheetFactory:
-    """Assembles canonical ParserResultEntity instances from raw extractions or gatekeeper rejections."""
+    """Assembles canonical ParserResultEntity instances from extractions or rejections."""
 
     def __init__(
         self,
@@ -175,9 +187,14 @@ class SheetFactory:
             low_conf.append("mileage_km")
 
         auc_house, auc_strict = normalize_auction_house(
-            ext.auction_house_raw or ext.auction_house,
+            ext.auction_house_raw,
             default_strictness=self._default_auction_strictness,
         )
+        if auc_house is None and ext.auction_house:
+            auc_house, auc_strict = normalize_auction_house(
+                ext.auction_house,
+                default_strictness=self._default_auction_strictness,
+            )
         if auc_house is None:
             warnings.append("unidentified_auction_house")
         elif auc_house == AuctionHouse.OTHER.value:
@@ -187,7 +204,9 @@ class SheetFactory:
         if frame_conf == FrameIdConfidence.RAW:
             warnings.append("unverified_frame_id_format")
 
-        norm_defects, has_xx, has_x, has_severe_corrosion_c, defect_warnings = _normalize_defects(ext.defects)
+        norm_defects, has_xx, has_x, has_severe_corrosion_c, defect_warnings = _normalize_defects(
+            ext.defects
+        )
         warnings.extend(defect_warnings)
 
         defect_texts = [f"{d.visual_location} {d.panel_ru} {d.raw_code}" for d in ext.defects]

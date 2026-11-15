@@ -22,7 +22,9 @@ PreviewCallback = Callable[[str], Awaitable[None]]
 
 
 class ImageLoaderProtocol(Protocol):
-    async def load_from_bytes(self, data: bytes, filename: str = "upload.png") -> LoadedImageEntity: ...
+    async def load_from_bytes(
+        self, data: bytes, filename: str = "upload.png"
+    ) -> LoadedImageEntity: ...
 
     async def load_from_url(self, url: str) -> LoadedImageEntity: ...
 
@@ -37,7 +39,9 @@ class VisionClientProtocol(Protocol):
 
     async def check_sheet(self, full_png: bytes) -> GatekeeperDecisionEntity: ...
 
-    async def extract_fast_header(self, sliced: SlicedSheetEntity) -> FastHeaderPreviewEntity | None: ...
+    async def extract_fast_header(
+        self, sliced: SlicedSheetEntity
+    ) -> FastHeaderPreviewEntity | None: ...
 
     async def extract_sheet(
         self,
@@ -157,7 +161,9 @@ class SheetParserService:
             return preview
 
         await _notify_step(on_step, TaskStep.FAST_HEADER_OCR, 45)
-        header_task: asyncio.Task[FastHeaderPreviewEntity | None] = asyncio.create_task(_run_fast_header())
+        header_task: asyncio.Task[FastHeaderPreviewEntity | None] = asyncio.create_task(
+            _run_fast_header()
+        )
 
         await _notify_step(on_step, TaskStep.GEMINI_OCR, 65)
         try:

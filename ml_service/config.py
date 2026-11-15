@@ -11,7 +11,11 @@ _RUNTIME_ROOT = Path.cwd() if "site-packages" in _SERVICE_ROOT.parts else _SERVI
 def _parse_key_list(
     keys_raw: str,
     single_key: str,
-    placeholder_prefixes: tuple[str, ...] = ("your_api_key", "your_ml_service_api_key", "change_me"),
+    placeholder_prefixes: tuple[str, ...] = (
+        "your_api_key",
+        "your_ml_service_api_key",
+        "change_me",
+    ),
 ) -> list[str]:
     """Parse comma-separated API keys with single-key fallback, filtering template placeholders."""
     keys = [

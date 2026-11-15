@@ -68,7 +68,11 @@ def render_markdown(sheet: NormalizedSheetEntity) -> str:
     lines.append(f"- **Тип трансмиссии:** {sheet.transmission}")
     if sheet.drive_type:
         lines.append(f"- **Тип привода:** {sheet.drive_type.value}")
-    km_str = f"{sheet.mileage_km:,}".replace(",", " ") + " км" if sheet.mileage_km is not None else "[не указано]"
+    km_str = (
+        f"{sheet.mileage_km:,}".replace(",", " ") + " км"
+        if sheet.mileage_km is not None
+        else "[не указано]"
+    )
     od_label = _ODOMETER_LABELS.get(sheet.odometer_status, sheet.odometer_status.value)
     lines.append(f"- **Пробег и статус одометра:** {km_str}, {od_label}")
     if sheet.shaken_until:

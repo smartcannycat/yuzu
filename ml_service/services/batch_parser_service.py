@@ -85,6 +85,7 @@ class BatchParserService:
             raise ValueError(f"Batch must contain between 1 and {self._max_items_per_batch} files.")
         self._ensure_capacity_for_new_batch()
         await self._validate_items(items)
+        self._ensure_capacity_for_new_batch()
 
         batch_id = str(uuid4())
         created_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -101,12 +102,14 @@ class BatchParserService:
         force_refresh: bool = False,
     ) -> BatchJobEntity:
         """Append additional sheet images to an active (non-terminal) batch job."""
+        self._evict_expired_batches()
         batch = self._batches.get(batch_id)
         if batch is None:
             raise KeyError(batch_id)
         if batch.is_terminal:
             raise BatchConflictError(
-                f"Batch '{batch_id}' is already {batch.status.value} and cannot accept additional items."
+                f"Batch '{batch_id}' is already {batch.status.value} "
+                "and cannot accept additional items."
             )
         if not items:
             raise ValueError("At least 1 file must be provided.")
@@ -116,6 +119,18 @@ class BatchParserService:
                 f"(current={len(batch.items)}, added={len(items)})."
             )
         await self._validate_items(items)
+
+        # Re-check invariants after async validation suspension
+        if batch.is_terminal:
+            raise BatchConflictError(
+                f"Batch '{batch_id}' is already {batch.status.value} "
+                "and cannot accept additional items."
+            )
+        if len(batch.items) + len(items) > self._max_items_per_batch:
+            raise ValueError(
+                f"Batch cannot exceed {self._max_items_per_batch} items "
+                f"(current={len(batch.items)}, added={len(items)})."
+            )
 
         self._enqueue_items(batch, items, force_refresh=force_refresh)
         return batch
@@ -185,7 +200,7 @@ class BatchParserService:
                     on_step=_on_step,
                     on_preview=_on_preview,
                 )
-            except Exception as exc:  # noqa: BLE001 - isolate per-item failures inside batch worker
+            except Exception as exc:
                 item.status = BatchItemState.FAILED
                 item.current_step = TaskStep.FAILED
                 item.lot_id = None

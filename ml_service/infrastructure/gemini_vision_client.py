@@ -62,21 +62,41 @@ def _build_extraction_contents(
     if complexity == LayoutComplexity.CLEAN_DIGITAL:
         return [
             "Лист аукциона:",
-            _image_part(sliced.full_png, types.PartMediaResolutionLevel.MEDIA_RESOLUTION_HIGH, mime_type),
+            _image_part(
+                sliced.full_png, types.PartMediaResolutionLevel.MEDIA_RESOLUTION_HIGH, mime_type
+            ),
             "Извлеки данные строго по JSON-схеме.",
         ]
 
     return [
         "Общий лист (для ориентации сторон и общей структуры):",
-        _image_part(sliced.full_png, types.PartMediaResolutionLevel.MEDIA_RESOLUTION_LOW, mime_type),
+        _image_part(
+            sliced.full_png, types.PartMediaResolutionLevel.MEDIA_RESOLUTION_LOW, mime_type
+        ),
         "Фрагмент 1 (верх-лево):",
-        _image_part(sliced.crops_png["top_left"], types.PartMediaResolutionLevel.MEDIA_RESOLUTION_HIGH, mime_type),
+        _image_part(
+            sliced.crops_png["top_left"],
+            types.PartMediaResolutionLevel.MEDIA_RESOLUTION_HIGH,
+            mime_type,
+        ),
         "Фрагмент 2 (верх-право — оценки, чек-лист опций, продавец):",
-        _image_part(sliced.crops_png["top_right"], types.PartMediaResolutionLevel.MEDIA_RESOLUTION_HIGH, mime_type),
+        _image_part(
+            sliced.crops_png["top_right"],
+            types.PartMediaResolutionLevel.MEDIA_RESOLUTION_HIGH,
+            mime_type,
+        ),
         "Фрагмент 3 (низ-лево — заметки инспектора, шасси):",
-        _image_part(sliced.crops_png["bottom_left"], types.PartMediaResolutionLevel.MEDIA_RESOLUTION_HIGH, mime_type),
+        _image_part(
+            sliced.crops_png["bottom_left"],
+            types.PartMediaResolutionLevel.MEDIA_RESOLUTION_HIGH,
+            mime_type,
+        ),
         "Фрагмент 4 (низ-право — схема дефектов, вертикальный текст):",
-        _image_part(sliced.crops_png["bottom_right"], types.PartMediaResolutionLevel.MEDIA_RESOLUTION_HIGH, mime_type),
+        _image_part(
+            sliced.crops_png["bottom_right"],
+            types.PartMediaResolutionLevel.MEDIA_RESOLUTION_HIGH,
+            mime_type,
+        ),
         "Извлеки данные строго по JSON-схеме. Не дублируй метки с пересечений фрагментов.",
     ]
 
@@ -156,7 +176,7 @@ class AsyncGeminiVisionClient:
         return client
 
     def _ordered_candidate_models(self) -> list[str]:
-        """Return healthy models first in priority order, then cooled-down models by earliest expiry."""
+        """Return healthy models in priority order, then cooled-down models by earliest expiry."""
         now = time.monotonic()
         healthy: list[str] = []
         cooled: list[tuple[float, str]] = []
@@ -173,7 +193,9 @@ class AsyncGeminiVisionClient:
         if duration_seconds > 0:
             self._model_cooldown_until[model_name] = time.monotonic() + duration_seconds
 
-    async def check_sheet(self, full_png: bytes, mime_type: str | None = None) -> GatekeeperDecisionEntity:
+    async def check_sheet(
+        self, full_png: bytes, mime_type: str | None = None
+    ) -> GatekeeperDecisionEntity:
         """Run fast gatekeeper classification via Gemini Decisions API with optional fail-open."""
         if not self.enable_gatekeeper:
             return GatekeeperDecisionEntity(
@@ -212,16 +234,16 @@ class AsyncGeminiVisionClient:
                         "is_auction_sheet": {
                             "type": "noul",
                             "instructions": (
-                                "Is this image a filled-in Japanese car auction inspection sheet for a "
-                                "specific vehicle (with actual vehicle data filled in, NOT a blank empty "
-                                "template, guide, or car photo)?"
+                                "Is this image a filled-in Japanese car auction inspection sheet "
+                                "for a specific vehicle (with actual vehicle data filled in, NOT "
+                                "a blank empty template, guide, or car photo)?"
                             ),
                         },
                         "is_readable": {
                             "type": "noul",
                             "instructions": (
-                                "Are the filled-in vehicle details (model, mileage, grade) and body "
-                                "diagram present and clearly readable for extraction?"
+                                "Are the filled-in vehicle details (model, mileage, grade) "
+                                "and body diagram present and clearly readable for extraction?"
                             ),
                         },
                         "layout_complexity": {
@@ -229,24 +251,41 @@ class AsyncGeminiVisionClient:
                             "instructions": "Classify the sheet readability and layout complexity:",
                             "criteria": {
                                 "clean_digital": (
-                                    "Crisp digital printed sheet with no handwritten notes or tiny circled ovals."
+                                    "Crisp digital printed sheet with no handwritten notes "
+                                    "or tiny circled ovals."
                                 ),
                                 "complex_or_handwritten": (
-                                    "Scan/fax, handwritten inspector/seller notes, circled ovals, or dense diagram."
+                                    "Scan/fax, handwritten inspector/seller notes, "
+                                    "circled ovals, or dense diagram."
                                 ),
                             },
                         },
                     },
                 )
-                is_sheet = response.answers["is_auction_sheet"].noul >= self.gatekeeper_sheet_threshold
-                is_readable = response.answers["is_readable"].noul >= self.gatekeeper_readable_threshold
+                is_sheet = (
+                    response.answers["is_auction_sheet"].noul >= self.gatekeeper_sheet_threshold
+                )
+                is_readable = (
+                    response.answers["is_readable"].noul >= self.gatekeeper_readable_threshold
+                )
                 mode = response.answers["layout_complexity"].choice
-        except (ServerError, ClientError, TimeoutError, httpx.HTTPError, RuntimeError, AttributeError) as exc:
+        except (
+            ServerError,
+            ClientError,
+            TimeoutError,
+            httpx.HTTPError,
+            RuntimeError,
+            AttributeError,
+        ) as exc:
             if api_key and isinstance(exc, ClientError) and getattr(exc, "code", None) == 429:
                 self.key_pool.mark_key_rate_limited(api_key, self.key_cooldown_seconds)
             elapsed_ms = int((time.perf_counter() - t0) * 1000)
             if self.gatekeeper_fail_open:
-                logger.warning("Gatekeeper %s unavailable (%s); falling back to open mode.", self.decision_model, exc)
+                logger.warning(
+                    "Gatekeeper %s unavailable (%s); falling back to open mode.",
+                    self.decision_model,
+                    exc,
+                )
                 return GatekeeperDecisionEntity(
                     is_auction_sheet=True,
                     is_readable=True,
@@ -272,7 +311,9 @@ class AsyncGeminiVisionClient:
             warning=None,
         )
 
-    async def extract_fast_header(self, sliced: SlicedSheetEntity) -> FastHeaderPreviewEntity | None:
+    async def extract_fast_header(
+        self, sliced: SlicedSheetEntity
+    ) -> FastHeaderPreviewEntity | None:
         """Run non-blocking low-resolution header OCR with strict timeout (<= 1.2s by default)."""
         t0 = time.perf_counter()
         target_bytes = sliced.crops_png.get("top_left") or sliced.full_png
@@ -285,11 +326,18 @@ class AsyncGeminiVisionClient:
                 api_key = self.key_pool.next_key()
                 client = self._get_client(api_key)
                 contents = [
-                    "Быстро извлеки из шапки аукционного листа марку на латинице (make_en), модель на латинице (model_en) и номер лота (lot_number).",
-                    _image_part(target_bytes, types.PartMediaResolutionLevel.MEDIA_RESOLUTION_LOW, mime_type),
+                    (
+                        "Быстро извлеки из шапки аукционного листа марку на латинице (make_en), "
+                        "модель на латинице (model_en) и номер лота (lot_number)."
+                    ),
+                    _image_part(
+                        target_bytes, types.PartMediaResolutionLevel.MEDIA_RESOLUTION_LOW, mime_type
+                    ),
                 ]
                 config = types.GenerateContentConfig(
-                    thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL),
+                    thinking_config=types.ThinkingConfig(
+                        thinking_level=types.ThinkingLevel.MINIMAL
+                    ),
                     response_mime_type="application/json",
                     response_json_schema=FastHeaderPreviewSchema.model_json_schema(),
                 )
@@ -311,7 +359,15 @@ class AsyncGeminiVisionClient:
 
         try:
             return await asyncio.wait_for(_call_header(), timeout=self.fast_header_timeout_seconds)
-        except (TimeoutError, ClientError, ServerError, RuntimeError, ValueError, OSError, httpx.HTTPError) as exc:
+        except (
+            TimeoutError,
+            ClientError,
+            ServerError,
+            RuntimeError,
+            ValueError,
+            OSError,
+            httpx.HTTPError,
+        ) as exc:
             logger.debug("Fast header preview skipped (%s).", exc)
             return None
 
@@ -350,10 +406,12 @@ class AsyncGeminiVisionClient:
         configured_level: types.ThinkingLevel,
         attempts: list[ModelAttemptEntity],
     ) -> RawExtractionEntity:
-        """Execute extraction on a single candidate model with key rotation and cooldown handling."""
+        """Run extraction on one model with key rotation and cooldown handling."""
         active_level = configured_level
         max_key_tries = (
-            max(1, min(self.key_pool.key_count, self.max_key_tries)) if self.key_pool.key_count > 1 else 1
+            max(1, min(self.key_pool.key_count, self.max_key_tries))
+            if self.key_pool.key_count > 1
+            else 1
         )
         last_exc: Exception | None = None
 
@@ -405,14 +463,23 @@ class AsyncGeminiVisionClient:
                                 )
                             )
                             return entity
-                        except (ServerError, ClientError, TimeoutError, httpx.HTTPError) as retry_exc:
+                        except (
+                            ServerError,
+                            ClientError,
+                            TimeoutError,
+                            httpx.HTTPError,
+                        ) as retry_exc:
                             exc = retry_exc
                             last_exc = retry_exc
                             status_code = getattr(retry_exc, "code", None)
 
                     attempt_ms = int((time.perf_counter() - t0) * 1000)
                     if status_code == 429:
-                        attempts.append(ModelAttemptEntity(model=candidate_model, status="error_429", ms=attempt_ms))
+                        attempts.append(
+                            ModelAttemptEntity(
+                                model=candidate_model, status="error_429", ms=attempt_ms
+                            )
+                        )
                         self.key_pool.mark_key_rate_limited(api_key, self.key_cooldown_seconds)
                         logger.warning(
                             "Model %s rate-limited key (429), attempt %s/%s.",
@@ -426,21 +493,45 @@ class AsyncGeminiVisionClient:
                         break
 
                     if status_code in (400, 404):
-                        attempts.append(ModelAttemptEntity(model=candidate_model, status=f"error_{status_code}", ms=attempt_ms))
-                        logger.warning("Model %s rejected request (%s); putting on cooldown.", candidate_model, exc)
-                        self._mark_model_cooldown(candidate_model, self.client_error_cooldown_seconds)
+                        attempts.append(
+                            ModelAttemptEntity(
+                                model=candidate_model, status=f"error_{status_code}", ms=attempt_ms
+                            )
+                        )
+                        logger.warning(
+                            "Model %s rejected request (%s); putting on cooldown.",
+                            candidate_model,
+                            exc,
+                        )
+                        self._mark_model_cooldown(
+                            candidate_model, self.client_error_cooldown_seconds
+                        )
                         break
 
-                    attempts.append(ModelAttemptEntity(model=candidate_model, status=f"error_{status_code or 'client'}", ms=attempt_ms))
+                    attempts.append(
+                        ModelAttemptEntity(
+                            model=candidate_model,
+                            status=f"error_{status_code or 'client'}",
+                            ms=attempt_ms,
+                        )
+                    )
                     raise
-                except (ServerError, TimeoutError, httpx.TimeoutException, httpx.TransportError) as exc:
+                except (
+                    ServerError,
+                    TimeoutError,
+                    ValueError,
+                    httpx.TimeoutException,
+                    httpx.TransportError,
+                ) as exc:
                     last_exc = exc
                     status_code = getattr(exc, "code", None)
                     attempt_ms = int((time.perf_counter() - t0) * 1000)
                     attempts.append(
                         ModelAttemptEntity(
                             model=candidate_model,
-                            status=f"error_{status_code}" if status_code else f"error_{exc.__class__.__name__}",
+                            status=f"error_{status_code}"
+                            if status_code
+                            else f"error_{exc.__class__.__name__}",
                             ms=attempt_ms,
                         )
                     )
@@ -460,7 +551,7 @@ class AsyncGeminiVisionClient:
         sliced: SlicedSheetEntity,
         complexity: LayoutComplexity,
     ) -> RawExtractionEntity:
-        """Extract structured auction sheet data via Gemini Vision with deadline, hedging, and failover."""
+        """Extract auction sheet data via Gemini Vision with deadline, hedging, and failover."""
         contents = _build_extraction_contents(sliced, complexity)
         configured_level = _resolve_thinking_level(self.thinking_level)
         candidates = self._ordered_candidate_models()
@@ -473,17 +564,21 @@ class AsyncGeminiVisionClient:
         while index < len(candidates):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                last_error = TimeoutError(f"Extraction deadline ({self.request_deadline_seconds}s) exceeded.")
+                last_error = TimeoutError(
+                    f"Extraction deadline ({self.request_deadline_seconds}s) exceeded."
+                )
                 break
 
             primary_model = candidates[index]
-            # Hedge primary with next candidate model when hedge_delay_seconds elapses before completion.
+            # Hedge primary with next model when hedge_delay_seconds elapses before completion.
             if index + 1 < len(candidates) and remaining > self.hedge_delay_seconds:
                 hedge_model = candidates[index + 1]
                 primary_task = asyncio.create_task(
                     self._try_single_model(primary_model, contents, configured_level, attempts)
                 )
-                done, _pending = await asyncio.wait({primary_task}, timeout=self.hedge_delay_seconds)
+                done, _pending = await asyncio.wait(
+                    {primary_task}, timeout=self.hedge_delay_seconds
+                )
                 if primary_task in done:
                     try:
                         entity = primary_task.result()
@@ -492,7 +587,13 @@ class AsyncGeminiVisionClient:
                             extract_ms=int((time.perf_counter() - extract_t0) * 1000),
                             attempts=list(attempts),
                         )
-                    except (ClientError, ServerError, TimeoutError, httpx.HTTPError) as exc:
+                    except (
+                        ClientError,
+                        ServerError,
+                        TimeoutError,
+                        ValueError,
+                        httpx.HTTPError,
+                    ) as exc:
                         last_error = exc
                         index += 1
                         continue
@@ -505,7 +606,9 @@ class AsyncGeminiVisionClient:
                     while active:
                         rem = deadline - time.monotonic()
                         if rem <= 0:
-                            last_error = TimeoutError(f"Extraction deadline ({self.request_deadline_seconds}s) exceeded.")
+                            last_error = TimeoutError(
+                                f"Extraction deadline ({self.request_deadline_seconds}s) exceeded."
+                            )
                             break
                         finished, active = await asyncio.wait(
                             active,
@@ -513,7 +616,9 @@ class AsyncGeminiVisionClient:
                             return_when=asyncio.FIRST_COMPLETED,
                         )
                         if not finished:
-                            last_error = TimeoutError(f"Extraction deadline ({self.request_deadline_seconds}s) exceeded.")
+                            last_error = TimeoutError(
+                                f"Extraction deadline ({self.request_deadline_seconds}s) exceeded."
+                            )
                             break
                         for task in finished:
                             exc = task.exception()
@@ -525,7 +630,9 @@ class AsyncGeminiVisionClient:
                                     await asyncio.gather(*active, return_exceptions=True)
                                     attempts.append(
                                         ModelAttemptEntity(
-                                            model=hedge_model if task is primary_task else primary_model,
+                                            model=hedge_model
+                                            if task is primary_task
+                                            else primary_model,
                                             status="hedged_cancelled",
                                             ms=int((time.perf_counter() - extract_t0) * 1000),
                                         )
@@ -535,13 +642,19 @@ class AsyncGeminiVisionClient:
                                     extract_ms=int((time.perf_counter() - extract_t0) * 1000),
                                     attempts=list(attempts),
                                 )
-                            if isinstance(exc, ClientError) and getattr(exc, "code", None) not in (400, 404, 429):
+                            if isinstance(exc, ClientError) and getattr(exc, "code", None) not in (
+                                400,
+                                404,
+                                429,
+                            ):
                                 for loser in active:
                                     loser.cancel()
                                 if active:
                                     await asyncio.gather(*active, return_exceptions=True)
                                 raise exc
-                            last_error = exc if isinstance(exc, Exception) else RuntimeError(str(exc))
+                            last_error = (
+                                exc if isinstance(exc, Exception) else RuntimeError(str(exc))
+                            )
                 finally:
                     for leftover in active:
                         leftover.cancel()
@@ -562,12 +675,18 @@ class AsyncGeminiVisionClient:
                     attempts=list(attempts),
                 )
             except TimeoutError as exc:
-                last_error = TimeoutError(f"Extraction deadline ({self.request_deadline_seconds}s) exceeded.")
+                last_error = TimeoutError(
+                    f"Extraction deadline ({self.request_deadline_seconds}s) exceeded."
+                )
                 self._mark_model_cooldown(primary_model, self.model_cooldown_seconds)
                 if deadline - time.monotonic() <= 0:
                     raise last_error from exc
-            except (ClientError, ServerError, httpx.HTTPError) as exc:
-                if isinstance(exc, ClientError) and getattr(exc, "code", None) not in (400, 404, 429):
+            except (ClientError, ServerError, ValueError, httpx.HTTPError) as exc:
+                if isinstance(exc, ClientError) and getattr(exc, "code", None) not in (
+                    400,
+                    404,
+                    429,
+                ):
                     raise
                 last_error = exc
             index += 1

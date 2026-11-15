@@ -15,15 +15,21 @@ from ml_service.infrastructure.image_formats import IMAGE_FORMAT_TO_MIME, ensure
 
 ensure_heif_registered()
 
-_BLOCKED_HOSTNAMES = frozenset({"localhost", "localhost.localdomain", "0.0.0.0", "metadata.google.internal"})
+_BLOCKED_HOSTNAMES = frozenset(
+    {"localhost", "localhost.localdomain", "0.0.0.0", "metadata.google.internal"}
+)
 _MAX_URL_REDIRECTS = 5
 
 
 def _ensure_safe_ip(ip_text: str) -> None:
     clean_ip = ip_text.split("%", 1)[0]
     ip = ipaddress.ip_address(clean_ip)
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        _ensure_safe_ip(str(mapped))
     if (
-        ip.is_private
+        not ip.is_global
+        or ip.is_private
         or ip.is_loopback
         or ip.is_link_local
         or ip.is_multicast
@@ -45,6 +51,14 @@ def _resolve_host_ips(host: str) -> list[str]:
     return ips
 
 
+def _is_ip_literal(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return True
+
+
 async def validate_url_not_ssrf(
     url: str,
     *,
@@ -55,27 +69,30 @@ async def validate_url_not_ssrf(
     if parsed.scheme not in {"http", "https"} or not parsed.netloc or not parsed.hostname:
         raise ValueError(f"Invalid image URL: '{url}'. Expected http or https URL.")
 
-    host = parsed.hostname.strip().lower()
-    if host in _BLOCKED_HOSTNAMES or host.endswith((".local", ".localhost", ".internal")):
+    host = parsed.hostname.strip().lower().rstrip(".")
+    if (
+        not host
+        or host in _BLOCKED_HOSTNAMES
+        or host.endswith((".local", ".localhost", ".internal"))
+    ):
         raise ValueError(f"Blocked unsafe hostname in URL: '{host}'.")
 
-    try:
-        ipaddress.ip_address(host)
-    except ValueError:
-        resolver = dns_resolver or _resolve_host_ips
-        try:
-            resolved_ips = await asyncio.to_thread(resolver, host)
-        except OSError as exc:
-            raise ValueError(f"Failed to resolve remote host '{host}': {exc}") from exc
-        if not resolved_ips:
-            raise ValueError(f"No IP addresses resolved for remote host '{host}'.")
-        for ip_text in resolved_ips:
-            _ensure_safe_ip(ip_text)
-    else:
+    if _is_ip_literal(host):
         _ensure_safe_ip(host)
+        return
+
+    resolver = dns_resolver or _resolve_host_ips
+    try:
+        resolved_ips = await asyncio.to_thread(resolver, host)
+    except OSError as exc:
+        raise ValueError(f"Failed to resolve remote host '{host}': {exc}") from exc
+    if not resolved_ips:
+        raise ValueError(f"No IP addresses resolved for remote host '{host}'.")
+    for ip_text in resolved_ips:
+        _ensure_safe_ip(ip_text)
 
 
-def _detect_and_verify_image_mime(data: bytes) -> str:
+def verify_image_mime(data: bytes) -> str:
     """Verify image integrity via Pillow (+ HEIF opener) and return its canonical MIME type."""
     try:
         with Image.open(BytesIO(data)) as img:
@@ -87,9 +104,13 @@ def _detect_and_verify_image_mime(data: bytes) -> str:
     mime_type = IMAGE_FORMAT_TO_MIME.get(fmt)
     if mime_type is None:
         raise ValueError(
-            f"Unsupported image format '{fmt or 'unknown'}'. Allowed formats: JPEG, PNG, WEBP, HEIC, HEIF."
+            f"Unsupported image format '{fmt or 'unknown'}'. "
+            "Allowed formats: JPEG, PNG, WEBP, HEIC, HEIF."
         )
     return mime_type
+
+
+_detect_and_verify_image_mime = verify_image_mime
 
 
 class AsyncImageLoader:
@@ -131,7 +152,9 @@ class AsyncImageLoader:
         for _ in range(_MAX_URL_REDIRECTS + 1):
             await validate_url_not_ssrf(current_url, dns_resolver=self._dns_resolver)
 
-            async with self.http_client.stream("GET", current_url, follow_redirects=False) as response:
+            async with self.http_client.stream(
+                "GET", current_url, follow_redirects=False
+            ) as response:
                 network_stream = response.extensions.get("network_stream")
                 if network_stream is not None:
                     server_addr = network_stream.get_extra_info("server_addr")
@@ -154,18 +177,22 @@ class AsyncImageLoader:
                     and int(content_length.strip()) > self.max_bytes
                 ):
                     raise ValueError(
-                        f"Remote image size ({content_length.strip()} bytes) exceeds maximum allowed ({self.max_bytes} bytes)."
+                        f"Remote image size ({content_length.strip()} bytes) "
+                        f"exceeds maximum allowed ({self.max_bytes} bytes)."
                     )
 
                 chunks = bytearray()
                 async for chunk in response.aiter_bytes():
                     if len(chunks) + len(chunk) > self.max_bytes:
                         raise ValueError(
-                            f"Remote image stream exceeded maximum allowed size ({self.max_bytes} bytes)."
+                            "Remote image stream exceeded maximum allowed size "
+                            f"({self.max_bytes} bytes)."
                         )
                     chunks.extend(chunk)
 
-                final_path = unquote(urlparse(str(response.url)).path) or unquote(urlparse(current_url).path)
+                final_path = unquote(urlparse(str(response.url)).path) or unquote(
+                    urlparse(current_url).path
+                )
                 filename = Path(final_path).name or "remote_sheet"
                 return await self.load_from_bytes(bytes(chunks), filename)
 

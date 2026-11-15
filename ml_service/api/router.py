@@ -5,7 +5,17 @@ from http import HTTPStatus
 from uuid import UUID
 
 import httpx
-from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    FastAPI,
+    File,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from google.genai.errors import APIError
@@ -34,8 +44,13 @@ from ml_service.api.schemas import (
     to_parser_response,
 )
 from ml_service.config import Settings
+from ml_service.infrastructure.image_loader import verify_image_mime
 from ml_service.infrastructure.key_pool import GeminiKeyPool
-from ml_service.services.batch_parser_service import BatchCapacityError, BatchConflictError, BatchParserService
+from ml_service.services.batch_parser_service import (
+    BatchCapacityError,
+    BatchConflictError,
+    BatchParserService,
+)
 from ml_service.services.sheet_parser_service import SheetParserService
 
 logger = logging.getLogger(__name__)
@@ -75,7 +90,9 @@ async def _read_upload_bounded(upload: UploadFile, max_bytes: int) -> bytes:
     if declared_size is not None and declared_size > max_bytes:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Image size ({declared_size} bytes) exceeds maximum allowed ({max_bytes} bytes).",
+            detail=(
+                f"Image size ({declared_size} bytes) exceeds maximum allowed ({max_bytes} bytes)."
+            ),
         )
 
     chunks = bytearray()
@@ -124,7 +141,9 @@ def register_exception_handlers(app_instance: FastAPI) -> None:
     """Register RFC 7807 Problem Details handlers on a FastAPI application instance."""
 
     @app_instance.exception_handler(StarletteHTTPException)
-    async def _http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    async def _http_exception_handler(
+        request: Request, exc: StarletteHTTPException
+    ) -> JSONResponse:
         return _problem_response(
             status_code=exc.status_code,
             detail=str(exc.detail),
@@ -133,7 +152,9 @@ def register_exception_handlers(app_instance: FastAPI) -> None:
         )
 
     @app_instance.exception_handler(RequestValidationError)
-    async def _validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    async def _validation_exception_handler(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
         invalid_params = [
             InvalidParamDetail(
                 name=".".join(str(part) for part in err.get("loc", ())) or "request",
@@ -142,7 +163,7 @@ def register_exception_handlers(app_instance: FastAPI) -> None:
             for err in exc.errors()
         ]
         return _problem_response(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc.errors()),
             instance=str(request.url.path),
             invalid_params=invalid_params,
@@ -173,10 +194,40 @@ async def read_chassis_number(
     if mime not in {"image/jpeg", "image/jpg", "image/png"}:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsupported Content-Type '{mime}' for chassis image. Allowed: image/jpeg, image/png.",
+            detail=(
+                f"Unsupported Content-Type '{mime}' for chassis image. "
+                "Allowed: image/jpeg, image/png."
+            ),
         )
     payload = await _read_upload_bounded(file, settings.max_image_bytes)
-    entity = await chassis_client.read_chassis_number(payload, mime_type="image/jpeg" if mime != "image/png" else "image/png")
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Image payload is empty.",
+        )
+    try:
+        detected_mime = verify_image_mime(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if detected_mime not in {"image/jpeg", "image/png"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Unsupported image format '{detected_mime}' for chassis image. "
+                "Allowed: image/jpeg, image/png."
+            ),
+        )
+    try:
+        entity = await chassis_client.read_chassis_number(payload, mime_type=detected_mime)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except (RuntimeError, APIError, TimeoutError, httpx.HTTPError) as exc:
+        logger.warning("Chassis OCR backend error: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="ML chassis OCR service is temporarily unavailable. Please retry.",
+            headers={"Retry-After": "5"},
+        ) from exc
     return ChassisOcrResponse(
         frame_id=entity.frame_id,
         raw=entity.raw,
@@ -204,7 +255,7 @@ async def parse_sheet_file(
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    except (RuntimeError, APIError, TimeoutError) as exc:
+    except (RuntimeError, APIError, TimeoutError, httpx.HTTPError) as exc:
         logger.warning("Single-sheet parse backend error: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -316,7 +367,9 @@ async def add_batch_items(
     if not files or len(files) > settings.batch_max_items:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"At least 1 and at most {settings.batch_max_items} files may be added per request.",
+            detail=(
+                f"At least 1 and at most {settings.batch_max_items} files may be added per request."
+            ),
         )
     for upload in files:
         _validate_upload_content_type(upload)
@@ -330,7 +383,9 @@ async def add_batch_items(
     try:
         batch = await batch_service.add_items(str(batch_id), items, force_refresh=force_refresh)
     except KeyError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Batch not found.") from exc
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Batch not found."
+        ) from exc
     except BatchConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except ValueError as exc:

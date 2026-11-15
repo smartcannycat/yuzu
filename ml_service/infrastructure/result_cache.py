@@ -1,6 +1,10 @@
 import asyncio
 import json
+import logging
+import os
 import re
+import tempfile
+from collections import OrderedDict
 from dataclasses import asdict, fields, replace
 from enum import Enum
 from pathlib import Path
@@ -25,6 +29,7 @@ from ml_service.domains.enums import (
 )
 
 _SAFE_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+logger = logging.getLogger(__name__)
 
 
 def _normalize_for_json(value: Any) -> Any:
@@ -76,14 +81,18 @@ def deserialize_parser_result(payload: dict[str, Any]) -> ParserResultEntity:
             model_code=str(sheet_raw.get("model_code", "")),
             chassis_number=str(sheet_raw.get("chassis_number", "")),
             frame_id=str(sheet_raw.get("frame_id", "")),
-            frame_id_confidence=FrameIdConfidence(sheet_raw.get("frame_id_confidence", FrameIdConfidence.RAW)),
+            frame_id_confidence=FrameIdConfidence(
+                sheet_raw.get("frame_id_confidence", FrameIdConfidence.RAW)
+            ),
             first_reg_year=sheet_raw.get("first_reg_year"),
             first_reg_month=sheet_raw.get("first_reg_month"),
             first_reg_date_str=sheet_raw.get("first_reg_date_str"),
             is_pass_corridor_3_5=sheet_raw.get("is_pass_corridor_3_5"),
             engine_cc=sheet_raw.get("engine_cc"),
             mileage_km=sheet_raw.get("mileage_km"),
-            odometer_status=OdometerStatus(sheet_raw.get("odometer_status", OdometerStatus.UNKNOWN)),
+            odometer_status=OdometerStatus(
+                sheet_raw.get("odometer_status", OdometerStatus.UNKNOWN)
+            ),
             transmission=str(sheet_raw.get("transmission", "UNKNOWN")),
             drive_type=DriveType(drive_raw) if drive_raw is not None else None,
             fuel_type=FuelType(fuel_raw) if fuel_raw is not None else None,
@@ -137,11 +146,18 @@ def deserialize_parser_result(payload: dict[str, Any]) -> ParserResultEntity:
 
 
 class ResultCache:
-    """Two-tier (in-memory + JSON disk) cache for parsed auction sheet results."""
+    """Two-tier (bounded LRU in-memory + atomic JSON disk) cache for parsed auction sheets."""
 
-    def __init__(self, cache_dir: Path) -> None:
+    def __init__(self, cache_dir: Path, max_memory_entries: int = 512) -> None:
         self.cache_dir = Path(cache_dir)
-        self._memory: dict[str, ParserResultEntity] = {}
+        self._max_memory_entries = max(1, max_memory_entries)
+        self._memory: OrderedDict[str, ParserResultEntity] = OrderedDict()
+
+    def _remember(self, sha256: str, result: ParserResultEntity) -> None:
+        self._memory[sha256] = result
+        self._memory.move_to_end(sha256)
+        while len(self._memory) > self._max_memory_entries:
+            self._memory.popitem(last=False)
 
     def _cache_path(self, sha256: str) -> Path | None:
         if not _SAFE_KEY_RE.fullmatch(sha256):
@@ -151,32 +167,47 @@ class ResultCache:
     def _read_json_entity(self, path: Path) -> ParserResultEntity | None:
         if not path.is_file():
             return None
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        return deserialize_parser_result(payload)
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            return deserialize_parser_result(payload)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            logger.warning("Ignoring corrupted sheet cache entry %s: %s", path.name, exc)
+            return None
 
     def _write_json_entity(self, path: Path, result: ParserResultEntity) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = serialize_parser_result(result)
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        data_text = json.dumps(payload, ensure_ascii=False, indent=2)
+        fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=".tmp_sheet_", suffix=".json")
+        tmp_path = Path(tmp_name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(data_text)
+            tmp_path.replace(path)
+        except BaseException:
+            if tmp_path.exists():
+                tmp_path.unlink()
+            raise
 
-    async def get(self, sha256: str, filename: str = "") -> ParserResultEntity | None:
+    async def get(self, sha256: str, filename: str = "") -> ParserResultEntity | None:  # noqa: ARG002
         """Retrieve a cached result by SHA-256 from in-memory or disk cache."""
         cached = self._memory.get(sha256)
         if cached is not None:
+            self._memory.move_to_end(sha256)
             return replace(cached, meta=replace(cached.meta, cached=True))
 
         disk_path = self._cache_path(sha256)
         if disk_path is not None:
             disk_result = await asyncio.to_thread(self._read_json_entity, disk_path)
             if disk_result is not None:
-                self._memory[sha256] = disk_result
+                self._remember(sha256, disk_result)
                 return replace(disk_result, meta=replace(disk_result.meta, cached=True))
 
         return None
 
     async def set(self, sha256: str, result: ParserResultEntity) -> None:
         """Store a ParserResultEntity in both in-memory and disk caches."""
-        self._memory[sha256] = result
+        self._remember(sha256, result)
         disk_path = self._cache_path(sha256)
         if disk_path is not None:
             await asyncio.to_thread(self._write_json_entity, disk_path, result)

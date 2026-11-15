@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class BodyPanel(str, Enum):
+class BodyPanel(StrEnum):
     """Canonical 16 vehicle body panels (Domain 1) + safe fallback 'other'."""
 
     FRONT_BUMPER = "front_bumper"
@@ -23,7 +23,7 @@ class BodyPanel(str, Enum):
     OTHER = "other"
 
 
-class AuctionHouse(str, Enum):
+class AuctionHouse(StrEnum):
     """Canonical auction house identifiers (Domain 1 + API contracts)."""
 
     TAA = "TAA"
@@ -41,7 +41,7 @@ class AuctionHouse(str, Enum):
     OTHER = "OTHER"
 
 
-class DefectCode(str, Enum):
+class DefectCode(StrEnum):
     """Canonical Japanese auction sheet defect mark codes."""
 
     A = "A"
@@ -56,7 +56,7 @@ class DefectCode(str, Enum):
     R = "R"
 
 
-class TaskStep(str, Enum):
+class TaskStep(StrEnum):
     """Canonical batch item processing step names."""
 
     QUEUED = "queued"
@@ -67,16 +67,16 @@ class TaskStep(str, Enum):
     FAILED = "failed"
 
 
-class OdometerStatus(str, Enum):
+class OdometerStatus(StrEnum):
     """Odometer authenticity status based on Japanese auction sheet marks."""
 
     CONFIRMED = "confirmed"
-    REPLACED = "replaced"    # Marked with '*' on sheet
-    TAMPERED = "tampered"    # Marked with '$' on sheet
-    UNKNOWN = "unknown"      # Marked with '#' on sheet
+    REPLACED = "replaced"  # Marked with '*' on sheet
+    TAMPERED = "tampered"  # Marked with '$' on sheet
+    UNKNOWN = "unknown"  # Marked with '#' on sheet
 
 
-class FuelType(str, Enum):
+class FuelType(StrEnum):
     """Vehicle powertrain fuel type."""
 
     GASOLINE = "gasoline"
@@ -86,22 +86,24 @@ class FuelType(str, Enum):
     OTHER = "other"
 
 
-class DriveType(str, Enum):
+class DriveType(StrEnum):
     """Explicitly marked drive configuration on auction sheet."""
 
     TWO_WD = "2WD"
     FOUR_WD = "4WD"
 
 
-class FrameIdConfidence(str, Enum):
+class FrameIdConfidence(StrEnum):
     """Confidence level of canonical Frame ID normalization."""
 
-    EXACT = "exact"              # Full code-chassis written on sheet (e.g. NRE210-2005418)
-    SYNTHESIZED = "synthesized"  # Synthesized from katashiki + serial (e.g. 6AA-RV5 + 1356915 -> RV5-1356915)
-    RAW = "raw"                  # Unverified fallback
+    EXACT = "exact"  # Full code-chassis written on sheet (e.g. NRE210-2005418)
+    SYNTHESIZED = (
+        "synthesized"  # Synthesized from katashiki + serial (e.g. 6AA-RV5 + 1356915 -> RV5-1356915)
+    )
+    RAW = "raw"  # Unverified fallback
 
 
-class ParseStatus(str, Enum):
+class ParseStatus(StrEnum):
     """Final status of auction sheet parsing."""
 
     OK = "ok"
@@ -109,14 +111,14 @@ class ParseStatus(str, Enum):
     REJECTED_NOT_SHEET = "rejected_not_sheet"
 
 
-class LayoutComplexity(str, Enum):
+class LayoutComplexity(StrEnum):
     """Sheet visual complexity determined by the Gatekeeper model."""
 
     CLEAN_DIGITAL = "clean_digital"
     COMPLEX_OR_HANDWRITTEN = "complex_or_handwritten"
 
 
-class BatchStatus(str, Enum):
+class BatchStatus(StrEnum):
     """Overall status of a multi-sheet batch."""
 
     QUEUED = "queued"
@@ -126,7 +128,7 @@ class BatchStatus(str, Enum):
     FAILED = "failed"
 
 
-class BatchItemState(str, Enum):
+class BatchItemState(StrEnum):
     """Processing state of an individual sheet inside a batch."""
 
     QUEUED = "queued"

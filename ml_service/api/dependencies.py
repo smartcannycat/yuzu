@@ -38,7 +38,9 @@ def require_api_key_dep(
         )
 
     provided_bytes = (api_key or "").strip().encode("utf-8")
-    matches = [hmac.compare_digest(provided_bytes, expected.encode("utf-8")) for expected in expected_keys]
+    matches = [
+        hmac.compare_digest(provided_bytes, expected.encode("utf-8")) for expected in expected_keys
+    ]
     if not provided_bytes or not any(matches):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -56,7 +58,9 @@ def rate_limit_dep(
     if limit <= 0:
         return
 
-    buckets: dict[str, deque[float]] | None = getattr(request.app.state, "_rate_limit_buckets", None)
+    buckets: dict[str, deque[float]] | None = getattr(
+        request.app.state, "_rate_limit_buckets", None
+    )
     if buckets is None:
         buckets = {}
         request.app.state._rate_limit_buckets = buckets
@@ -67,9 +71,14 @@ def rate_limit_dep(
 
     with _rate_limit_lock:
         if len(buckets) >= _MAX_RATE_BUCKETS and client_host not in buckets:
-            stale_keys = [key for key, stamps in buckets.items() if not stamps or stamps[-1] < cutoff]
+            stale_keys = [
+                key for key, stamps in buckets.items() if not stamps or stamps[-1] < cutoff
+            ]
             for key in stale_keys:
                 buckets.pop(key, None)
+            if len(buckets) >= _MAX_RATE_BUCKETS:
+                oldest_key = min(buckets, key=lambda k: buckets[k][-1] if buckets[k] else 0.0)
+                buckets.pop(oldest_key, None)
 
         timestamps = buckets.setdefault(client_host, deque())
         while timestamps and timestamps[0] <= cutoff:

@@ -38,23 +38,37 @@ class DefectExtractionSchema(BaseModel):
     )
     panel_id: BodyPanel
     panel_ru: str = Field(description="Название детали кузова на русском")
-    raw_code: str = Field(description="Оригинальный код дефекта с листа: A1, U2, W2, XX, AU3 и т. п.")
+    raw_code: str = Field(
+        description="Оригинальный код дефекта с листа: A1, U2, W2, XX, AU3 и т. п."
+    )
 
 
 class ExtractedRiskFlagsSchema(BaseModel):
     """Safety and structural stop-factors extracted directly by the Vision model."""
 
-    is_flooded: bool = Field(description="Следы затопления/топляк (冠水車, 水没) — безусловный стоп-фактор")
-    airbag_deployed: bool = Field(description="Сработали подушки безопасности (エアバッグ展開) — стоп-фактор")
-    hail_damage: bool = Field(description="Повреждения кузова градом (ひょう害車, 雹) — стоп-фактор")
+    is_flooded: bool = Field(
+        description="Следы затопления/топляк (冠水車, 水没) — безусловный стоп-фактор"
+    )
+    airbag_deployed: bool = Field(
+        description="Сработали подушки безопасности (エアバッグ展開) — стоп-фактор"
+    )
+    hail_damage: bool = Field(
+        description="Повреждения кузова градом (ひょう害車, 雹) — стоп-фактор"
+    )
     underbody_rust: bool = Field(description="Поверхностная ржавчина по днищу/подвеске (下廻り S)")
-    underbody_corrosion: bool = Field(description="Сквозная коррозия, гниение порогов/арок/днища (下廻り 腐食/C)")
-    core_support_repair: bool = Field(description="Упомянут ли ремонт/замена/складка рамки радиатора (コアサポート)")
+    underbody_corrosion: bool = Field(
+        description="Сквозная коррозия, гниение порогов/арок/днища (下廻り 腐食/C)"
+    )
+    core_support_repair: bool = Field(
+        description="Упомянут ли ремонт/замена/складка рамки радиатора (コアサポート)"
+    )
     pillar_or_frame_repair: bool = Field(
         description="Упомянут ли ремонт/окрас стоек, лонжеронов, крыши, силовой структуры (ピラー, フレーム)"
     )
     color_changed: bool = Field(description="Есть ли отметка о смене цвета (色替)")
-    windshield_damage: bool = Field(description="Есть ли скол/трещина/замена лобового стекла (FW, G)")
+    windshield_damage: bool = Field(
+        description="Есть ли скол/трещина/замена лобового стекла (FW, G)"
+    )
 
 
 class AuctionExtractionSchema(BaseModel):
@@ -72,12 +86,18 @@ class AuctionExtractionSchema(BaseModel):
     model_raw: str
     trim_raw: str | None = None
     model_code_raw: str = Field(description="Код кузова (型式), например DAA-RU3 или 3BA-NRE210W")
-    chassis_number_raw: str = Field(description="Номер шасси (車台番号), например RU3-1248879 или 1356915")
-    first_reg_raw: str = Field(description="Дата первой регистрации в оригинале: H30/2, 26年5月, R8 11")
+    chassis_number_raw: str = Field(
+        description="Номер шасси (車台番号), например RU3-1248879 или 1356915"
+    )
+    first_reg_raw: str = Field(
+        description="Дата первой регистрации в оригинале: H30/2, 26年5月, R8 11"
+    )
     mileage_raw: str = Field(description="Пробег и знаки одометра (*, $, #)")
     engine_cc_raw: str
     transmission_raw: str
-    drive_type_raw: str | None = Field(default=None, description="ТОЛЬКО если 2WD или 4WD явно отмечены на листе")
+    drive_type_raw: str | None = Field(
+        default=None, description="ТОЛЬКО если 2WD или 4WD явно отмечены на листе"
+    )
     color_raw: str | None = None
     paint_code_raw: str | None = None
     shaken_raw: str | None = None
@@ -107,22 +127,30 @@ class AuctionExtractionSchema(BaseModel):
     )
     make_en: str = Field(description="Марка авто на латинице, например Honda")
     model_en: str = Field(description="Модель авто на латинице, например Vezel")
-    trim_en: str | None = Field(default=None, description="Комплектация, например Hybrid Z Honda Sensing")
+    trim_en: str | None = Field(
+        default=None, description="Комплектация, например Hybrid Z Honda Sensing"
+    )
     mileage_km: int | None = Field(default=None, description="Пробег целым числом в км")
     odometer_status: Literal["confirmed", "replaced", "tampered", "unknown"] = "confirmed"
-    engine_cc: int | None = Field(default=None, description="Объём двигателя в см³ целым числом, например 1490 или 1500")
+    engine_cc: int | None = Field(
+        default=None, description="Объём двигателя в см³ целым числом, например 1490 или 1500"
+    )
     transmission_ru: str
     drive_type: Literal["2WD", "4WD"] | None = Field(
         default=None,
         description="ТОЛЬКО если явно отмечено на листе, иначе null",
     )
     fuel_type: Literal["gasoline", "hybrid", "diesel", "ev", "other"] | None = None
-    color_ru: str | None = Field(default=None, description="Буквальный перевод цвета без угадывания оттенка по коду")
+    color_ru: str | None = Field(
+        default=None, description="Буквальный перевод цвета без угадывания оттенка по коду"
+    )
     color_changed_ru: str | None = None
     shaken_ru: str | None = None
     recycling_fee_yen: int | None = None
     recycling_fee_paid: bool | None = None
-    equipment_ru: list[str] = Field(default_factory=list, description="Отмеченные опции + графа кондиционера")
+    equipment_ru: list[str] = Field(
+        default_factory=list, description="Отмеченные опции + графа кондиционера"
+    )
     defects: list[DefectExtractionSchema] = Field(default_factory=list)
     risk_flags: ExtractedRiskFlagsSchema
     inspector_notes_ru: list[str] = Field(default_factory=list)

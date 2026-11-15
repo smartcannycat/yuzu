@@ -406,7 +406,9 @@ def _build_mascot(batch: BatchJobEntity) -> MascotResponse:
     if batch.failed_count > 0:
         return MascotResponse(
             mood="confused",
-            phrase_ru=f"Готово {batch.ready_count} из {batch.total_items}, ошибок: {batch.failed_count}",
+            phrase_ru=(
+                f"Готово {batch.ready_count} из {batch.total_items}, ошибок: {batch.failed_count}"
+            ),
             badge_text=f"{batch.ready_count}/{batch.total_items}",
         )
     return MascotResponse(
@@ -416,7 +418,9 @@ def _build_mascot(batch: BatchJobEntity) -> MascotResponse:
     )
 
 
-def to_batch_create_response(batch: BatchJobEntity, poll_interval_ms: int = 1500) -> BatchCreateResponse:
+def to_batch_create_response(
+    batch: BatchJobEntity, poll_interval_ms: int = 1500
+) -> BatchCreateResponse:
     """Convert domain BatchJobEntity to compact 202 creation response."""
     return BatchCreateResponse(
         batch_id=UUID(batch.batch_id),

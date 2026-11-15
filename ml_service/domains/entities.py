@@ -75,7 +75,9 @@ class FastHeaderPreviewEntity:
 
     @property
     def preview_title(self) -> str | None:
-        base = " ".join(part.strip() for part in (self.make or "", self.model or "") if part and part.strip())
+        base = " ".join(
+            part.strip() for part in (self.make or "", self.model or "") if part and part.strip()
+        )
         lot = (self.lot_number or "").strip()
         if base and lot:
             return f"{base} #{lot}"
@@ -219,7 +221,7 @@ class RawExtractionEntity:
 
 @dataclass(slots=True, frozen=True)
 class NormalizedDefectEntity:
-    """Normalized body panel defect with validated defect codes, severity (1..3), and description."""
+    """Normalized body panel defect with validated codes, severity (1..3), and description."""
 
     panel_id: BodyPanel
     panel_ru: str
@@ -386,4 +388,8 @@ class BatchJobEntity:
 
     @property
     def is_terminal(self) -> bool:
-        return self.status in {BatchStatus.COMPLETED, BatchStatus.PARTIAL_FAILED, BatchStatus.FAILED}
+        return self.status in {
+            BatchStatus.COMPLETED,
+            BatchStatus.PARTIAL_FAILED,
+            BatchStatus.FAILED,
+        }
