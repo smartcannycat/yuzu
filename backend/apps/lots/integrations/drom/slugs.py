@@ -78,6 +78,8 @@ DEFAULT_MODEL_ALIASES: dict[str, tuple[str, str | None]] = {
     "corolla touring hybrid": ("corolla", "универсал"),
     "corolla sport": ("corolla", "хэтчбек 5 дв."),
     "impreza sport": ("impreza", "хэтчбек 5 дв."),
+    "impreza g4": ("impreza", "седан"),
+    "impreza anesis": ("impreza", "седан"),
     "impreza xv": ("xv", None),
     "note aura": ("aura", None),
     "prius a": ("prius_a", None),
@@ -89,7 +91,46 @@ DEFAULT_MODEL_ALIASES: dict[str, tuple[str, str | None]] = {
 _DEFAULT_FRAME_TYPES: dict[str, int] = {
     "универсал": 3,
     "хэтчбек 5 дв.": 5,
+    "седан": 10,
 }
+
+_BRAND_ALIASES: dict[str, str] = {
+    "mercedes": "mercedes-benz",
+    "мерседес": "mercedes-benz",
+    "мерседес бенц": "mercedes-benz",
+    "мерседес-бенц": "mercedes-benz",
+    "vw": "volkswagen",
+    "фольксваген": "volkswagen",
+    "бмв": "bmw",
+}
+
+_MB_SERIES_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"^cla\s*\d{3}"), "cla-class"),
+    (re.compile(r"^cls\s*\d{3}"), "cls-class"),
+    (re.compile(r"^clc\s*\d{3}"), "clc-class"),
+    (re.compile(r"^clk\s*\d{3}"), "clk-class"),
+    (re.compile(r"^cle\s*\d{3}"), "cle-class"),
+    (re.compile(r"^gla\s*\d{3}"), "gla-class"),
+    (re.compile(r"^glb\s*\d{3}"), "glb"),
+    (re.compile(r"^glc\s*\d{3}.*coupe"), "glc_coupe"),
+    (re.compile(r"^glc\s*\d{3}"), "glc-class"),
+    (re.compile(r"^gle\s*\d{3}.*coupe"), "gle_coupe"),
+    (re.compile(r"^gle\s*\d{3}"), "gle-class"),
+    (re.compile(r"^glk\s*\d{3}"), "glk-class"),
+    (re.compile(r"^gls\s*\d{3}"), "gls-class"),
+    (re.compile(r"^slk\s*\d{3}"), "slk-class"),
+    (re.compile(r"^slc\s*\d{3}"), "slc-class"),
+    (re.compile(r"^ml\s*\d{3}"), "m-class"),
+    (re.compile(r"^gl\s*\d{3}"), "gl-class"),
+    (re.compile(r"^sl\s*\d{3}"), "sl-class"),
+    (re.compile(r"^cl\s*\d{3}"), "cl-class"),
+    (re.compile(r"^([abcegrsvx])\s*\d{3}(?!\d)"), r"\1-class"),
+)
+
+_BMW_GT_RE = re.compile(r"^([356])\d{2}[a-z]*.*gran\s*turismo")
+_BMW_AT_RE = re.compile(r"^2\d{2}[a-z]*.*active\s*tourer")
+_BMW_GRANT_RE = re.compile(r"^2\d{2}[a-z]*.*gran\s*tourer")
+_BMW_SERIES_RE = re.compile(r"^([1-8])\d{2}(?:[a-z]+)?(?:\b|$)")
 
 _TRIM_NOISE_WORDS = frozenset(
     {"hybrid", "hv", "e-power", "epower", "4wd", "2wd", "turbo", "wxb", "w×b"}
@@ -132,6 +173,7 @@ class ResolvedDromSlug:
     make_slug: str
     model_slug: str
     frame_type_id: int | None = None
+    is_fallback_guess: bool = False
 
 
 def _transliterate_cyrillic(value: str) -> str:
@@ -225,6 +267,35 @@ def _resolve_alias(
     return None
 
 
+def _resolve_make_aware_alias(make_slug: str, model: str) -> ResolvedDromSlug | None:
+    model_key = re.sub(r"\s+", " ", model.strip().lower())
+    if not model_key:
+        return None
+    if make_slug == "mercedes-benz":
+        for pattern, replacement in _MB_SERIES_RULES:
+            match = pattern.match(model_key)
+            if match:
+                slug = (
+                    pattern.sub(replacement, match.group(0))
+                    if r"\1" in replacement
+                    else replacement
+                )
+                return ResolvedDromSlug(make_slug=make_slug, model_slug=slug)
+    elif make_slug == "bmw":
+        for pattern, template in (
+            (_BMW_AT_RE, "2-series_active_tourer"),
+            (_BMW_GRANT_RE, "2-series_gran_tourer"),
+            (_BMW_GT_RE, "{series}-series_gran_turismo"),
+            (_BMW_SERIES_RE, "{series}-series"),
+        ):
+            match = pattern.match(model_key)
+            if match:
+                series = match.group(1) if match.lastindex else ""
+                slug = template.format(series=series)
+                return ResolvedDromSlug(make_slug=make_slug, model_slug=slug)
+    return None
+
+
 class DromSlugResolver:
     """Dynamic Drom brand and model slug resolver backed by Drom HTML catalogs and ExternalCache."""
 
@@ -240,6 +311,10 @@ class DromSlugResolver:
         aliased = _resolve_alias(model, make_slug, schema)
         if aliased is not None:
             return aliased
+
+        make_aliased = _resolve_make_aware_alias(make_slug, model)
+        if make_aliased is not None:
+            return make_aliased
 
         brand_entry = brands.get(make_slug)
         if isinstance(brand_entry, dict):
@@ -284,6 +359,10 @@ class DromSlugResolver:
                 frame_type_id=None,
             )
 
+        make_aliased = _resolve_make_aware_alias(make_slug, model)
+        if make_aliased is not None:
+            return make_aliased
+
         if isinstance(brand_entry, dict):
             from_sales = _resolve_model_from_schema_dict(
                 model,
@@ -309,6 +388,7 @@ class DromSlugResolver:
             make_slug=make_slug,
             model_slug=normalize_slug(stripped_key or model_key),
             frame_type_id=None,
+            is_fallback_guess=True,
         )
 
     def _resolve_via_directory(
@@ -384,6 +464,9 @@ class DromSlugResolver:
 
 
 def _resolve_make_from_schema(make: str, brands: dict) -> str:
+    make_key = re.sub(r"\s+", " ", make.strip().lower())
+    if make_key in _BRAND_ALIASES:
+        return _BRAND_ALIASES[make_key]
     make_slug = normalize_slug(make)
     if not brands or make_slug in brands:
         return make_slug

@@ -5,7 +5,7 @@ import httpx
 import pytest
 from django.core.files.base import ContentFile
 
-from apps.core.enums import BodyPanel, ItemProcessingStatus, TaskStep
+from apps.core.enums import AuctionHouse, BodyPanel, ItemProcessingStatus, TaskStep
 from apps.lots.integrations.ml.client import (
     MlServiceClient,
     MlServiceError,
@@ -420,9 +420,39 @@ def test_unknown_choice_values_become_null_with_warnings(batch_item) -> None:
     assert lot.odometer_status is None
     assert lot.drive_type is None
     assert lot.frame_id_confidence is None
-    assert lot.auction_house is None
-    for field in ("fuel_type", "odometer_status", "drive_type", "frame_id_confidence"):
+    assert lot.auction_house == AuctionHouse.OTHER
+    assert lot.auction_strictness_index == pytest.approx(0.65)
+    for field in (
+        "fuel_type",
+        "odometer_status",
+        "drive_type",
+        "frame_id_confidence",
+        "auction_house",
+    ):
         assert any(field in warning for warning in lot.ocr_warnings)
+
+
+@pytest.mark.django_db
+def test_missing_auction_house_defaults_to_other_with_warning(batch_item) -> None:
+    body = _ok_response_body(
+        sheet=_sheet_payload(
+            auction_house=None,
+            auction_strictness_index=None,
+        )
+    )
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=body)
+
+    parser = MlServiceParser(client=_client(handler))
+    assert parser.gatekeeper(batch_item) is None
+    parser.parse(batch_item)
+
+    lot = batch_item.lot
+    lot.refresh_from_db()
+    assert lot.auction_house == AuctionHouse.OTHER
+    assert lot.auction_strictness_index == pytest.approx(0.65)
+    assert any("auction_house" in warning for warning in lot.ocr_warnings)
 
 
 @pytest.mark.django_db

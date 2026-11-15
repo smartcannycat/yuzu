@@ -15,7 +15,10 @@ from apps.lots.integrations.drom.filtering import (
     filter_and_aggregate,
     is_manual_transmission,
 )
-from apps.lots.integrations.drom.parser import parse_listings
+from apps.lots.integrations.drom.parser import (
+    is_antibot_challenge_html,
+    parse_listings,
+)
 from apps.lots.integrations.drom.power import DromPowerResolver
 from apps.lots.integrations.drom.schemas import (
     DromBlockedError,
@@ -41,6 +44,8 @@ class _SearchStep:
     relax_specs: bool
     is_fallback: bool
     fallback_reason_ru: str | None
+    without_rf_mileage_only: bool = True
+    relax_engine_volume: bool = False
 
 
 _SEARCH_CASCADE: tuple[_SearchStep, ...] = (
@@ -71,6 +76,41 @@ _SEARCH_CASCADE: tuple[_SearchStep, ...] = (
         fallback_reason_ru=(
             "Мало точных аналогов в ДФО — выборка расширена на всю РФ (без пробега по РФ, ±2 года)"
         ),
+    ),
+    _SearchStep(
+        region_scope="dfo",
+        region_label_ru="ДФО / Владивосток",
+        year_tolerance=1,
+        relax_specs=True,
+        is_fallback=True,
+        fallback_reason_ru=(
+            "Нет аналогов без пробега по РФ — выборка расширена на все объявления в ДФО (±1 год)"
+        ),
+        without_rf_mileage_only=False,
+    ),
+    _SearchStep(
+        region_scope="rf",
+        region_label_ru="Вся РФ",
+        year_tolerance=2,
+        relax_specs=True,
+        is_fallback=True,
+        fallback_reason_ru=(
+            "Нет аналогов без пробега по РФ — выборка расширена на всю РФ "
+            "(включая с пробегом по РФ, ±2 года)"
+        ),
+        without_rf_mileage_only=False,
+    ),
+    _SearchStep(
+        region_scope="rf",
+        region_label_ru="Вся РФ",
+        year_tolerance=4,
+        relax_specs=True,
+        is_fallback=True,
+        fallback_reason_ru=(
+            "Редкая модель — выборка максимально расширена на всю РФ (±4 года, с пробегом по РФ)"
+        ),
+        without_rf_mileage_only=False,
+        relax_engine_volume=True,
     ),
 )
 
@@ -136,7 +176,9 @@ class DromMarketService:
 
         for step in _SEARCH_CASCADE:
             try:
-                stats, used_url, current_slug = self._fetch_step(criteria, current_slug, step)
+                stats, used_url, current_slug, used_nearby = self._fetch_step(
+                    criteria, current_slug, step
+                )
             except DromBlockedError:
                 if best_partial is not None:
                     return best_partial, current_slug
@@ -148,6 +190,15 @@ class DromMarketService:
             if stats is None:
                 continue
 
+            is_fallback = step.is_fallback or used_nearby
+            fallback_reason_ru = step.fallback_reason_ru
+            if used_nearby:
+                fallback_reason_ru = (
+                    f"{fallback_reason_ru}; учтены ближайшие города ДФО"
+                    if fallback_reason_ru
+                    else "Мало аналогов в Приморье — учтены ближайшие города ДФО"
+                )
+
             candidate = DromMarketResult(
                 market_price_rf_rub=stats.market_price_rf_rub,
                 analogs_count=stats.analogs_count,
@@ -156,8 +207,8 @@ class DromMarketService:
                 search_region_ru=step.region_label_ru,
                 excludes_under_order=True,
                 filtered_out_under_order_count=stats.filtered_out_under_order_count,
-                is_fallback=step.is_fallback,
-                fallback_reason_ru=step.fallback_reason_ru,
+                is_fallback=is_fallback,
+                fallback_reason_ru=fallback_reason_ru,
                 drom_search_url=used_url,
             )
             if stats.analogs_count >= _MIN_ANALOGS_THRESHOLD:
@@ -169,14 +220,14 @@ class DromMarketService:
             raise last_error
         return best_partial, current_slug
 
-    def _fetch_step_html(
-        self,
+    @staticmethod
+    def _build_step_url(
         criteria: DromSearchCriteria,
         slug: ResolvedDromSlug,
         step: _SearchStep,
-    ) -> tuple[str, str]:
+    ) -> str:
         frame_type_id = None if step.region_scope == "rf" else slug.frame_type_id
-        url = build_drom_search_url(
+        return build_drom_search_url(
             criteria,
             make_slug=slug.make_slug,
             model_slug=slug.model_slug,
@@ -184,7 +235,17 @@ class DromMarketService:
             region_scope=step.region_scope,
             year_tolerance=step.year_tolerance,
             relax_specs=step.relax_specs,
+            without_rf_mileage_only=step.without_rf_mileage_only,
+            relax_engine_volume=step.relax_engine_volume,
         )
+
+    def _fetch_step_html(
+        self,
+        criteria: DromSearchCriteria,
+        slug: ResolvedDromSlug,
+        step: _SearchStep,
+    ) -> tuple[str, str]:
+        url = self._build_step_url(criteria, slug, step)
         html = self._client.get_html(
             url,
             expected_path_parts=(
@@ -194,48 +255,63 @@ class DromMarketService:
         )
         return html, url
 
+    def _retry_with_api_slug(
+        self,
+        criteria: DromSearchCriteria,
+        slug: ResolvedDromSlug,
+        step: _SearchStep,
+    ) -> tuple[str, str, ResolvedDromSlug] | None:
+        """Resolve canonical Drom slug via suggest API and re-fetch once if different."""
+        api_slug = self._slug_resolver.resolve_via_api(criteria.make, criteria.model)
+        if api_slug is None or _same_slug(api_slug, slug):
+            return None
+        try:
+            html, url = self._fetch_step_html(criteria, api_slug, step)
+        except DromNotFoundError:
+            return None
+        return html, url, api_slug
+
     def _fetch_step(
         self,
         criteria: DromSearchCriteria,
         slug: ResolvedDromSlug,
         step: _SearchStep,
-    ) -> tuple[FilteredMarketStats | None, str, ResolvedDromSlug]:
+    ) -> tuple[FilteredMarketStats | None, str, ResolvedDromSlug, bool]:
         try:
             html, url = self._fetch_step_html(criteria, slug, step)
         except DromNotFoundError:
-            api_slug = self._slug_resolver.resolve_via_api(criteria.make, criteria.model)
-            if api_slug is None or api_slug == slug:
-                fallback_url = build_drom_search_url(
-                    criteria,
-                    make_slug=slug.make_slug,
-                    model_slug=slug.model_slug,
-                    frame_type_id=slug.frame_type_id,
-                    region_scope=step.region_scope,
-                    year_tolerance=step.year_tolerance,
-                    relax_specs=step.relax_specs,
-                )
-                return None, fallback_url, slug
-            slug = api_slug
-            try:
-                html, url = self._fetch_step_html(criteria, slug, step)
-            except DromNotFoundError:
-                fallback_url = build_drom_search_url(
-                    criteria,
-                    make_slug=slug.make_slug,
-                    model_slug=slug.model_slug,
-                    frame_type_id=slug.frame_type_id,
-                    region_scope=step.region_scope,
-                    year_tolerance=step.year_tolerance,
-                    relax_specs=step.relax_specs,
-                )
-                return None, fallback_url, slug
+            retried = self._retry_with_api_slug(criteria, slug, step)
+            if retried is None:
+                fallback_url = self._build_step_url(criteria, slug, step)
+                return None, fallback_url, replace(slug, is_fallback_guess=False), False
+            html, url, slug = retried
 
         listings = parse_listings(html)
-        return (
-            filter_and_aggregate(listings, exclude_nearby_cities=(step.region_scope == "dfo")),
-            url,
-            slug,
-        )
+        if not listings:
+            if is_antibot_challenge_html(html):
+                raise DromBlockedError(f"Drom вернул anti-bot/CAPTCHA страницу для {url}")
+            if slug.is_fallback_guess:
+                retried = self._retry_with_api_slug(criteria, slug, step)
+                if retried is not None:
+                    html, url, slug = retried
+                    listings = parse_listings(html)
+                    if not listings and is_antibot_challenge_html(html):
+                        raise DromBlockedError(f"Drom вернул anti-bot/CAPTCHA страницу для {url}")
+                else:
+                    slug = replace(slug, is_fallback_guess=False)
+
+        if step.region_scope == "dfo":
+            strict_stats = filter_and_aggregate(listings, exclude_nearby_cities=True)
+            if strict_stats is not None and strict_stats.analogs_count >= _MIN_ANALOGS_THRESHOLD:
+                return strict_stats, url, slug, False
+            nearby_stats = filter_and_aggregate(listings, exclude_nearby_cities=False)
+            if nearby_stats is not None and (
+                strict_stats is None or nearby_stats.analogs_count > strict_stats.analogs_count
+            ):
+                return nearby_stats, url, slug, True
+            return strict_stats, url, slug, False
+
+        return filter_and_aggregate(listings, exclude_nearby_cities=False), url, slug, False
 
 
 def _deserialize_market_result(payload: dict[str, Any]) -> DromMarketResult | None:
@@ -304,6 +380,14 @@ def _with_power(result: DromMarketResult, power: DromPowerResult) -> DromMarketR
         power_hp=power.power_hp,
         power_hp_source=power.power_hp_source,
         is_under_160_hp=power.is_under_160_hp,
+    )
+
+
+def _same_slug(a: ResolvedDromSlug, b: ResolvedDromSlug) -> bool:
+    return (a.make_slug, a.model_slug, a.frame_type_id) == (
+        b.make_slug,
+        b.model_slug,
+        b.frame_type_id,
     )
 
 

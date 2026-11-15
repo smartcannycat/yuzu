@@ -334,11 +334,11 @@ def test_cascade_zero_analogs_falls_back_to_stale_then_error() -> None:
     )
     criteria = DromSearchCriteria(make="Toyota", model="Corolla", year=2020, engine_cc=1196)
 
-    # Without cache, 3 cascade steps yield 0 in-stock -> raises DromFetchError
+    # Without cache, 6 cascade steps yield 0 in-stock -> raises DromFetchError
     with pytest.raises(DromFetchError):
         service.evaluate(criteria)
     search_calls = [u for u in calls if "auto.drom.ru" in u]
-    assert len(search_calls) == 3
+    assert len(search_calls) == 6
 
     # With stale cache -> returns stale cache fallback
     resolved_slug = DromSlugResolver(service._client).resolve(criteria.make, criteria.model)
@@ -362,7 +362,7 @@ def test_cascade_zero_analogs_falls_back_to_stale_then_error() -> None:
     calls.clear()
     stale_result = service.evaluate(criteria)
     stale_search_calls = [u for u in calls if "auto.drom.ru" in u]
-    assert len(stale_search_calls) == 3
+    assert len(stale_search_calls) == 6
     assert stale_result.is_fallback is True
     assert stale_result.market_price_rf_rub == 1444000
 

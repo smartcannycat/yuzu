@@ -499,8 +499,8 @@ def calculate_customs(
         # Battery electric vehicles fall outside the unified EEC No. 107
         # rates and pay the aggregate customs payment (research/02, 1.5):
         # duty 15% + excise (Tax Code art. 193, per 1 hp) + VAT.
-        if params.power_hp is None:
-            raise ValueError("power_hp is required for the EV excise calculation")
+        # If Drom/OCR could not resolve power_hp, fall back to excise=0 RUB
+        # (pipeline records a warning so the user can enter HP in simulation).
         duty_eur = round(customs_value_eur * _EV_DUTY_PCT, 2)
         duty_rub = round_eur_to_rub(duty_eur, rates.eur_rub)
         duty = DutyResult(
@@ -511,7 +511,7 @@ def calculate_customs(
             duty_eur=duty_eur,
             duty_rub=duty_rub,
         )
-        excise_rub = calculate_excise(params.power_hp)
+        excise_rub = calculate_excise(params.power_hp) if params.power_hp is not None else 0
         import_vat_rub = math.floor(
             (customs_value_rub + duty_rub + excise_rub) * _IMPORT_VAT_PCT + 0.5
         )

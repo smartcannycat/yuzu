@@ -31,6 +31,8 @@ _ORDER_STOP_PHRASES: tuple[str, ...] = (
     "на заказ",
     "под привоз",
     "в пути",
+    "в архиве",
+    "объявления в архиве",
     "привезем",
     "привезём",
     "под полную пошлину из",
@@ -79,6 +81,7 @@ def _build_search_query_params(
     frame_type_id: int | None,
     year_tolerance: int,
     relax_specs: bool,
+    relax_engine_volume: bool = False,
 ) -> list[tuple[str, str]]:
     params: list[tuple[str, str]] = [
         ("unsold", "1"),
@@ -90,7 +93,7 @@ def _build_search_query_params(
         params.append(("minyear", str(criteria.year - year_tolerance)))
         params.append(("maxyear", str(criteria.year + year_tolerance)))
 
-    if criteria.engine_cc and criteria.engine_cc > 0:
+    if criteria.engine_cc and criteria.engine_cc > 0 and not relax_engine_volume:
         delta = 0.2 if relax_specs else 0.1
         min_v, max_v = compute_engine_volume_bounds(criteria.engine_cc, delta=delta)
         params.append(("mv", f"{min_v:.1f}"))
@@ -120,9 +123,11 @@ def _truncate_drom_url(
     safe_make: str,
     safe_model: str,
     query: str,
+    *,
+    mileage_segment: str = "/bez-probega/",
 ) -> str:
     # Keep query parameters intact while bounding slug segments to DB URLField(max_length=500).
-    suffix = f"/bez-probega/?{query}"
+    suffix = f"{mileage_segment}?{query}"
     available = max(2, _MAX_URL_LENGTH - len(prefix) - len(suffix) - 1)
     half = max(1, available // 2)
     bounded_make = safe_make[:half]
@@ -139,8 +144,10 @@ def build_drom_search_url(
     region_scope: str = "dfo",
     year_tolerance: int = 0,
     relax_specs: bool = False,
+    without_rf_mileage_only: bool = True,
+    relax_engine_volume: bool = False,
 ) -> str:
-    """Build a Drom search URL filtered for unsold, undamaged, in-stock, non-RF-mileage cars."""
+    """Build a Drom search URL filtered for unsold, undamaged, in-stock cars."""
     safe_make = quote(make_slug.strip("/"), safe="-_")
     safe_model = quote(model_slug.strip("/"), safe="-_")
     prefix = "https://auto.drom.ru/region25/" if region_scope == "dfo" else "https://auto.drom.ru/"
@@ -149,12 +156,20 @@ def build_drom_search_url(
         frame_type_id=frame_type_id,
         year_tolerance=year_tolerance,
         relax_specs=relax_specs,
+        relax_engine_volume=relax_engine_volume,
     )
     query = urlencode(params)
-    url = f"{prefix}{safe_make}/{safe_model}/bez-probega/?{query}"
+    mileage_segment = "/bez-probega/" if without_rf_mileage_only else "/"
+    url = f"{prefix}{safe_make}/{safe_model}{mileage_segment}?{query}"
     if len(url) <= _MAX_URL_LENGTH:
         return url
-    return _truncate_drom_url(prefix, safe_make, safe_model, query)
+    return _truncate_drom_url(
+        prefix,
+        safe_make,
+        safe_model,
+        query,
+        mileage_segment=mileage_segment,
+    )
 
 
 def is_under_order_or_unavailable(listing: DromListing) -> bool:
