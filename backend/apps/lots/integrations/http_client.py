@@ -18,9 +18,11 @@ from apps.core.redis_utils import acquire_distributed_interval_slot
 from apps.lots.integrations.proxy import (
     ProxyPool,
     ProxyRotator,
+    get_shared_proxy_pool,
     normalize_proxy_urls,
     proxy_fingerprint,
     redact_proxy_url,
+    reset_shared_proxy_pools,
     scrub_proxy_credentials,
 )
 
@@ -34,10 +36,13 @@ __all__ = [
     "ProxyPool",
     "ProxyRotator",
     "ResilientHttpSession",
+    "clear_local_throttle_state",
     "decode_html_bytes",
+    "get_shared_proxy_pool",
     "normalize_proxy_urls",
     "proxy_fingerprint",
     "redact_proxy_url",
+    "reset_shared_proxy_pools",
     "scrub_proxy_credentials",
     "wait_for_request_slot",
 ]
@@ -76,6 +81,12 @@ class HttpFetchResponse:
         return json.loads(self.content)
 
 
+def clear_local_throttle_state() -> None:
+    """Reset in-process fallback request timestamps (for test isolation)."""
+    with _local_throttle_lock:
+        _local_next_request_at.clear()
+
+
 def wait_for_request_slot(
     throttle_key: str,
     interval_sec: float,
@@ -87,12 +98,25 @@ def wait_for_request_slot(
     if interval_sec <= 0 and jitter_sec <= 0:
         return
     jitter = random.uniform(0.0, jitter_sec) if jitter_sec > 0 else 0.0
-    wait_sec = acquire_distributed_interval_slot(throttle_key, interval_sec)
+    remaining: float | None = None
+    if deadline is not None:
+        remaining = deadline - time.monotonic() - jitter
+        if remaining <= 0:
+            raise HttpBudgetExhaustedError("Request budget exhausted")
+    wait_sec = acquire_distributed_interval_slot(
+        throttle_key,
+        interval_sec,
+        max_wait_sec=remaining,
+    )
+    if wait_sec is not None and wait_sec < 0:
+        raise HttpBudgetExhaustedError("Request budget exhausted")
     if wait_sec is None:
         with _local_throttle_lock:
             now = time.monotonic()
             scheduled = max(now, _local_next_request_at.get(throttle_key, 0.0))
             wait_sec = scheduled - now
+            if deadline is not None and now + wait_sec + jitter >= deadline:
+                raise HttpBudgetExhaustedError("Request budget exhausted")
             _local_next_request_at[throttle_key] = scheduled + interval_sec
     total_wait = wait_sec + jitter
     if total_wait > 0:
@@ -135,7 +159,13 @@ class ResilientHttpSession:
         self._transport = transport
         self._httpx_clients: dict[str, httpx.Client] = {}
         self._curl_sessions: dict[str, curl_requests.Session] = {}
+        self._proxy_domains: dict[str, str] = {}
+        self._last_proxy_key = ""
         self._in_context = False
+
+    @property
+    def last_proxy_key(self) -> str:
+        return self._last_proxy_key
 
     def __enter__(self) -> ResilientHttpSession:
         self._in_context = True
@@ -143,6 +173,7 @@ class ResilientHttpSession:
 
     def __exit__(self, *args: object) -> None:
         self._in_context = False
+        self._proxy_domains.clear()
         for client in self._httpx_clients.values():
             client.close()
         self._httpx_clients.clear()
@@ -173,7 +204,12 @@ class ResilientHttpSession:
             return
         self.drop_proxy_session(proxy_key)
         if self._proxy_rotator is not None:
-            effective_domain = domain or self._domain or (urlparse(url).hostname if url else None)
+            effective_domain = (
+                domain
+                or self._proxy_domains.get(proxy_key)
+                or self._domain
+                or (urlparse(url).hostname if url else None)
+            )
             self._proxy_rotator.mark_blocked(
                 proxy_key=proxy_key,
                 domain=effective_domain,
@@ -190,6 +226,10 @@ class ResilientHttpSession:
         proxy: str | None = None,
         domain: str | None = None,
         max_bytes: int | None = None,
+        throttle_key: str = "",
+        interval_sec: float = 0.0,
+        jitter_sec: float = 0.0,
+        deadline: float | None = None,
     ) -> HttpFetchResponse:
         effective_timeout = timeout if timeout is not None else self._timeout_sec
         effective_domain = self._effective_domain(url, domain)
@@ -197,6 +237,12 @@ class ResilientHttpSession:
         if selected_proxy is None and self._proxy_rotator:
             selected_proxy = self._proxy_rotator.next_proxy(domain=effective_domain)
         proxy_key = proxy_fingerprint(selected_proxy)
+        self._last_proxy_key = proxy_key
+        if proxy_key and effective_domain:
+            self._proxy_domains[proxy_key] = effective_domain
+        if self._transport is None and throttle_key and (interval_sec > 0 or jitter_sec > 0):
+            scoped_key = f"{throttle_key}:{proxy_key or 'direct'}"
+            wait_for_request_slot(scoped_key, interval_sec, jitter_sec, deadline=deadline)
 
         if self._transport is not None:
             response = self._get_httpx(
@@ -220,7 +266,6 @@ class ResilientHttpSession:
         if max_bytes is not None and len(response.content) > max_bytes:
             raise HttpTransportError(
                 f"Response size {len(response.content)} exceeds limit {max_bytes}",
-                proxy_key=proxy_key,
             )
         return HttpFetchResponse(
             status_code=response.status_code,

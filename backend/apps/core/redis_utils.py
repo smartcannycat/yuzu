@@ -26,13 +26,17 @@ _INTERVAL_SLOT_LUA = """
 local key = KEYS[1]
 local now_ms = tonumber(ARGV[1])
 local interval_ms = tonumber(ARGV[2])
-local ttl_ms = tonumber(ARGV[3])
+local max_wait_ms = tonumber(ARGV[3])
 local current = redis.call('GET', key)
 local next_allowed = current and tonumber(current) or now_ms
 if next_allowed < now_ms then
     next_allowed = now_ms
 end
 local wait_ms = next_allowed - now_ms
+if max_wait_ms >= 0 and wait_ms >= max_wait_ms then
+    return -1
+end
+local ttl_ms = wait_ms + interval_ms + 60000
 redis.call('SET', key, tostring(next_allowed + interval_ms), 'PX', ttl_ms)
 return wait_ms
 """
@@ -69,11 +73,16 @@ def get_redis_client() -> redis.Redis | None:
         return _cached_client
 
 
-def acquire_distributed_interval_slot(key: str, interval_sec: float) -> float | None:
+def acquire_distributed_interval_slot(
+    key: str,
+    interval_sec: float,
+    *,
+    max_wait_sec: float | None = None,
+) -> float | None:
     """Reserve the next interval-spaced slot in Redis and return seconds to wait.
 
     Returns ``None`` when Redis is unconfigured or unreachable so callers can
-    fall back to an in-process lock.
+    fall back to an in-process lock, or ``-1.0`` when waiting would exceed ``max_wait_sec``.
     """
     if interval_sec <= 0:
         return 0.0
@@ -82,10 +91,12 @@ def acquire_distributed_interval_slot(key: str, interval_sec: float) -> float | 
         return None
     now_ms = int(time.time() * 1000)
     interval_ms = max(1, int(interval_sec * 1000))
-    ttl_ms = interval_ms + 60_000
+    max_wait_ms = max(0, int(max_wait_sec * 1000)) if max_wait_sec is not None else -1
     try:
-        wait_ms = client.eval(_INTERVAL_SLOT_LUA, 1, key, now_ms, interval_ms, ttl_ms)
-        return max(0.0, float(wait_ms) / 1000.0)
+        wait_ms = float(client.eval(_INTERVAL_SLOT_LUA, 1, key, now_ms, interval_ms, max_wait_ms))
+        if wait_ms < 0:
+            return -1.0
+        return max(0.0, wait_ms / 1000.0)
     except RedisError as exc:
         logger.debug("Redis throttle slot unavailable, falling back to local lock: %s", exc)
         return None

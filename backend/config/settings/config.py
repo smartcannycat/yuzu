@@ -56,29 +56,18 @@ class AppSettings(BaseSettings):
     ML_SERVICE_TIMEOUT_SEC: float = 30.0
     ML_SERVICE_API_KEY: str = ""
     CBRF_API_URL: str = "https://www.cbr-xml-daily.ru/daily_json.js"
-    HTTP_CLIENT_TIMEOUT_SEC: float | None = Field(default=None, gt=0, allow_inf_nan=False)
 
-    # Shared scraper transport & resilience defaults (inherited by Farpost/Drom unless overridden)
+    # Shared scraper transport & rate-limit settings (used by Drom and Farpost)
     SCRAPER_PROXY_URLS: list[str] | str = []
     SCRAPER_PROXY_BAN_SEC: int = Field(default=120, ge=0)
     SCRAPER_TIMEOUT_SEC: float = Field(default=10.0, gt=0, allow_inf_nan=False)
     SCRAPER_REQUEST_INTERVAL_SEC: float = Field(default=1.2, ge=0, allow_inf_nan=False)
     SCRAPER_REQUEST_JITTER_SEC: float = Field(default=0.4, ge=0, allow_inf_nan=False)
-    SCRAPER_COOLDOWN_SEC: int = Field(default=45, ge=0)
 
-    # Per-integration overrides (None inherits the corresponding SCRAPER_* setting)
-    FARPOST_TIMEOUT_SEC: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    # Farpost-specific repair workflow settings
     FARPOST_BUDGET_SEC: float = Field(default=30.0, gt=0, allow_inf_nan=False)
-    FARPOST_REQUEST_INTERVAL_SEC: float | None = Field(default=None, ge=0, allow_inf_nan=False)
-    FARPOST_REQUEST_JITTER_SEC: float | None = Field(default=None, ge=0, allow_inf_nan=False)
-    FARPOST_COOLDOWN_SEC: int | None = Field(default=None, ge=0)
+    FARPOST_COOLDOWN_SEC: int = Field(default=45, ge=0)
     FARPOST_CACHE_TTL_HOURS: int = Field(default=24, ge=1)
-    FARPOST_PROXY_URLS: list[str] | str = []
-
-    DROM_TIMEOUT_SEC: float | None = Field(default=None, gt=0, allow_inf_nan=False)
-    DROM_REQUEST_INTERVAL_SEC: float | None = Field(default=None, ge=0, allow_inf_nan=False)
-    DROM_REQUEST_JITTER_SEC: float | None = Field(default=None, ge=0, allow_inf_nan=False)
-    DROM_PROXY_URLS: list[str] | str = []
 
     # CBRF currency gateway (BE-05)
     CBRF_TIMEOUT_SEC: float = Field(default=5.0, gt=0, allow_inf_nan=False)
@@ -106,8 +95,6 @@ class AppSettings(BaseSettings):
         "CORS_ALLOWED_ORIGINS",
         "CSRF_TRUSTED_ORIGINS",
         "SCRAPER_PROXY_URLS",
-        "FARPOST_PROXY_URLS",
-        "DROM_PROXY_URLS",
     )
     @classmethod
     def parse_comma_separated_list(cls, value: list[str] | str) -> list[str]:
@@ -144,44 +131,6 @@ class AppSettings(BaseSettings):
     def validate_fallback_rates(cls, value: dict | None) -> dict | None:
         parse_fallback_config(value)
         return value
-
-    @model_validator(mode="after")
-    def resolve_scraper_defaults(self) -> "AppSettings":
-        if self.HTTP_CLIENT_TIMEOUT_SEC is None:
-            self.HTTP_CLIENT_TIMEOUT_SEC = self.SCRAPER_TIMEOUT_SEC
-        if self.FARPOST_TIMEOUT_SEC is None:
-            self.FARPOST_TIMEOUT_SEC = self.SCRAPER_TIMEOUT_SEC
-        if self.FARPOST_REQUEST_INTERVAL_SEC is None:
-            self.FARPOST_REQUEST_INTERVAL_SEC = self.SCRAPER_REQUEST_INTERVAL_SEC
-        if self.FARPOST_REQUEST_JITTER_SEC is None:
-            self.FARPOST_REQUEST_JITTER_SEC = self.SCRAPER_REQUEST_JITTER_SEC
-        if self.FARPOST_COOLDOWN_SEC is None:
-            self.FARPOST_COOLDOWN_SEC = self.SCRAPER_COOLDOWN_SEC
-        if self.DROM_TIMEOUT_SEC is None:
-            self.DROM_TIMEOUT_SEC = self.HTTP_CLIENT_TIMEOUT_SEC
-        if self.DROM_REQUEST_INTERVAL_SEC is None:
-            self.DROM_REQUEST_INTERVAL_SEC = self.SCRAPER_REQUEST_INTERVAL_SEC
-        if self.DROM_REQUEST_JITTER_SEC is None:
-            self.DROM_REQUEST_JITTER_SEC = self.SCRAPER_REQUEST_JITTER_SEC
-        return self
-
-    def proxy_urls_for(self, source: str) -> tuple[str, ...]:
-        """Return deduplicated proxy URLs prioritizing source overrides then the shared pool."""
-        override_map = {
-            "farpost": self.FARPOST_PROXY_URLS,
-            "drom": self.DROM_PROXY_URLS,
-        }
-        specific = override_map.get(source.strip().lower(), ())
-        seen: set[str] = set()
-        merged: list[str] = []
-        for group in (specific, self.SCRAPER_PROXY_URLS):
-            items = [group] if isinstance(group, str) else group
-            for raw in items:
-                cleaned = str(raw).strip()
-                if cleaned and cleaned not in seen:
-                    seen.add(cleaned)
-                    merged.append(cleaned)
-        return tuple(merged)
 
     @model_validator(mode="after")
     def validate_production_security(self) -> "AppSettings":

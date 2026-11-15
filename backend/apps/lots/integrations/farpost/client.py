@@ -15,10 +15,9 @@ from apps.lots.integrations.http_client import (
     HttpBudgetExhaustedError,
     HttpFetchResponse,
     HttpTransportError,
-    ProxyPool,
     ResilientHttpSession,
     decode_html_bytes,
-    wait_for_request_slot,
+    get_shared_proxy_pool,
 )
 
 if TYPE_CHECKING:
@@ -43,7 +42,11 @@ class FarpostFetchError(RuntimeError):
 
 
 class FarpostRateLimitedError(FarpostFetchError):
-    """Source responded with HTTP 429 or an anti-bot verification redirect/page."""
+    """Source responded with HTTP 403/429 or an anti-bot verification redirect/page."""
+
+
+class _FarpostRetryableError(FarpostFetchError):
+    """Transient Farpost HTTP error (5xx) eligible for proxy rotation."""
 
 
 @dataclass(frozen=True)
@@ -386,18 +389,6 @@ def _is_accessory_listing(name: str) -> bool:
     return bool(_ACCESSORIES.search(head))
 
 
-def _throttle_wait(deadline: float, interval_sec: float, jitter_sec: float = 0.0) -> None:
-    try:
-        wait_for_request_slot(
-            _FARPOST_THROTTLE_KEY,
-            interval_sec,
-            jitter_sec,
-            deadline=deadline,
-        )
-    except HttpBudgetExhaustedError as exc:
-        raise FarpostFetchError("Farpost search budget exhausted") from exc
-
-
 def _extract_exact_feed_count(page: Selector) -> tuple[int | None, bool]:
     events = page.css("script#ctr-viewdir-event")
     if not events:
@@ -537,7 +528,9 @@ class FarpostClient:
         self.proxy_ban_sec = proxy_ban_sec
         self.transport = transport
         self._proxy_rotator = (
-            ProxyPool(proxy_urls, domain="www.farpost.ru", ban_cooldown_sec=proxy_ban_sec)
+            get_shared_proxy_pool(
+                proxy_urls, domain="www.farpost.ru", ban_cooldown_sec=proxy_ban_sec
+            )
             if proxy_urls
             else None
         )
@@ -588,14 +581,25 @@ class FarpostClient:
             params=params,
             timeout=min(self.timeout_sec, remaining),
             max_bytes=_MAX_RESPONSE_BYTES,
+            throttle_key=_FARPOST_THROTTLE_KEY,
+            interval_sec=self.request_interval_sec,
+            jitter_sec=self.request_jitter_sec,
+            deadline=deadline,
         )
-        if response.status_code == 429 or urlparse(response.url).path.startswith("/verify"):
+        if response.status_code in {403, 429} or urlparse(response.url).path.startswith("/verify"):
             session.mark_proxy_blocked(
                 response.proxy_key,
                 url=_FARPOST_URL,
                 cooldown_sec=self.proxy_ban_sec,
             )
             raise FarpostRateLimitedError("Farpost rate limited or anti-bot verification requested")
+        if response.status_code >= 500:
+            session.mark_proxy_blocked(
+                response.proxy_key,
+                url=_FARPOST_URL,
+                cooldown_sec=self.proxy_ban_sec,
+            )
+            raise _FarpostRetryableError(f"Farpost returned HTTP {response.status_code}")
         if response.status_code >= 400:
             raise FarpostFetchError(f"Farpost returned HTTP {response.status_code}")
         if time.monotonic() > deadline:
@@ -611,10 +615,9 @@ class FarpostClient:
     ) -> ParseResult:
         max_attempts = min(len(self._proxy_rotator), 3) if self._proxy_rotator else 1
         last_rate_err: FarpostRateLimitedError | None = None
+        last_retry_err: _FarpostRetryableError | None = None
         last_transport_err: HttpTransportError | None = None
         for attempt in range(max_attempts):
-            if self.transport is None:
-                _throttle_wait(deadline, self.request_interval_sec, self.request_jitter_sec)
             active_session = self._session
             try:
                 if active_session is not None:
@@ -626,13 +629,29 @@ class FarpostClient:
                         active_session = session
                         html, final_url = self._fetch_html(session, criteria, deadline, page=page)
                 return parse_listing_page(html, criteria, source_url=final_url)
-            except FarpostRateLimitedError as exc:
-                last_rate_err = exc
-                if attempt < max_attempts - 1 and deadline - time.monotonic() > 1.0:
+            except HttpBudgetExhaustedError as exc:
+                raise FarpostFetchError("Farpost search budget exhausted") from exc
+            except (FarpostRateLimitedError, _FarpostRetryableError) as exc:
+                if active_session is not None and active_session.last_proxy_key:
+                    active_session.mark_proxy_blocked(
+                        active_session.last_proxy_key,
+                        url=_FARPOST_URL,
+                        cooldown_sec=self.proxy_ban_sec,
+                    )
+                if isinstance(exc, FarpostRateLimitedError):
+                    last_rate_err = exc
+                else:
+                    last_retry_err = exc
+                if (
+                    self._proxy_rotator
+                    and len(self._proxy_rotator) > 1
+                    and attempt < max_attempts - 1
+                    and deadline - time.monotonic() > 1.0
+                ):
                     continue
                 raise
             except HttpTransportError as exc:
-                if active_session is not None:
+                if active_session is not None and exc.proxy_key:
                     active_session.mark_proxy_blocked(
                         exc.proxy_key,
                         url=_FARPOST_URL,
@@ -644,6 +663,8 @@ class FarpostClient:
                 raise FarpostFetchError(f"Farpost request failed: {exc}") from exc
         if last_rate_err is not None:
             raise last_rate_err
+        if last_retry_err is not None:
+            raise last_retry_err
         raise FarpostFetchError(f"Farpost request failed: {last_transport_err}")
 
     def search_with_metadata(self, criteria: PartCriteria, *, deadline: float) -> ParseResult:

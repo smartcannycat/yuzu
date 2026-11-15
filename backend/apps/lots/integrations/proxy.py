@@ -96,6 +96,12 @@ def _normalize_domain(domain: str | None) -> str:
     if "://" in cleaned:
         with contextlib.suppress(ValueError):
             cleaned = (urlparse(cleaned).hostname or cleaned).lower()
+    else:
+        cleaned = cleaned.split("/", 1)[0].split(":", 1)[0]
+    if cleaned == "drom.ru" or cleaned.endswith(".drom.ru"):
+        return "drom.ru"
+    if cleaned == "farpost.ru" or cleaned.endswith(".farpost.ru"):
+        return "farpost.ru"
     return cleaned or "default"
 
 
@@ -126,19 +132,33 @@ class ProxyPool:
     def __bool__(self) -> bool:
         return bool(self._proxies)
 
-    def _redis_blocked_fingerprints(self, domain_key: str) -> set[str]:
-        if not self._use_redis or not self._fingerprints or self._ban_cooldown_sec <= 0:
-            return set()
+    def _redis_blocked_fingerprints(self, domain_key: str) -> dict[str, float]:
+        if not self._use_redis or not self._fingerprints:
+            return {}
         client = get_redis_client()
         if client is None:
-            return set()
+            return {}
         keys = [f"{_PROXY_BAN_KEY_PREFIX}:{domain_key}:{fp}" for fp in self._fingerprints]
         try:
             values = client.mget(keys)
         except RedisError as exc:
             logger.debug("Redis proxy quarantine read unavailable: %s", exc)
-            return set()
-        return {fp for fp, val in zip(self._fingerprints, values, strict=True) if val is not None}
+            return {}
+        now_wall = time.time()
+        blocked: dict[str, float] = {}
+        for fp, val in zip(self._fingerprints, values, strict=True):
+            if val is None:
+                continue
+            raw = val.decode("utf-8", errors="ignore") if isinstance(val, bytes) else str(val)
+            if raw.startswith("exp:"):
+                with contextlib.suppress(ValueError):
+                    remaining = float(raw[4:]) - now_wall
+                    if remaining > 0:
+                        blocked[fp] = remaining
+                    continue
+            if self._ban_cooldown_sec > 0:
+                blocked[fp] = self._ban_cooldown_sec
+        return blocked
 
     def next_proxy(self, *, domain: str | None = None) -> str | None:
         """Select the next non-quarantined proxy for ``domain``, falling back gracefully."""
@@ -161,7 +181,7 @@ class ProxyPool:
                 if local_until <= now and fp not in redis_blocked:
                     self._index = idx + 1
                     return self._proxies[idx]
-                effective_until = local_until if local_until > now else now + self._ban_cooldown_sec
+                effective_until = local_until if local_until > now else now + redis_blocked[fp]
                 if effective_until < earliest_unblock:
                     earliest_unblock = effective_until
                     best_quarantined_idx = idx
@@ -198,7 +218,7 @@ class ProxyPool:
                 try:
                     client.set(
                         f"{_PROXY_BAN_KEY_PREFIX}:{domain_key}:{fp}",
-                        "1",
+                        f"exp:{time.time() + ttl:.3f}",
                         ex=max(1, math.ceil(ttl)),
                     )
                 except RedisError as exc:
@@ -233,6 +253,40 @@ class ProxyPool:
             if client is not None:
                 with contextlib.suppress(RedisError):
                     client.delete(f"{_PROXY_BAN_KEY_PREFIX}:{domain_key}:{fp}")
+
+
+_shared_pools_lock = threading.Lock()
+_shared_pools: dict[tuple[tuple[str, ...], str | None, float, bool], ProxyPool] = {}
+
+
+def get_shared_proxy_pool(
+    proxy_urls: Sequence[str] = (),
+    *,
+    domain: str | None = None,
+    ban_cooldown_sec: float = _DEFAULT_PROXY_BAN_SEC,
+    use_redis: bool = True,
+) -> ProxyPool:
+    """Return a process-wide ProxyPool keyed by normalized configuration."""
+    normalized = normalize_proxy_urls(proxy_urls)
+    cooldown = max(0.0, float(ban_cooldown_sec))
+    key = (normalized, domain, cooldown, use_redis)
+    with _shared_pools_lock:
+        pool = _shared_pools.get(key)
+        if pool is None:
+            pool = ProxyPool(
+                normalized,
+                domain=domain,
+                ban_cooldown_sec=cooldown,
+                use_redis=use_redis,
+            )
+            _shared_pools[key] = pool
+        return pool
+
+
+def reset_shared_proxy_pools() -> None:
+    """Clear process-wide shared proxy pools (for test isolation)."""
+    with _shared_pools_lock:
+        _shared_pools.clear()
 
 
 ProxyRotator = ProxyPool
