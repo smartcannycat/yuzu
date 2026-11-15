@@ -8,8 +8,33 @@ from apps.lots.integrations.drom.schemas import DromListing
 
 _TRAILING_DECIMAL_RE = re.compile(r"[.,]\d{1,2}\s*(?:₽|руб\.?)?\s*$", re.IGNORECASE)
 _PRICE_DIGITS_RE = re.compile(r"\d+")
-_GROUP_ORDER_MARKERS = ("под заказ", "на заказ", "в пути")
+_GROUP_ORDER_MARKERS = ("под заказ", "на заказ", "в пути", "в архиве", "архив")
 _HTML_CAR_STATE_MARKERS = ("под заказ", "в пути")
+_ANTIBOT_MARKERS = (
+    "qrator",
+    "g-recaptcha",
+    "smartcaptcha",
+    "smart-captcha",
+    "yandex.ru/captcha",
+    "cf-chl-",
+    "turnstile",
+    "hcaptcha",
+    "ddos-guard",
+    "подтвердите, что вы не робот",
+    "подозрительная активность",
+    "доступ ограничен",
+    "just a moment",
+)
+
+
+def is_antibot_challenge_html(html: str) -> bool:
+    """Return True if a 200 OK HTML looks like an anti-bot or CAPTCHA challenge."""
+    if not html or extract_bulls_list_ssr_payload(html) is not None:
+        return False
+    lower = html.lower()
+    if 'data-ftid="bulls-list_bull"' in lower:
+        return False
+    return any(marker in lower for marker in _ANTIBOT_MARKERS)
 
 
 def parse_listings(html: str) -> list[DromListing]:

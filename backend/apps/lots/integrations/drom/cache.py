@@ -48,6 +48,7 @@ def fetch_with_drom_cache[T](
     is_cacheable: Callable[[T], bool] | None = None,
     fallback_to_stale_on_empty: bool = True,
     on_error: Callable[[DromFetchError], None] | None = None,
+    reraise: tuple[type[Exception], ...] = (),
 ) -> tuple[T | None, bool]:
     """Read-through Drom cache helper with stale fallback on fetch errors or empty results.
 
@@ -64,6 +65,8 @@ def fetch_with_drom_cache[T](
     try:
         live_value = fetcher()
     except DromFetchError as exc:
+        if reraise and isinstance(exc, reraise):
+            raise
         fetch_failed = True
         if on_error is not None:
             on_error(exc)

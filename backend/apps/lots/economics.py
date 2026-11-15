@@ -29,6 +29,70 @@ from apps.lots.models import (
 )
 
 _LEGACY_COROLLA_FRAME_ID = "NRE210-2005418"
+DEFAULT_BID_SLIDER_MAX_JPY = 2_500_000
+MAX_DYNAMIC_BID_SLIDER_MAX_JPY = 50_000_000
+_SLIDER_MAX_STEP_JPY = 100_000
+EV_MISSING_POWER_WARNING = (
+    "Мощность (л.с.) для электромобиля не найдена — акциз принят равным 0 ₽, "
+    "укажите мощность вручную в симуляторе"
+)
+
+
+def compute_bid_slider_max_jpy(
+    *,
+    market_price_rf_rub: int | None,
+    jpy_rub: float | None,
+    auction_bid_jpy: int | None = None,
+    current_max_jpy: int | None = None,
+) -> int:
+    """Compute a bid slider upper bound (JPY) scaled for high-value vehicles."""
+    candidates = [
+        DEFAULT_BID_SLIDER_MAX_JPY,
+        current_max_jpy or 0,
+        auction_bid_jpy or 0,
+    ]
+    if market_price_rf_rub and market_price_rf_rub > 0 and jpy_rub and jpy_rub > 0:
+        estimated_jpy = (
+            math.ceil((market_price_rf_rub / jpy_rub) / _SLIDER_MAX_STEP_JPY) * _SLIDER_MAX_STEP_JPY
+        )
+        candidates.append(estimated_jpy)
+    return min(MAX_DYNAMIC_BID_SLIDER_MAX_JPY, max(candidates))
+
+
+def _sync_ev_missing_power_warning(
+    lot: Lot,
+    power_hp: int | None,
+    lot_update_fields: list[str],
+) -> None:
+    """Keep EV missing-power warning aligned with current ``power_hp`` state."""
+    warnings = list(lot.ocr_warnings or [])
+    if lot.fuel_type == FuelType.EV and power_hp is None:
+        if EV_MISSING_POWER_WARNING not in warnings:
+            warnings.append(EV_MISSING_POWER_WARNING)
+            lot.ocr_warnings = warnings
+            lot_update_fields.append("ocr_warnings")
+    elif EV_MISSING_POWER_WARNING in warnings:
+        lot.ocr_warnings = [w for w in warnings if w != EV_MISSING_POWER_WARNING]
+        lot_update_fields.append("ocr_warnings")
+
+
+def ensure_dynamic_bid_slider_max(lot: Lot, jpy_rub: float | None = None) -> int:
+    """Ensure ``lot.bid_slider_max_jpy`` fits the car's estimated JPY value."""
+    if jpy_rub is None:
+        rates_data, _ = _extract_rates(lot, None)
+        if rates_data is not None:
+            jpy_rub = rates_data.jpy_rub_bank
+    target_max = compute_bid_slider_max_jpy(
+        market_price_rf_rub=lot.market_price_rf_rub,
+        jpy_rub=jpy_rub,
+        auction_bid_jpy=lot.auction_bid_jpy,
+        current_max_jpy=lot.bid_slider_max_jpy,
+    )
+    if target_max != (lot.bid_slider_max_jpy or 0):
+        lot.bid_slider_max_jpy = target_max
+        if lot.pk is not None:
+            lot.save(update_fields=["bid_slider_max_jpy", "updated_at"])
+    return target_max
 
 
 def _resolve_calculation_date(lot: Lot, on_date: date | None) -> date:
@@ -130,6 +194,7 @@ def recompute_lot_economics(
             lot_update_fields += ["power_hp", "power_hp_source", "is_under_160_hp"]
 
         power_hp = custom_power_hp if custom_power_hp is not None else lot.power_hp
+        _sync_ev_missing_power_warning(lot, power_hp, lot_update_fields)
         if lot.fuel_type != FuelType.EV and not lot.engine_cc:
             raise ValueError("Отсутствует объём двигателя для расчёта пошлины")
         if not lot.first_reg_year:
@@ -219,6 +284,16 @@ def recompute_lot_economics(
             for step in ladder_result.steps
         )
 
+        target_slider_max = compute_bid_slider_max_jpy(
+            market_price_rf_rub=market_price_rub,
+            jpy_rub=rates.jpy_rub,
+            auction_bid_jpy=max(lot.auction_bid_jpy or 0, applied_bid_jpy),
+            current_max_jpy=lot.bid_slider_max_jpy,
+        )
+        if target_slider_max > (lot.bid_slider_max_jpy or 0):
+            lot.bid_slider_max_jpy = target_slider_max
+            lot_update_fields.append("bid_slider_max_jpy")
+
         lot.turnkey_cost_rub = ladder_result.turnkey_cost_rub
         lot.net_benefit_rub = ladder_result.net_benefit_rub
         lot.benefit_percentage = ladder_result.benefit_percentage
@@ -248,8 +323,16 @@ def _resolve_start_bid_jpy(lot: Lot) -> int | None:
 
     """
     min_bid = lot.bid_slider_min_jpy or 300_000
-    max_bid = lot.bid_slider_max_jpy or 2_500_000
     step_bid = lot.bid_slider_step_jpy or 10_000
+
+    customs_model = CustomsCalculation.objects.filter(lot=lot).first()
+    rates_data, _ = _extract_rates(lot, customs_model)
+    max_bid = compute_bid_slider_max_jpy(
+        market_price_rf_rub=lot.market_price_rf_rub,
+        jpy_rub=rates_data.jpy_rub_bank if rates_data is not None else None,
+        auction_bid_jpy=lot.auction_bid_jpy,
+        current_max_jpy=lot.bid_slider_max_jpy,
+    )
 
     def clamp(bid_jpy: int) -> int:
         return max(min_bid, min(max_bid, bid_jpy))
@@ -268,8 +351,6 @@ def _resolve_start_bid_jpy(lot: Lot) -> int | None:
     if not lot.market_price_rf_rub:
         return None
 
-    customs_model = CustomsCalculation.objects.filter(lot=lot).first()
-    rates_data, _ = _extract_rates(lot, customs_model)
     if rates_data is None:
         return None
     rates = _to_rates_input(rates_data)
@@ -311,8 +392,6 @@ def _missing_customs_inputs(lot: Lot, bid_jpy: int | None) -> list[str]:
         missing.append("объём двигателя")
     if not lot.first_reg_year:
         missing.append("дата первой регистрации")
-    if not lot.power_hp and lot.fuel_type == FuelType.EV:
-        missing.append("мощность двигателя (для акциза EV)")
     if bid_jpy is None:
         missing.append("ставка на аукционе")
     if lot.market_price_rf_rub is None:

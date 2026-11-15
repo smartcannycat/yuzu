@@ -14,6 +14,7 @@ from django.utils.module_loading import import_string
 
 from apps.core.enums import (
     BatchStatus,
+    FuelType,
     ItemProcessingStatus,
     MascotMood,
     TaskStep,
@@ -25,8 +26,10 @@ from apps.core.exceptions import (
 )
 from apps.core.redis_utils import get_redis_client
 from apps.lots.economics import (
+    EV_MISSING_POWER_WARNING,
     _missing_customs_inputs,
     _resolve_start_bid_jpy,
+    ensure_dynamic_bid_slider_max,
     ensure_lot_baseline,
     recompute_lot_economics,
 )
@@ -468,6 +471,9 @@ def _ensure_lot_rates(lot: Lot) -> bool:
     return True
 
 
+_EV_MISSING_POWER_WARNING = EV_MISSING_POWER_WARNING
+
+
 def _step_customs_calc(item: BatchItem) -> bool:
     _advance_step(item, TaskStep.CUSTOMS_CALC)
     lot = item.lot
@@ -478,6 +484,7 @@ def _step_customs_calc(item: BatchItem) -> bool:
     if not _ensure_lot_rates(lot):
         _fail_item(item, TaskStep.FAILED, "Не удалось получить курсы валют (шлюз ЦБ РФ)")
         return False
+    ensure_dynamic_bid_slider_max(lot)
     # Fill in the start bid (sheet -> auction history -> reverse calculation
     # from the Drom price) before checking the remaining inputs, so a new
     # lot without an explicit bid still gets its economics built. The
@@ -497,6 +504,12 @@ def _step_customs_calc(item: BatchItem) -> bool:
             "Недостаточно данных для расчёта таможни: " + ", ".join(missing),
         )
         return False
+    if lot.fuel_type == FuelType.EV and lot.power_hp is None:
+        warnings = list(lot.ocr_warnings or [])
+        if _EV_MISSING_POWER_WARNING not in warnings:
+            warnings.append(_EV_MISSING_POWER_WARNING)
+            lot.ocr_warnings = warnings
+            lot.save(update_fields=["ocr_warnings", "updated_at"])
     try:
         recompute_lot_economics(lot, bid_jpy=bid_jpy)
         lot.refresh_from_db()

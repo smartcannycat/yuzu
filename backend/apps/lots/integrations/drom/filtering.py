@@ -31,6 +31,8 @@ _ORDER_STOP_PHRASES: tuple[str, ...] = (
     "на заказ",
     "под привоз",
     "в пути",
+    "в архиве",
+    "объявления в архиве",
     "привезем",
     "привезём",
     "под полную пошлину из",
@@ -39,6 +41,7 @@ _ORDER_STOP_PHRASES: tuple[str, ...] = (
     "в наличии в японии",
     "в наличии в корее",
 )
+_METADATA_ARCHIVE_MARKERS: tuple[str, ...] = ("в архиве", "архив", "архивные")
 
 _NEGATIVE_VEHICLE_TYPE_RE = re.compile(
     r"(?<![а-яё])(?<!не\s)(?:конструктор|распил)(?![а-яё])",
@@ -79,6 +82,7 @@ def _build_search_query_params(
     frame_type_id: int | None,
     year_tolerance: int,
     relax_specs: bool,
+    relax_engine_volume: bool = False,
 ) -> list[tuple[str, str]]:
     params: list[tuple[str, str]] = [
         ("unsold", "1"),
@@ -90,7 +94,7 @@ def _build_search_query_params(
         params.append(("minyear", str(criteria.year - year_tolerance)))
         params.append(("maxyear", str(criteria.year + year_tolerance)))
 
-    if criteria.engine_cc and criteria.engine_cc > 0:
+    if criteria.engine_cc and criteria.engine_cc > 0 and not relax_engine_volume:
         delta = 0.2 if relax_specs else 0.1
         min_v, max_v = compute_engine_volume_bounds(criteria.engine_cc, delta=delta)
         params.append(("mv", f"{min_v:.1f}"))
@@ -120,14 +124,30 @@ def _truncate_drom_url(
     safe_make: str,
     safe_model: str,
     query: str,
+    *,
+    mileage_segment: str = "/bez-probega/",
 ) -> str:
     # Keep query parameters intact while bounding slug segments to DB URLField(max_length=500).
-    suffix = f"/bez-probega/?{query}"
-    available = max(2, _MAX_URL_LENGTH - len(prefix) - len(suffix) - 1)
-    half = max(1, available // 2)
-    bounded_make = safe_make[:half]
-    bounded_model = safe_model[: available - len(bounded_make)]
-    return f"{prefix}{bounded_make}/{bounded_model}{suffix}"[:_MAX_URL_LENGTH]
+    suffix = f"{mileage_segment}?{query}"
+    available = _MAX_URL_LENGTH - len(prefix) - len(suffix) - 1
+    if available >= 2:
+        half = max(1, available // 2)
+        bounded_make = safe_make[:half]
+        bounded_model = safe_model[: available - len(bounded_make)]
+        if bounded_make and bounded_model:
+            url = f"{prefix}{bounded_make}/{bounded_model}{suffix}"
+            if len(url) <= _MAX_URL_LENGTH:
+                return url
+
+    # If the query itself leaves no room, trim trailing query parameters cleanly at "&".
+    base_path = f"{prefix}{safe_make}/{safe_model}{mileage_segment}"
+    parts = query.split("&") if query else []
+    while parts:
+        candidate = f"{base_path}?{'&'.join(parts)}"
+        if len(candidate) <= _MAX_URL_LENGTH:
+            return candidate
+        parts.pop()
+    return base_path[:_MAX_URL_LENGTH]
 
 
 def build_drom_search_url(
@@ -139,8 +159,10 @@ def build_drom_search_url(
     region_scope: str = "dfo",
     year_tolerance: int = 0,
     relax_specs: bool = False,
+    without_rf_mileage_only: bool = True,
+    relax_engine_volume: bool = False,
 ) -> str:
-    """Build a Drom search URL filtered for unsold, undamaged, in-stock, non-RF-mileage cars."""
+    """Build a Drom search URL filtered for unsold, undamaged, in-stock cars."""
     safe_make = quote(make_slug.strip("/"), safe="-_")
     safe_model = quote(model_slug.strip("/"), safe="-_")
     prefix = "https://auto.drom.ru/region25/" if region_scope == "dfo" else "https://auto.drom.ru/"
@@ -149,12 +171,29 @@ def build_drom_search_url(
         frame_type_id=frame_type_id,
         year_tolerance=year_tolerance,
         relax_specs=relax_specs,
+        relax_engine_volume=relax_engine_volume,
     )
     query = urlencode(params)
-    url = f"{prefix}{safe_make}/{safe_model}/bez-probega/?{query}"
+    mileage_segment = "/bez-probega/" if without_rf_mileage_only else "/"
+    url = f"{prefix}{safe_make}/{safe_model}{mileage_segment}?{query}"
     if len(url) <= _MAX_URL_LENGTH:
         return url
-    return _truncate_drom_url(prefix, safe_make, safe_model, query)
+    return _truncate_drom_url(
+        prefix,
+        safe_make,
+        safe_model,
+        query,
+        mileage_segment=mileage_segment,
+    )
+
+
+def _has_unnegated_phrase(haystack: str, phrase: str) -> bool:
+    for match in re.finditer(re.escape(phrase), haystack):
+        prefix = haystack[max(0, match.start() - 12) : match.start()]
+        if re.search(r"(?<![а-яё])(?:не|уже\s+не)\s+$", prefix):
+            continue
+        return True
+    return False
 
 
 def is_under_order_or_unavailable(listing: DromListing) -> bool:
@@ -164,7 +203,10 @@ def is_under_order_or_unavailable(listing: DromListing) -> bool:
     meta_text = " ".join(
         part for part in [listing.location, *listing.car_state, *listing.badges] if part
     )
-    if meta_text and _FOREIGN_LOCATION_RE.search(meta_text):
+    meta_lower = meta_text.lower()
+    if meta_lower and _FOREIGN_LOCATION_RE.search(meta_text):
+        return True
+    if meta_lower and any(marker in meta_lower for marker in _METADATA_ARCHIVE_MARKERS):
         return True
 
     combined_parts = [
@@ -175,7 +217,7 @@ def is_under_order_or_unavailable(listing: DromListing) -> bool:
         *listing.attributes,
     ]
     haystack = " ".join(part for part in combined_parts if part).lower()
-    if any(phrase in haystack for phrase in _ORDER_STOP_PHRASES):
+    if any(_has_unnegated_phrase(haystack, phrase) for phrase in _ORDER_STOP_PHRASES):
         return True
     return bool(_NEGATIVE_VEHICLE_TYPE_RE.search(haystack))
 

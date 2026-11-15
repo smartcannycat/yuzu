@@ -10,6 +10,7 @@ and ``parse`` are pure cache lookups.
 
 import hashlib
 import logging
+import math
 from typing import Any
 
 from django.conf import settings
@@ -31,6 +32,10 @@ from apps.lots.models import BatchItem, Lot, LotDefect, LotRiskFlags
 logger = logging.getLogger(__name__)
 
 _NOT_SHEET_MESSAGE = "Изображение не является аукционным листом или нечитаемо"
+_DEFAULT_AUCTION_STRICTNESS = 0.65
+_MISSING_AUCTION_HOUSE_WARNING = (
+    "Аукционный дом не указан в листе — установлена площадка «Прочее» (OTHER)"
+)
 
 _FIELD_LIMITS: dict[str, int] = {
     "lot_number": 50,
@@ -221,11 +226,23 @@ def _sheet_to_lot_fields(
     def map_choice(choices: type[TextChoices], value: str | None, field_name: str) -> str | None:
         return _map_choice(choices, value, field_name, ocr_warnings, mapping_warnings)
 
+    auction_house = map_choice(AuctionHouse, sheet.auction_house, "auction_house")
+    if auction_house is None:
+        auction_house = AuctionHouse.OTHER.value
+        if not sheet.auction_house:
+            ocr_warnings.append(_MISSING_AUCTION_HOUSE_WARNING)
+    raw_strictness = sheet.auction_strictness_index
+    auction_strictness_index = (
+        float(raw_strictness)
+        if raw_strictness is not None and math.isfinite(raw_strictness)
+        else _DEFAULT_AUCTION_STRICTNESS
+    )
+
     return {
         "lot_number": _clip(sheet.lot_number, "lot_number"),
-        "auction_house": map_choice(AuctionHouse, sheet.auction_house, "auction_house"),
+        "auction_house": auction_house,
         "auction_branch": _clip(sheet.auction_branch, "auction_branch"),
-        "auction_strictness_index": sheet.auction_strictness_index,
+        "auction_strictness_index": auction_strictness_index,
         "make": _clip(sheet.make, "make"),
         "model": _clip(sheet.model, "model"),
         "trim": _clip(sheet.trim, "trim"),

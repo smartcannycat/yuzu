@@ -9,6 +9,7 @@ from apps.core.enums import TrafficLightColor
 from apps.core.exceptions import BadRequestProblemError, NotFoundProblemError
 from apps.lots import schemas
 from apps.lots.economics import (
+    MAX_DYNAMIC_BID_SLIDER_MAX_JPY,
     _extract_rates,
     ensure_lot_baseline,
     is_simulation_modified,
@@ -95,6 +96,13 @@ def recalculate_lot(
                 title="Курсы валют недоступны",
             )
         bid_jpy = math.floor(payload.bid_rub / rates_data.jpy_rub_bank + 0.5)
+        if bid_jpy > MAX_DYNAMIC_BID_SLIDER_MAX_JPY:
+            raise BadRequestProblemError(
+                f"Ставка в йенах не может превышать {MAX_DYNAMIC_BID_SLIDER_MAX_JPY:,} ¥".replace(
+                    ",", " "
+                ),
+                title="Некорректная ставка",
+            )
 
     # The schema field is a plain bool (default False), so distinguish "not
     # sent" from "explicitly False" via model_fields_set: an omitted toggle
