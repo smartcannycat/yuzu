@@ -103,6 +103,7 @@ _BRAND_ALIASES: dict[str, str] = {
     "vw": "volkswagen",
     "фольксваген": "volkswagen",
     "бмв": "bmw",
+    "мини": "mini",
 }
 
 _MB_SERIES_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -130,10 +131,23 @@ _MB_SERIES_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^([abcegrsvx])\s*-?\s*\d{2,3}(?!\d)"), r"\1-class"),
 )
 
-_BMW_GT_RE = re.compile(r"^([356])\d{2}[a-z]*.*gran\s*turismo")
-_BMW_AT_RE = re.compile(r"^2\d{2}[a-z]*.*active\s*tourer")
-_BMW_GRANT_RE = re.compile(r"^2\d{2}[a-z]*.*gran\s*tourer")
-_BMW_SERIES_RE = re.compile(r"^m?([1-8])\d{2}(?:[a-z]+)?(?:\b|$)")
+_MAKE_REGEX_RULES: dict[str, tuple[tuple[re.Pattern[str], str], ...]] = {
+    "mercedes-benz": _MB_SERIES_RULES,
+    "bmw": (
+        (re.compile(r"^2\d{2}[a-z]*.*active\s*tourer"), "2-series_active_tourer"),
+        (re.compile(r"^2\d{2}[a-z]*.*gran\s*tourer"), "2-series_gran_tourer"),
+        (re.compile(r"^([356])\d{2}[a-z]*.*gran\s*turismo"), r"\1-series_gran_turismo"),
+        (re.compile(r"^m?([1-8])\d{2}(?:[a-z]+)?(?:\b|$)"), r"\1-series"),
+    ),
+    "mini": (
+        (
+            re.compile(
+                r"^(?:mini\s+)?(?:john\s+cooper\s+works|cooper(?:\s+[sd])?|one(?:\s+d)?|jcw)\b"
+            ),
+            "hatch",
+        ),
+    ),
+}
 
 _TRIM_NOISE_WORDS = frozenset(
     {"hybrid", "hv", "e-power", "epower", "4wd", "2wd", "turbo", "wxb", "w×b"}
@@ -251,22 +265,26 @@ def _resolve_alias(
     aliases = _get_model_aliases(schema)
     frame_types: dict = (schema.get("filter_schema") or {}).get("frame_types") or {}
     model_key = re.sub(r"\s+", " ", model.strip().lower())
-    words = [w for w in re.split(r"[\s/]+", model_key) if w and w not in _TRIM_NOISE_WORDS]
-    stripped_key = " ".join(words)
+    raw_words = [w for w in re.split(r"[\s/]+", model_key) if w]
+    stripped_words = [w for w in raw_words if w not in _TRIM_NOISE_WORDS]
 
-    for alias_key in (model_key, stripped_key):
-        if alias_key in aliases:
-            slug, frame_label = aliases[alias_key]
-            frame_id = (
-                frame_types.get(frame_label, _DEFAULT_FRAME_TYPES.get(frame_label))
-                if frame_label
-                else None
-            )
-            return ResolvedDromSlug(
-                make_slug=make_slug,
-                model_slug=slug,
-                frame_type_id=frame_id,
-            )
+    for word_list in (raw_words, stripped_words):
+        for end in range(len(word_list), 0, -1):
+            if set(word_list[end:]) & _SUBMODEL_CONFLICT_TOKENS:
+                continue
+            alias_key = " ".join(word_list[:end])
+            if alias_key in aliases:
+                slug, frame_label = aliases[alias_key]
+                frame_id = (
+                    frame_types.get(frame_label, _DEFAULT_FRAME_TYPES.get(frame_label))
+                    if frame_label
+                    else None
+                )
+                return ResolvedDromSlug(
+                    make_slug=make_slug,
+                    model_slug=slug,
+                    frame_type_id=frame_id,
+                )
     return None
 
 
@@ -274,28 +292,11 @@ def _resolve_make_aware_alias(make_slug: str, model: str) -> ResolvedDromSlug | 
     model_key = re.sub(r"\s+", " ", model.strip().lower())
     if not model_key:
         return None
-    if make_slug == "mercedes-benz":
-        for pattern, replacement in _MB_SERIES_RULES:
-            match = pattern.match(model_key)
-            if match:
-                slug = (
-                    pattern.sub(replacement, match.group(0))
-                    if r"\1" in replacement
-                    else replacement
-                )
-                return ResolvedDromSlug(make_slug=make_slug, model_slug=slug)
-    elif make_slug == "bmw":
-        for pattern, template in (
-            (_BMW_AT_RE, "2-series_active_tourer"),
-            (_BMW_GRANT_RE, "2-series_gran_tourer"),
-            (_BMW_GT_RE, "{series}-series_gran_turismo"),
-            (_BMW_SERIES_RE, "{series}-series"),
-        ):
-            match = pattern.match(model_key)
-            if match:
-                series = match.group(1) if match.lastindex else ""
-                slug = template.format(series=series)
-                return ResolvedDromSlug(make_slug=make_slug, model_slug=slug)
+    for pattern, replacement in _MAKE_REGEX_RULES.get(make_slug, ()):
+        match = pattern.match(model_key)
+        if match:
+            slug = pattern.sub(replacement, match.group(0)) if r"\1" in replacement else replacement
+            return ResolvedDromSlug(make_slug=make_slug, model_slug=slug)
     return None
 
 
@@ -305,17 +306,17 @@ class DromSlugResolver:
     def __init__(self, client: DromHttpClient) -> None:
         self._client = client
 
-    def resolve(self, make: str, model: str) -> ResolvedDromSlug:
-        """Resolve sales brand and model from compact Drom schema and structural aliases."""
-        schema = _load_drom_schema()
-        brands: dict = schema.get("brands") or {}
-        make_slug = _resolve_make_from_schema(make, brands)
-
+    def _resolve_from_sales_or_rules(
+        self,
+        model: str,
+        make_slug: str,
+        schema: dict[str, Any],
+        brand_entry: object,
+    ) -> ResolvedDromSlug:
         aliased = _resolve_alias(model, make_slug, schema)
         if aliased is not None:
             return aliased
 
-        brand_entry = brands.get(make_slug)
         if isinstance(brand_entry, dict):
             trivial = _extract_trivial_models(brand_entry)
             from_schema = _resolve_model_from_schema_dict(
@@ -333,6 +334,13 @@ class DromSlugResolver:
 
         return self._fallback_normalized_slug(make_slug, model)
 
+    def resolve(self, make: str, model: str) -> ResolvedDromSlug:
+        """Resolve sales brand and model from compact Drom schema and structural aliases."""
+        schema = _load_drom_schema()
+        brands: dict = schema.get("brands") or {}
+        make_slug = _resolve_make_from_schema(make, brands)
+        return self._resolve_from_sales_or_rules(model, make_slug, schema, brands.get(make_slug))
+
     def resolve_via_api(self, make: str, model: str) -> ResolvedDromSlug | None:
         """Resolve exact Drom brand and model URL slugs dynamically from Drom's live sales pages."""
         return self._resolve_via_directory(make, model, self._get_sales_models)
@@ -343,7 +351,6 @@ class DromSlugResolver:
         brands: dict = schema.get("brands") or {}
         make_slug = _resolve_make_from_schema(make, brands)
         brand_entry = brands.get(make_slug)
-        trivial = _extract_trivial_models(brand_entry) if isinstance(brand_entry, dict) else []
 
         if isinstance(brand_entry, dict):
             from_cat = _resolve_model_from_schema_dict(
@@ -354,29 +361,13 @@ class DromSlugResolver:
             if from_cat is not None:
                 return from_cat
 
-        aliased = _resolve_alias(model, make_slug, schema)
-        if aliased is not None:
-            return ResolvedDromSlug(
-                make_slug=aliased.make_slug,
-                model_slug=aliased.model_slug,
-                frame_type_id=None,
-            )
-
-        make_aliased = _resolve_make_aware_alias(make_slug, model)
-        if make_aliased is not None:
-            return make_aliased
-
-        if isinstance(brand_entry, dict):
-            from_sales = _resolve_model_from_schema_dict(
-                model,
-                brand_entry.get("sales_models"),
-                make_slug,
-                trivial_models=trivial,
-            )
-            if from_sales is not None:
-                return from_sales
-
-        return self._fallback_normalized_slug(make_slug, model)
+        resolved = self._resolve_from_sales_or_rules(model, make_slug, schema, brand_entry)
+        return ResolvedDromSlug(
+            make_slug=resolved.make_slug,
+            model_slug=resolved.model_slug,
+            frame_type_id=None,
+            is_fallback_guess=resolved.is_fallback_guess,
+        )
 
     def resolve_catalog_via_api(self, make: str, model: str) -> ResolvedDromSlug | None:
         """Resolve canonical Drom catalog slug dynamically from live drom.ru/catalog/ pages."""

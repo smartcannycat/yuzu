@@ -203,6 +203,28 @@ def test_drom_slug_resolver_handles_european_models_and_submodels() -> None:
     assert impreza_g4.frame_type_id == 10
     assert impreza_g4.is_fallback_guess is False
 
+    # Trim suffixes should not break submodel frame-type aliases
+    impreza_g4_trim = resolver.resolve("Subaru", "Impreza G4 2.0i")
+    assert impreza_g4_trim == impreza_g4
+    corolla_trim = resolver.resolve("Toyota", "Corolla Touring S")
+    assert corolla_trim == ResolvedDromSlug("toyota", "corolla", 3, is_fallback_guess=False)
+
+    # Mini Cooper / One -> hatch, while Clubman / Countryman resolve via schema
+    assert resolver.resolve("Mini", "Cooper") == ResolvedDromSlug("mini", "hatch", None)
+    assert resolver.resolve("Mini", "Cooper S") == ResolvedDromSlug("mini", "hatch", None)
+    assert resolver.resolve("Mini", "Mini One") == ResolvedDromSlug("mini", "hatch", None)
+    assert resolver.resolve("Mini", "John Cooper Works") == ResolvedDromSlug("mini", "hatch", None)
+    assert resolver.resolve("Mini", "Cooper Countryman").model_slug == "countryman"
+    assert resolver.resolve("Mini", "Cooper D Clubman").model_slug == "clubman"
+
+    # Catalog slug resolution preserves identical schema-first priority without frame_type_id
+    assert resolver.resolve_catalog_slug("BMW", "340").model_slug == "340"
+    assert resolver.resolve_catalog_slug("Mini", "Cooper").model_slug == "hatch"
+    assert resolver.resolve_catalog_slug("Mercedes", "C200").model_slug == "c-class"
+    assert resolver.resolve_catalog_slug("Subaru", "Impreza G4") == ResolvedDromSlug(
+        "subaru", "impreza", None, is_fallback_guess=False
+    )
+
 
 def test_is_antibot_challenge_html_distinguishes_empty_ssr_from_captcha() -> None:
     empty_ssr = _ssr_html_with_groups([{"title": None, "bulls": []}]).decode("utf-8")
