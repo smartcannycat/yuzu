@@ -26,6 +26,7 @@ from apps.core.exceptions import (
 )
 from apps.core.redis_utils import get_redis_client
 from apps.lots.economics import (
+    EV_MISSING_POWER_WARNING,
     _missing_customs_inputs,
     _resolve_start_bid_jpy,
     ensure_dynamic_bid_slider_max,
@@ -470,10 +471,7 @@ def _ensure_lot_rates(lot: Lot) -> bool:
     return True
 
 
-_EV_MISSING_POWER_WARNING = (
-    "Мощность (л.с.) для электромобиля не найдена — акциз принят равным 0 ₽, "
-    "укажите мощность вручную в симуляторе"
-)
+_EV_MISSING_POWER_WARNING = EV_MISSING_POWER_WARNING
 
 
 def _step_customs_calc(item: BatchItem) -> bool:

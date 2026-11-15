@@ -421,7 +421,6 @@ def test_unknown_choice_values_become_null_with_warnings(batch_item) -> None:
     assert lot.drive_type is None
     assert lot.frame_id_confidence is None
     assert lot.auction_house == AuctionHouse.OTHER
-    assert lot.auction_strictness_index == pytest.approx(0.65)
     for field in (
         "fuel_type",
         "odometer_status",

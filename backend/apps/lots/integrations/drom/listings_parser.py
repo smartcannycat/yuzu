@@ -16,8 +16,13 @@ _ANTIBOT_MARKERS = (
     "smartcaptcha",
     "smart-captcha",
     "yandex.ru/captcha",
+    "cf-chl-",
+    "turnstile",
+    "hcaptcha",
+    "ddos-guard",
     "подтвердите, что вы не робот",
     "подозрительная активность",
+    "доступ ограничен",
     "just a moment",
 )
 

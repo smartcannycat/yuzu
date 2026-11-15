@@ -5,6 +5,7 @@ from django.db.models import CharField, Count, F, Q, Value
 from django.db.models.functions import Coalesce, Concat
 
 from apps.core.enums import (
+    AuctionHouse,
     BatchStatus,
     ItemProcessingStatus,
     LotLifecycleFilter,
@@ -292,13 +293,21 @@ def _has_full_detail(lot: Lot) -> bool:
     return hasattr(lot.customs_calc, "rates_snapshot")
 
 
+def _sanitize_strictness_index(value: float | None) -> float:
+    if value is None or not math.isfinite(value):
+        return 0.65
+    if 1.0 < value <= 5.0:
+        return round(value / 5.0, 2)
+    return max(0.0, min(1.0, float(value)))
+
+
 def _build_normalized_sheet(lot: Lot) -> schemas.NormalizedSheet:
     return schemas.NormalizedSheet(
         lot_number=lot.lot_number,
-        auction_house=lot.auction_house,
+        auction_house=lot.auction_house or AuctionHouse.OTHER.value,
         auction_branch=lot.auction_branch,
         auction_date=lot.auction_date,
-        auction_strictness_index=lot.auction_strictness_index,
+        auction_strictness_index=_sanitize_strictness_index(lot.auction_strictness_index),
         make=lot.make,
         model=lot.model,
         trim=lot.trim,

@@ -165,21 +165,62 @@ class DromMarketService:
             f"Не удалось получить рыночные аналоги Drom для {criteria.make} {criteria.model}"
         )
 
+    @staticmethod
+    def _build_candidate(
+        stats: FilteredMarketStats,
+        step: _SearchStep,
+        used_url: str,
+        *,
+        used_nearby: bool = False,
+    ) -> DromMarketResult:
+        is_fallback = step.is_fallback or used_nearby
+        fallback_reason_ru = step.fallback_reason_ru
+        if used_nearby:
+            fallback_reason_ru = (
+                f"{fallback_reason_ru}; учтены ближайшие города ДФО"
+                if fallback_reason_ru
+                else "Мало аналогов в Приморье — учтены ближайшие города ДФО"
+            )
+        return DromMarketResult(
+            market_price_rf_rub=stats.market_price_rf_rub,
+            analogs_count=stats.analogs_count,
+            price_min_rub=stats.price_min_rub,
+            price_max_rub=stats.price_max_rub,
+            search_region_ru=step.region_label_ru,
+            excludes_under_order=True,
+            filtered_out_under_order_count=stats.filtered_out_under_order_count,
+            is_fallback=is_fallback,
+            fallback_reason_ru=fallback_reason_ru,
+            drom_search_url=used_url,
+        )
+
     def _search_live_cascade(
         self,
         criteria: DromSearchCriteria,
         resolved_slug: ResolvedDromSlug,
     ) -> tuple[DromMarketResult | None, ResolvedDromSlug]:
         best_partial: DromMarketResult | None = None
+        best_nearby: DromMarketResult | None = None
         current_slug = resolved_slug
         last_error: DromFetchError | None = None
 
         for step in _SEARCH_CASCADE:
+            # Before widening to all-RF, return any >=3 DFO nearby-cities match
+            # gathered during the DFO steps of the same mileage phase.
+            if (
+                step.region_scope == "rf"
+                and best_nearby is not None
+                and best_nearby.analogs_count >= _MIN_ANALOGS_THRESHOLD
+            ):
+                return best_nearby, current_slug
+
             try:
-                stats, used_url, current_slug, used_nearby = self._fetch_step(
+                strict_stats, nearby_stats, used_url, current_slug = self._fetch_step(
                     criteria, current_slug, step
                 )
             except DromBlockedError:
+                if best_nearby is not None and best_nearby.analogs_count >= _MIN_ANALOGS_THRESHOLD:
+                    return best_nearby, current_slug
                 if best_partial is not None:
                     return best_partial, current_slug
                 raise
@@ -187,35 +228,32 @@ class DromMarketService:
                 last_error = exc
                 continue
 
-            if stats is None:
-                continue
+            if strict_stats is not None:
+                candidate = self._build_candidate(strict_stats, step, used_url)
+                if strict_stats.analogs_count >= _MIN_ANALOGS_THRESHOLD:
+                    return candidate, current_slug
+                if best_partial is None or candidate.analogs_count > best_partial.analogs_count:
+                    best_partial = candidate
 
-            is_fallback = step.is_fallback or used_nearby
-            fallback_reason_ru = step.fallback_reason_ru
-            if used_nearby:
-                fallback_reason_ru = (
-                    f"{fallback_reason_ru}; учтены ближайшие города ДФО"
-                    if fallback_reason_ru
-                    else "Мало аналогов в Приморье — учтены ближайшие города ДФО"
-                )
+            if nearby_stats is not None:
+                strict_count = strict_stats.analogs_count if strict_stats is not None else 0
+                if nearby_stats.analogs_count > strict_count:
+                    nearby_candidate = self._build_candidate(
+                        nearby_stats, step, used_url, used_nearby=True
+                    )
+                    if (
+                        best_nearby is None
+                        or nearby_candidate.analogs_count > best_nearby.analogs_count
+                    ):
+                        best_nearby = nearby_candidate
+                    if (
+                        best_partial is None
+                        or nearby_candidate.analogs_count > best_partial.analogs_count
+                    ):
+                        best_partial = nearby_candidate
 
-            candidate = DromMarketResult(
-                market_price_rf_rub=stats.market_price_rf_rub,
-                analogs_count=stats.analogs_count,
-                price_min_rub=stats.price_min_rub,
-                price_max_rub=stats.price_max_rub,
-                search_region_ru=step.region_label_ru,
-                excludes_under_order=True,
-                filtered_out_under_order_count=stats.filtered_out_under_order_count,
-                is_fallback=is_fallback,
-                fallback_reason_ru=fallback_reason_ru,
-                drom_search_url=used_url,
-            )
-            if stats.analogs_count >= _MIN_ANALOGS_THRESHOLD:
-                return candidate, current_slug
-            if best_partial is None or candidate.analogs_count > best_partial.analogs_count:
-                best_partial = candidate
-
+        if best_nearby is not None and best_nearby.analogs_count >= _MIN_ANALOGS_THRESHOLD:
+            return best_nearby, current_slug
         if best_partial is None and last_error is not None:
             raise last_error
         return best_partial, current_slug
@@ -260,15 +298,19 @@ class DromMarketService:
         criteria: DromSearchCriteria,
         slug: ResolvedDromSlug,
         step: _SearchStep,
-    ) -> tuple[str, str, ResolvedDromSlug] | None:
-        """Resolve canonical Drom slug via suggest API and re-fetch once if different."""
+    ) -> tuple[str | None, str | None, ResolvedDromSlug | None]:
+        """Resolve canonical Drom slug via suggest API and re-fetch once if different.
+
+        Returns ``(html, url, api_slug)``. Even if the current step returns 404
+        for ``api_slug``, ``api_slug`` is returned so later cascade steps keep it.
+        """
         api_slug = self._slug_resolver.resolve_via_api(criteria.make, criteria.model)
         if api_slug is None or _same_slug(api_slug, slug):
-            return None
+            return None, None, None
         try:
             html, url = self._fetch_step_html(criteria, api_slug, step)
         except DromNotFoundError:
-            return None
+            return None, None, api_slug
         return html, url, api_slug
 
     def _fetch_step(
@@ -276,42 +318,39 @@ class DromMarketService:
         criteria: DromSearchCriteria,
         slug: ResolvedDromSlug,
         step: _SearchStep,
-    ) -> tuple[FilteredMarketStats | None, str, ResolvedDromSlug, bool]:
+    ) -> tuple[FilteredMarketStats | None, FilteredMarketStats | None, str, ResolvedDromSlug]:
         try:
             html, url = self._fetch_step_html(criteria, slug, step)
         except DromNotFoundError:
-            retried = self._retry_with_api_slug(criteria, slug, step)
-            if retried is None:
-                fallback_url = self._build_step_url(criteria, slug, step)
-                return None, fallback_url, replace(slug, is_fallback_guess=False), False
-            html, url, slug = retried
+            html_retry, url_retry, api_slug = self._retry_with_api_slug(criteria, slug, step)
+            slug = api_slug if api_slug is not None else replace(slug, is_fallback_guess=False)
+            if html_retry is None or url_retry is None:
+                return None, None, self._build_step_url(criteria, slug, step), slug
+            html, url = html_retry, url_retry
 
         listings = parse_listings(html)
         if not listings:
             if is_antibot_challenge_html(html):
                 raise DromBlockedError(f"Drom вернул anti-bot/CAPTCHA страницу для {url}")
             if slug.is_fallback_guess:
-                retried = self._retry_with_api_slug(criteria, slug, step)
-                if retried is not None:
-                    html, url, slug = retried
+                html_retry, url_retry, api_slug = self._retry_with_api_slug(criteria, slug, step)
+                slug = api_slug if api_slug is not None else replace(slug, is_fallback_guess=False)
+                if html_retry is not None and url_retry is not None:
+                    html, url = html_retry, url_retry
                     listings = parse_listings(html)
                     if not listings and is_antibot_challenge_html(html):
                         raise DromBlockedError(f"Drom вернул anti-bot/CAPTCHA страницу для {url}")
                 else:
-                    slug = replace(slug, is_fallback_guess=False)
+                    return None, None, self._build_step_url(criteria, slug, step), slug
 
         if step.region_scope == "dfo":
             strict_stats = filter_and_aggregate(listings, exclude_nearby_cities=True)
             if strict_stats is not None and strict_stats.analogs_count >= _MIN_ANALOGS_THRESHOLD:
-                return strict_stats, url, slug, False
+                return strict_stats, None, url, slug
             nearby_stats = filter_and_aggregate(listings, exclude_nearby_cities=False)
-            if nearby_stats is not None and (
-                strict_stats is None or nearby_stats.analogs_count > strict_stats.analogs_count
-            ):
-                return nearby_stats, url, slug, True
-            return strict_stats, url, slug, False
+            return strict_stats, nearby_stats, url, slug
 
-        return filter_and_aggregate(listings, exclude_nearby_cities=False), url, slug, False
+        return filter_and_aggregate(listings, exclude_nearby_cities=False), None, url, slug
 
 
 def _deserialize_market_result(payload: dict[str, Any]) -> DromMarketResult | None:

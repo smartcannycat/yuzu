@@ -32,6 +32,10 @@ _LEGACY_COROLLA_FRAME_ID = "NRE210-2005418"
 DEFAULT_BID_SLIDER_MAX_JPY = 2_500_000
 MAX_DYNAMIC_BID_SLIDER_MAX_JPY = 50_000_000
 _SLIDER_MAX_STEP_JPY = 100_000
+EV_MISSING_POWER_WARNING = (
+    "Мощность (л.с.) для электромобиля не найдена — акциз принят равным 0 ₽, "
+    "укажите мощность вручную в симуляторе"
+)
 
 
 def compute_bid_slider_max_jpy(
@@ -53,6 +57,23 @@ def compute_bid_slider_max_jpy(
         )
         candidates.append(estimated_jpy)
     return min(MAX_DYNAMIC_BID_SLIDER_MAX_JPY, max(candidates))
+
+
+def _sync_ev_missing_power_warning(
+    lot: Lot,
+    power_hp: int | None,
+    lot_update_fields: list[str],
+) -> None:
+    """Keep EV missing-power warning aligned with current ``power_hp`` state."""
+    warnings = list(lot.ocr_warnings or [])
+    if lot.fuel_type == FuelType.EV and power_hp is None:
+        if EV_MISSING_POWER_WARNING not in warnings:
+            warnings.append(EV_MISSING_POWER_WARNING)
+            lot.ocr_warnings = warnings
+            lot_update_fields.append("ocr_warnings")
+    elif EV_MISSING_POWER_WARNING in warnings:
+        lot.ocr_warnings = [w for w in warnings if w != EV_MISSING_POWER_WARNING]
+        lot_update_fields.append("ocr_warnings")
 
 
 def ensure_dynamic_bid_slider_max(lot: Lot, jpy_rub: float | None = None) -> int:
@@ -173,6 +194,7 @@ def recompute_lot_economics(
             lot_update_fields += ["power_hp", "power_hp_source", "is_under_160_hp"]
 
         power_hp = custom_power_hp if custom_power_hp is not None else lot.power_hp
+        _sync_ev_missing_power_warning(lot, power_hp, lot_update_fields)
         if lot.fuel_type != FuelType.EV and not lot.engine_cc:
             raise ValueError("Отсутствует объём двигателя для расчёта пошлины")
         if not lot.first_reg_year:
@@ -261,6 +283,16 @@ def recompute_lot_economics(
             )
             for step in ladder_result.steps
         )
+
+        target_slider_max = compute_bid_slider_max_jpy(
+            market_price_rf_rub=market_price_rub,
+            jpy_rub=rates.jpy_rub,
+            auction_bid_jpy=max(lot.auction_bid_jpy or 0, applied_bid_jpy),
+            current_max_jpy=lot.bid_slider_max_jpy,
+        )
+        if target_slider_max > (lot.bid_slider_max_jpy or 0):
+            lot.bid_slider_max_jpy = target_slider_max
+            lot_update_fields.append("bid_slider_max_jpy")
 
         lot.turnkey_cost_rub = ladder_result.turnkey_cost_rub
         lot.net_benefit_rub = ladder_result.net_benefit_rub

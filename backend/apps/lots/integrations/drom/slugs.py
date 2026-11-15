@@ -16,6 +16,7 @@ from apps.lots.integrations.drom.parser import (
     parse_catalog_brands_from_html,
     parse_catalog_models_from_html,
 )
+from apps.lots.integrations.drom.schemas import DromBlockedError
 
 _BRAND_PAGE_URL = "https://auto.drom.ru/{make_slug}/"
 _CATALOG_BRANDS_URL = "https://www.drom.ru/catalog/"
@@ -105,32 +106,34 @@ _BRAND_ALIASES: dict[str, str] = {
 }
 
 _MB_SERIES_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"^cla\s*\d{3}"), "cla-class"),
-    (re.compile(r"^cls\s*\d{3}"), "cls-class"),
-    (re.compile(r"^clc\s*\d{3}"), "clc-class"),
-    (re.compile(r"^clk\s*\d{3}"), "clk-class"),
-    (re.compile(r"^cle\s*\d{3}"), "cle-class"),
-    (re.compile(r"^gla\s*\d{3}"), "gla-class"),
-    (re.compile(r"^glb\s*\d{3}"), "glb"),
-    (re.compile(r"^glc\s*\d{3}.*coupe"), "glc_coupe"),
-    (re.compile(r"^glc\s*\d{3}"), "glc-class"),
-    (re.compile(r"^gle\s*\d{3}.*coupe"), "gle_coupe"),
-    (re.compile(r"^gle\s*\d{3}"), "gle-class"),
-    (re.compile(r"^glk\s*\d{3}"), "glk-class"),
-    (re.compile(r"^gls\s*\d{3}"), "gls-class"),
-    (re.compile(r"^slk\s*\d{3}"), "slk-class"),
-    (re.compile(r"^slc\s*\d{3}"), "slc-class"),
-    (re.compile(r"^ml\s*\d{3}"), "m-class"),
-    (re.compile(r"^gl\s*\d{3}"), "gl-class"),
-    (re.compile(r"^sl\s*\d{3}"), "sl-class"),
-    (re.compile(r"^cl\s*\d{3}"), "cl-class"),
-    (re.compile(r"^([abcegrsvx])\s*\d{3}(?!\d)"), r"\1-class"),
+    (re.compile(r"^eq([es])\s*-?\s*\d{2,3}.*\bsuv\b"), r"eq\1_suv"),
+    (re.compile(r"^eq([abcesv])\s*-?\s*\d{2,3}(?!\d)"), r"eq\1"),
+    (re.compile(r"^cla\s*-?\s*\d{2,3}"), "cla-class"),
+    (re.compile(r"^cls\s*-?\s*\d{2,3}"), "cls-class"),
+    (re.compile(r"^clc\s*-?\s*\d{2,3}"), "clc-class"),
+    (re.compile(r"^clk\s*-?\s*\d{2,3}"), "clk-class"),
+    (re.compile(r"^cle\s*-?\s*\d{2,3}"), "cle-class"),
+    (re.compile(r"^gla\s*-?\s*\d{2,3}"), "gla-class"),
+    (re.compile(r"^glb\s*-?\s*\d{2,3}"), "glb"),
+    (re.compile(r"^glc\s*-?\s*\d{2,3}.*coupe"), "glc_coupe"),
+    (re.compile(r"^glc\s*-?\s*\d{2,3}"), "glc-class"),
+    (re.compile(r"^gle\s*-?\s*\d{2,3}.*coupe"), "gle_coupe"),
+    (re.compile(r"^gle\s*-?\s*\d{2,3}"), "gle-class"),
+    (re.compile(r"^glk\s*-?\s*\d{2,3}"), "glk-class"),
+    (re.compile(r"^gls\s*-?\s*\d{2,3}"), "gls-class"),
+    (re.compile(r"^slk\s*-?\s*\d{2,3}"), "slk-class"),
+    (re.compile(r"^slc\s*-?\s*\d{2,3}"), "slc-class"),
+    (re.compile(r"^ml\s*-?\s*\d{2,3}"), "m-class"),
+    (re.compile(r"^gl\s*-?\s*\d{2,3}"), "gl-class"),
+    (re.compile(r"^sl\s*-?\s*\d{2,3}"), "sl-class"),
+    (re.compile(r"^cl\s*-?\s*\d{2,3}"), "cl-class"),
+    (re.compile(r"^([abcegrsvx])\s*-?\s*\d{2,3}(?!\d)"), r"\1-class"),
 )
 
 _BMW_GT_RE = re.compile(r"^([356])\d{2}[a-z]*.*gran\s*turismo")
 _BMW_AT_RE = re.compile(r"^2\d{2}[a-z]*.*active\s*tourer")
 _BMW_GRANT_RE = re.compile(r"^2\d{2}[a-z]*.*gran\s*tourer")
-_BMW_SERIES_RE = re.compile(r"^([1-8])\d{2}(?:[a-z]+)?(?:\b|$)")
+_BMW_SERIES_RE = re.compile(r"^m?([1-8])\d{2}(?:[a-z]+)?(?:\b|$)")
 
 _TRIM_NOISE_WORDS = frozenset(
     {"hybrid", "hv", "e-power", "epower", "4wd", "2wd", "turbo", "wxb", "w×b"}
@@ -312,10 +315,6 @@ class DromSlugResolver:
         if aliased is not None:
             return aliased
 
-        make_aliased = _resolve_make_aware_alias(make_slug, model)
-        if make_aliased is not None:
-            return make_aliased
-
         brand_entry = brands.get(make_slug)
         if isinstance(brand_entry, dict):
             trivial = _extract_trivial_models(brand_entry)
@@ -327,6 +326,10 @@ class DromSlugResolver:
             )
             if from_schema is not None:
                 return from_schema
+
+        make_aliased = _resolve_make_aware_alias(make_slug, model)
+        if make_aliased is not None:
+            return make_aliased
 
         return self._fallback_normalized_slug(make_slug, model)
 
@@ -431,6 +434,7 @@ class DromSlugResolver:
             url=_BRAND_PAGE_URL.format(make_slug=make_slug),
             expected_path_parts=(f"/{make_slug.lower()}/",),
             extractor=lambda html: parse_brand_models_from_html(html, make_slug),
+            reraise_blocked=True,
         )
 
     def _get_catalog_models(self, make_slug: str) -> tuple[list[str], dict[str, str]]:
@@ -448,6 +452,7 @@ class DromSlugResolver:
         url: str,
         expected_path_parts: tuple[str, ...],
         extractor: Callable[[str], tuple[list[str], dict[str, str]]],
+        reraise_blocked: bool = False,
     ) -> tuple[list[str], dict[str, str]]:
         result, _ = fetch_with_drom_cache(
             cache_key,
@@ -459,6 +464,7 @@ class DromSlugResolver:
             ttl=_CATALOG_TTL,
             is_cacheable=lambda data: bool(data[0]),
             fallback_to_stale_on_empty=False,
+            reraise=(DromBlockedError,) if reraise_blocked else (),
         )
         return result if result is not None else ([], {})
 

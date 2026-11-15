@@ -10,6 +10,7 @@ and ``parse`` are pure cache lookups.
 
 import hashlib
 import logging
+import math
 from typing import Any
 
 from django.conf import settings
@@ -230,9 +231,10 @@ def _sheet_to_lot_fields(
         auction_house = AuctionHouse.OTHER.value
         if not sheet.auction_house:
             ocr_warnings.append(_MISSING_AUCTION_HOUSE_WARNING)
+    raw_strictness = sheet.auction_strictness_index
     auction_strictness_index = (
-        sheet.auction_strictness_index
-        if sheet.auction_strictness_index is not None
+        float(raw_strictness)
+        if raw_strictness is not None and math.isfinite(raw_strictness)
         else _DEFAULT_AUCTION_STRICTNESS
     )
 
