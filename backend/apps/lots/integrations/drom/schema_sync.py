@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from apps.lots.integrations.drom.client import _DEFAULT_HEADERS, _detect_charset
+from apps.lots.integrations.drom.client import _DEFAULT_HEADERS
 from apps.lots.integrations.drom.directory_parser import _is_seo_label
 from apps.lots.integrations.drom.html_utils import extract_bulls_list_ssr_payload
 from apps.lots.integrations.drom.parser import (
@@ -15,6 +15,15 @@ from apps.lots.integrations.drom.parser import (
     parse_catalog_models_from_html,
 )
 from apps.lots.integrations.drom.slugs import DEFAULT_MODEL_ALIASES, normalize_slug
+from apps.lots.integrations.http_client import decode_html_bytes
+
+_SCHEMA_SYNC_HEADERS: dict[str, str] = {
+    **_DEFAULT_HEADERS,
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    ),
+}
 
 DEFAULT_SCHEMA_PATH = Path(__file__).resolve().parent / "data" / "drom_schema.json"
 
@@ -121,8 +130,7 @@ def compact_brand_models(
 
 def _fetch_text(client: httpx.Client, url: str) -> tuple[int, str, str]:
     resp = client.get(url)
-    enc = _detect_charset(resp)
-    return resp.status_code, str(resp.url), resp.content.decode(enc, errors="replace")
+    return resp.status_code, str(resp.url), decode_html_bytes(resp.content, resp.headers)
 
 
 def _scrape_model_map(
@@ -154,7 +162,7 @@ def _scrape_single_brand(
     timeout_sec: float,
 ) -> tuple[str, dict[str, Any], bool]:
     with httpx.Client(
-        headers=_DEFAULT_HEADERS, follow_redirects=True, timeout=timeout_sec
+        headers=_SCHEMA_SYNC_HEADERS, follow_redirects=True, timeout=timeout_sec
     ) as client:
         sales_models = _scrape_model_map(
             client,
@@ -181,7 +189,7 @@ def sync_drom_schema(
 ) -> dict[str, Any]:
     """Scrape full Drom brand/model directory and filter enum schema into a compact JSON file."""
     with httpx.Client(
-        headers=_DEFAULT_HEADERS, follow_redirects=True, timeout=timeout_sec
+        headers=_SCHEMA_SYNC_HEADERS, follow_redirects=True, timeout=timeout_sec
     ) as client:
         _, _, all_html = _fetch_text(client, "https://auto.drom.ru/all/")
         filter_schema = _extract_filter_schema(all_html)

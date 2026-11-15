@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -13,6 +15,8 @@ from curl_cffi.requests.errors import RequestsError as CurlRequestsError
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+
+_URL_CREDS_RE = re.compile(r"([a-zA-Z][a-zA-Z0-9+.-]*://)([^/\s:@]+):([^@\s]+)@")
 
 
 class HttpTransportError(RuntimeError):
@@ -30,20 +34,47 @@ class HttpFetchResponse:
     used_proxy: str | None = None
 
     def json(self) -> Any:
-        import json
-
-        return json.loads(self.content.decode("utf-8"))
+        content_type = self.headers.get("content-type", "").lower()
+        if "windows-1251" in content_type or "cp1251" in content_type:
+            return json.loads(self.content.decode("cp1251"))
+        return json.loads(self.content)
 
 
 def redact_proxy_url(proxy_url: str | None) -> str | None:
     """Return host:port representation without leaking credentials into logs."""
     if not proxy_url:
         return None
-    parsed = urlparse(proxy_url)
-    if parsed.hostname:
-        port = f":{parsed.port}" if parsed.port else ""
-        return f"{parsed.scheme}://{parsed.hostname}{port}"
+    try:
+        parsed = urlparse(proxy_url)
+        hostname = parsed.hostname
+        port_num = parsed.port
+    except ValueError:
+        return "<proxy>"
+    if hostname:
+        port = f":{port_num}" if port_num else ""
+        scheme = parsed.scheme or "http"
+        return f"{scheme}://{hostname}{port}"
     return "<proxy>"
+
+
+def _scrub_proxy_credentials(text: str, proxy_url: str | None = None) -> tuple[str, bool]:
+    redacted = text
+    scrubbed = False
+    if proxy_url and proxy_url in redacted:
+        redacted = redacted.replace(proxy_url, redact_proxy_url(proxy_url) or "<proxy>")
+        scrubbed = True
+    cleaned = _URL_CREDS_RE.sub(r"\1***:***@", redacted)
+    if cleaned != redacted:
+        scrubbed = True
+    if proxy_url:
+        try:
+            parsed = urlparse(proxy_url)
+            if parsed.password and parsed.password in cleaned:
+                cleaned = cleaned.replace(parsed.password, "***")
+                scrubbed = True
+        except ValueError:
+            pass
+    return cleaned, scrubbed
 
 
 class ProxyRotator:
@@ -99,32 +130,22 @@ class ResilientHttpSession:
         self._impersonate = impersonate
         self._proxy_rotator = proxy_rotator
         self._transport = transport
-        self._httpx_client: httpx.Client | None = None
-        self._curl_session: curl_requests.Session | None = None
+        self._httpx_clients: dict[str | None, httpx.Client] = {}
+        self._curl_sessions: dict[str | None, curl_requests.Session] = {}
+        self._in_context = False
 
     def __enter__(self) -> ResilientHttpSession:
-        if self._transport is not None:
-            if self._httpx_client is None:
-                self._httpx_client = httpx.Client(
-                    transport=self._transport,
-                    headers=self._headers,
-                    follow_redirects=True,
-                )
-        elif self._curl_session is None:
-            self._curl_session = curl_requests.Session(
-                impersonate=self._impersonate,
-                headers=self._headers,
-                default_headers=True,
-            )
+        self._in_context = True
         return self
 
     def __exit__(self, *args: object) -> None:
-        if self._httpx_client is not None:
-            self._httpx_client.close()
-            self._httpx_client = None
-        if self._curl_session is not None:
-            self._curl_session.close()
-            self._curl_session = None
+        self._in_context = False
+        for client in self._httpx_clients.values():
+            client.close()
+        self._httpx_clients.clear()
+        for session in self._curl_sessions.values():
+            session.close()
+        self._curl_sessions.clear()
 
     def get(
         self,
@@ -143,7 +164,11 @@ class ResilientHttpSession:
 
         if self._transport is not None:
             response = self._get_httpx(
-                url, params=params, headers=headers, timeout=effective_timeout
+                url,
+                params=params,
+                headers=headers,
+                timeout=effective_timeout,
+                proxy=selected_proxy,
             )
         else:
             response = self._get_curl(
@@ -173,10 +198,19 @@ class ResilientHttpSession:
         params: dict[str, Any] | None,
         headers: dict[str, str] | None,
         timeout: float,
+        proxy: str | None = None,
     ) -> httpx.Response:
         try:
-            if self._httpx_client is not None:
-                return self._httpx_client.get(url, params=params, headers=headers, timeout=timeout)
+            if self._in_context:
+                client = self._httpx_clients.get(proxy)
+                if client is None:
+                    client = httpx.Client(
+                        transport=self._transport,
+                        headers=self._headers,
+                        follow_redirects=True,
+                    )
+                    self._httpx_clients[proxy] = client
+                return client.get(url, params=params, headers=headers, timeout=timeout)
             with httpx.Client(
                 transport=self._transport,
                 headers=self._headers,
@@ -184,7 +218,11 @@ class ResilientHttpSession:
             ) as client:
                 return client.get(url, params=params, headers=headers, timeout=timeout)
         except httpx.HTTPError as exc:
-            raise HttpTransportError(f"Request failed for {url}: {exc}") from exc
+            msg, scrubbed = _scrub_proxy_credentials(str(exc), proxy)
+            err = HttpTransportError(f"Request failed for {url}: {msg}")
+            if scrubbed:
+                raise err from None
+            raise err from exc
 
     def _get_curl(
         self,
@@ -204,8 +242,16 @@ class ResilientHttpSession:
         if proxy:
             kwargs["proxy"] = proxy
         try:
-            if self._curl_session is not None:
-                return self._curl_session.get(url, **kwargs)
+            if self._in_context:
+                session = self._curl_sessions.get(proxy)
+                if session is None:
+                    session = curl_requests.Session(
+                        impersonate=self._impersonate,
+                        headers=self._headers,
+                        default_headers=True,
+                    )
+                    self._curl_sessions[proxy] = session
+                return session.get(url, **kwargs)
             with curl_requests.Session(
                 impersonate=self._impersonate,
                 headers=self._headers,
@@ -213,4 +259,8 @@ class ResilientHttpSession:
             ) as session:
                 return session.get(url, **kwargs)
         except CurlRequestsError as exc:
-            raise HttpTransportError(f"Request failed for {url}: {exc}") from exc
+            msg, scrubbed = _scrub_proxy_credentials(str(exc), proxy)
+            err = HttpTransportError(f"Request failed for {url}: {msg}")
+            if scrubbed:
+                raise err from None
+            raise err from exc

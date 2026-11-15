@@ -42,6 +42,7 @@ function partSourceLabel(part: DamagedPartItem): string {
   if (part.subtitle_ru?.includes('из кэша')) return 'кэш Farpost'
   if (part.subtitle_ru?.includes('не определён код кузова')) return 'нет кода кузова'
   if (part.subtitle_ru?.includes('ограничил выдачу')) return 'лимит Farpost'
+  if (part.subtitle_ru?.includes('временно недоступен')) return 'ошибка Farpost'
   if (part.subtitle_ru?.includes('нет подходящих предложений')) return 'нет на Farpost'
   return 'оценка по матрице'
 }

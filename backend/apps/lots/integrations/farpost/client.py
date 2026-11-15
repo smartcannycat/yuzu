@@ -103,10 +103,11 @@ _ACCESSORIES = re.compile(
     re.I,
 )
 _ASSEMBLY_SUFFIX_RE = re.compile(
-    r"(?:\bв\s+сборе\b.*|\b(?:с|без|под)\s+(?:обшивк|ручк|петл|молдинг|уплотнител|"
+    r"(?:\bв\s+сборе\b.*|\b(?:с|со|без|под)\s+(?:обшивк|ручк|петл|молдинг|уплотнител|"
     r"стеклопод[ъь]емник|замк|замок|проводк|накладк|зеркал|заглушк|креплен|решетк|"
     r"усилител|абсорбер|кронштейн|подкрыл|брызговик|фара|фонар|повторител|омывател|"
-    r"туманк|парктроник|датчик|камер)\w*.*)",
+    r"туманк|парктроник|датчик|камер|форточк|ограничител|моторчик|эмблем|шильдик|"
+    r"шторк|упор|трапец|стекл)\w*.*)",
     re.I,
 )
 _NON_WINDSHIELD_GLASS = re.compile(r"^\s*стекл[оа]\b|стекло\s+двер|дверн\w*\s+стекл", re.I)
@@ -153,9 +154,12 @@ _SISTER_MAKES: dict[str, frozenset[str]] = {
     "lexus": frozenset({"lexus", "toyota"}),
     "daihatsu": frozenset({"daihatsu", "toyota"}),
     "nissan": frozenset({"nissan", "infiniti"}),
+    "infiniti": frozenset({"infiniti", "nissan"}),
     "honda": frozenset({"honda", "acura"}),
+    "acura": frozenset({"acura", "honda"}),
     "hyundai": frozenset({"hyundai", "kia", "genesis"}),
-    "kia": frozenset({"kia", "hyundai"}),
+    "kia": frozenset({"kia", "hyundai", "genesis"}),
+    "genesis": frozenset({"genesis", "hyundai", "kia"}),
 }
 
 _MODEL_ALIASES: dict[str, tuple[str, ...]] = {
@@ -227,14 +231,28 @@ _MODEL_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 _LEFT_RE = re.compile(
-    r"(?:(?<![a-zа-я0-9])л\.?(?![a-zа-я0-9])|лев|[пз][/\\.]л\b|\b(?:lh|fl|rl)\b)", re.I
+    r"(?:(?<![a-zа-я0-9])(?:л\.?(?![a-zа-я0-9])|лев|слева\b)|[пз][/\\.]л\b|\b(?:lh|fl|rl)\b)",
+    re.I,
 )
-_RIGHT_RE = re.compile(r"(?:прав|пр\.?(?![a-zа-я0-9])|[пз][/\\.]п\b|\b(?:rh|fr|rr)\b)", re.I)
+_RIGHT_RE = re.compile(
+    r"(?:(?<![a-zа-я0-9])(?:прав|пр\.?(?![a-zа-я0-9])|справа\b)|[пз][/\\.]п\b|\b(?:rh|fr|rr)\b)",
+    re.I,
+)
 _FRONT_RE = re.compile(
-    r"(?:перед|пер\.?(?![a-zа-я0-9])|п[/\\.]л\b|п[/\\.]п\b|\b(?:front|fl|fr)\b)", re.I
+    r"(?:(?<![a-zа-я0-9])(?:перед|пер\.?(?![a-zа-я0-9])|спереди\b)|п[/\\.]л\b|п[/\\.]п\b|\b(?:front|fl|fr)\b)",
+    re.I,
 )
-_REAR_RE = re.compile(r"(?:зад|з[/\\.]л\b|з[/\\.]п\b|\b(?:rear|rl|rr)\b)", re.I)
+_REAR_RE = re.compile(
+    r"(?:(?<![a-zа-я0-9])(?:зад|сзади\b)|з[/\\.]л\b|з[/\\.]п\b|\b(?:rear|rl|rr)\b)",
+    re.I,
+)
 _FENDER_RE = re.compile(r"\bкрыл(?:о|а|у|е|ья|ьев)\b", re.I)
+_LITER_TOKEN_RE = re.compile(r"\b\d+(?:[.,]\d+)?\s*л\.?(?![a-zа-я0-9])", re.I)
+
+
+def _strip_liter_tokens(value: str) -> str:
+    """Remove engine displacement tokens (e.g. '1.5 л') so 'л' is not misread as 'левая'."""
+    return _LITER_TOKEN_RE.sub(" ", value)
 
 
 def _compact(value: str) -> str:
@@ -247,12 +265,30 @@ def _contains_code(text: str, code: str) -> bool:
     return bool(re.search(pattern, text.lower()))
 
 
-def _has_conflicting_make(compact_text: str, make_key: str) -> bool:
+_COMPOUND_ALIAS_PATTERNS: dict[str, str] = {
+    "mercedesbenz": r"mercedes[\s-]*benz",
+    "мерседесбенц": r"мерседес[\s-]*бенц",
+    "landrover": r"land[\s-]*rover",
+    "лендровер": r"ленд[\s-]*ровер",
+}
+_MAKE_CONFLICT_PATTERNS: dict[str, re.Pattern[str]] = {
+    make_name: re.compile(
+        r"(?<![a-zа-я0-9])(?:"
+        + "|".join(_COMPOUND_ALIAS_PATTERNS.get(v, re.escape(v)) for v in variants)
+        + r")(?![a-zа-я0-9])",
+        re.I,
+    )
+    for make_name, variants in _MAKE_ALIASES.items()
+}
+
+
+def _has_conflicting_make(text: str, make_key: str) -> bool:
     allowed = _SISTER_MAKES.get(make_key, frozenset({make_key}))
-    for other_make, variants in _MAKE_ALIASES.items():
+    normalized = text.casefold().replace("ё", "е")
+    for other_make, pattern in _MAKE_CONFLICT_PATTERNS.items():
         if other_make in allowed:
             continue
-        if any(len(v) >= 4 and v in compact_text for v in variants):
+        if pattern.search(normalized):
             return True
     return False
 
@@ -270,7 +306,7 @@ def _matches_make_and_model(
     if make_matched and model_matched:
         return True
     if has_exact_body_code and (make_matched or model_matched):
-        return not _has_conflicting_make(compact_text, make_key)
+        return not _has_conflicting_make(text, make_key)
     return False
 
 
@@ -285,7 +321,8 @@ def _matches_part_name(name: str, criteria: PartCriteria) -> bool:
     if criteria.panel_id == "windshield":
         return "стекл" in lowered and ("лобов" in lowered or "ветров" in lowered)
     if criteria.panel_id == "tailgate":
-        has_side_door = bool(_LEFT_RE.search(name) or _RIGHT_RE.search(name))
+        side_clean = _strip_liter_tokens(name)
+        has_side_door = bool(_LEFT_RE.search(side_clean) or _RIGHT_RE.search(side_clean))
         return (
             "багажник" in lowered
             or "дверь задка" in lowered
@@ -300,10 +337,11 @@ def _matches_part_name(name: str, criteria: PartCriteria) -> bool:
 
 
 def _matches_side_and_position(name: str, criteria: PartCriteria) -> bool:
+    cleaned_name = _strip_liter_tokens(name)
     if criteria.side:
         want_left = criteria.side.casefold().startswith("лев")
-        has_left = bool(_LEFT_RE.search(name))
-        has_right = bool(_RIGHT_RE.search(name))
+        has_left = bool(_LEFT_RE.search(cleaned_name))
+        has_right = bool(_RIGHT_RE.search(cleaned_name))
         if want_left and (not has_left or has_right):
             return False
         if not want_left and (not has_right or has_left):
@@ -311,12 +349,12 @@ def _matches_side_and_position(name: str, criteria: PartCriteria) -> bool:
     if criteria.position and criteria.panel_id != "windshield":
         pos = criteria.position.casefold()
         if pos.startswith("перед"):
-            if not _FRONT_RE.search(name) or _REAR_RE.search(name):
+            if not _FRONT_RE.search(cleaned_name) or _REAR_RE.search(cleaned_name):
                 return False
         elif pos.startswith("зад"):
-            if not _REAR_RE.search(name) or _FRONT_RE.search(name):
+            if not _REAR_RE.search(cleaned_name) or _FRONT_RE.search(cleaned_name):
                 return False
-        elif pos[:5] not in name.casefold():
+        elif pos[:5] not in cleaned_name.casefold():
             return False
     return True
 
@@ -325,9 +363,10 @@ def matches_paint_code(text: str, paint_code: str) -> bool:
     """Return True when text explicitly confirms the factory paint code."""
     if not paint_code:
         return False
-    code_pat = re.escape(paint_code)
+    code_pat = r"[ \t]*".join(map(re.escape, paint_code))
     context_pattern = (
-        r"(?:цвет|код\s+краски|окрас|paint|color)[^.;\n]{0,30}?"
+        r"(?:цвет|код\s+краски|окрас|paint|color)"
+        r"(?:(?!\b(?:не|другой|пробег|цена)\b)[^.;\n]){0,24}?"
         + r"(?<![a-zа-я0-9])"
         + code_pat
         + r"(?![a-zа-я0-9])"
@@ -422,10 +461,12 @@ def parse_listing_page(html: str, criteria: PartCriteria, *, source_url: str) ->
     recognizable = False
     for row in rows:
         link_nodes = row.css('[data-role="bulletin-link"]')
-        price_nodes = row.css(".price-block__final-price")
-        if not link_nodes or not price_nodes:
+        if not link_nodes:
             continue
         recognizable = True
+        price_nodes = row.css(".price-block__final-price")
+        if not price_nodes:
+            continue
         link = link_nodes[0]
         name = link.get_all_text(separator=" ", strip=True)
         ann_nodes = row.css(".bull-item__annotation") or row.css(".bull-item__annotation-row")
@@ -477,7 +518,7 @@ def parse_listing_page(html: str, criteria: PartCriteria, *, source_url: str) ->
         offer_id = str(row.attrib.get("data-good-id") or row.attrib.get("data-bulletin-id") or "")
         if value < _MIN_SANE_PART_PRICE_RUB or not offer_id:
             continue
-        snippet = annotation_text[:280]
+        snippet = annotation_text[:600]
         offers[offer_id] = PartOffer(offer_id, url, name, value, matched, snippet=snippet)
     if not recognizable:
         raise FarpostFetchError("Farpost listing structure changed")
@@ -598,7 +639,12 @@ class FarpostClient:
             and result.exact_feed_count > _PAGE_SIZE
             and deadline - time.monotonic() > min(self.timeout_sec, 3.0)
         ):
-            page2 = self._fetch_and_parse_page(criteria, deadline=deadline, page=2)
+            try:
+                page2 = self._fetch_and_parse_page(criteria, deadline=deadline, page=2)
+            except FarpostRateLimitedError:
+                raise
+            except FarpostFetchError:
+                return result
             return ParseResult(
                 offers=page2.offers,
                 exact_feed_count=result.exact_feed_count,

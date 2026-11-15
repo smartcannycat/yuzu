@@ -93,7 +93,11 @@ class DromHttpClient:
                     raise DromFetchError(f"Network error requesting {url}: {exc}") from exc
 
                 if response.status_code in _BLOCKED_STATUSES:
-                    if self._proxy_rotator and attempt < total_attempts - 1:
+                    if (
+                        self._proxy_rotator
+                        and len(self._proxy_rotator) > 1
+                        and attempt < total_attempts - 1
+                    ):
                         continue
                     raise DromBlockedError(
                         f"Drom blocked request ({response.status_code}) for {url}"

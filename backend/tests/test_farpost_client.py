@@ -396,3 +396,131 @@ def test_client_rotates_proxies_on_verify_challenge():
     offers = client.search(replace(CRITERIA, paint_code=""), deadline=time.monotonic() + 20)
     assert len(offers) == 1
     assert len(attempts) == 3  # 1st attempt + redirect -> /verify, then 2nd proxy attempt
+
+
+def test_shipping_and_liter_words_do_not_trigger_side_false_positives():
+    left_with_shipping = listing(
+        "Дверь передняя левая Toyota Corolla NRE210 отправка в регионы",
+        annotation="",
+    )
+    assert len(parse(left_with_shipping, replace(CRITERIA, paint_code=""))) == 1
+
+    right_criteria = replace(CRITERIA, panel_id="front_right_door", side="правая", paint_code="")
+    right_with_liters = listing(
+        "Дверь передняя правая Toyota Corolla NRE210 1.5 л.",
+        annotation="",
+    )
+    assert len(parse(right_with_liters, right_criteria)) == 1
+
+    ambiguous_with_shipping = listing(
+        "Дверь передняя Toyota Corolla NRE210 отправка в регионы",
+        annotation="",
+    )
+    assert parse(ambiguous_with_shipping, right_criteria) == []
+
+
+def test_assembly_so_and_window_vent_are_accepted_while_accessories_rejected():
+    door_with_vent = listing(
+        "Дверь передняя левая Toyota Corolla NRE210 со стеклоподъемником и форточкой",
+        annotation="",
+    )
+    assert len(parse(door_with_vent, replace(CRITERIA, paint_code=""))) == 1
+
+    standalone_vent = listing(
+        "Форточка двери передней левой Toyota Corolla NRE210",
+        annotation="",
+    )
+    assert parse(standalone_vent, replace(CRITERIA, paint_code="")) == []
+
+
+def test_conflicting_make_ignores_substrings_and_catches_short_brands():
+    ok_substrings = listing(
+        "Дверь передняя левая Corolla NRE210",
+        annotation="Минимальные сколы, под Display Audio",
+    )
+    assert len(parse(ok_substrings, replace(CRITERIA, paint_code=""))) == 1
+
+    kia_conflict = listing(
+        "Дверь передняя левая Kia Corolla NRE210",
+        annotation="",
+    )
+    assert parse(kia_conflict, replace(CRITERIA, paint_code="")) == []
+
+
+def test_paint_code_rejects_negations_and_handles_split_spans():
+    from apps.lots.integrations.farpost.client import matches_paint_code
+
+    assert not matches_paint_code("Цвет другой (не 070)", "070")
+    assert not matches_paint_code("Цвет красный, пробег 070 тыс", "070")
+
+    freed = PartCriteria(
+        "Honda", "Freed", "GB5", "front_left_door", "дверь", "левая", "передняя", "NH883P"
+    )
+    split_span_html = listing(
+        "Дверь передняя левая Honda Freed GB5 NH<span>883P</span>", annotation=""
+    )
+    offers = parse(split_span_html, freed)
+    assert len(offers) == 1
+    assert offers[0].color_matched is True
+
+
+def test_page2_error_falls_back_to_empty_and_unpriced_rows_are_recognized():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params.get("page") == "2":
+            return httpx.Response(503)
+        return httpx.Response(
+            200,
+            text="""<html><title>Запчасти</title>
+            <input name="goodPresentState" value="present" checked>
+            <script id="ctr-viewdir-event">{"exactFeedCount":116}</script>
+            <div class="bull-item" data-good-id="1">
+              <a data-role="bulletin-link" href="/vladivostok/zapchasti/1.html">
+                Крыло Subaru Impreza GJ2 переднее левое
+              </a>
+              <div class="price-block__final-price"><div data-role="price">2 000₽</div></div>
+            </div></html>""",
+        )
+
+    subaru = PartCriteria(
+        "Subaru", "Impreza", "GP2", "front_left_fender", "крыло", "левое", "переднее", ""
+    )
+    client = FarpostClient(transport=httpx.MockTransport(handler))
+    res = client.search_with_metadata(subaru, deadline=time.monotonic() + 20)
+    assert res.offers == []
+    assert res.exact_feed_count == 116
+
+    unpriced_html = """<html><title>Запчасти</title>
+    <input name="goodPresentState" value="present" checked>
+    <script id="ctr-viewdir-event">{"exactFeedCount":5}</script>
+    <div class="bull-item" data-good-id="11">
+      <a data-role="bulletin-link" href="/vladivostok/zapchasti/11.html">
+        Дверь передняя левая Toyota Corolla NRE210
+      </a>
+    </div></html>"""
+    assert parse(unpriced_html, replace(CRITERIA, paint_code="")) == []
+
+
+def test_proxy_rotation_isolates_cookies_across_proxies():
+    seen_cookies: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "verify" in str(request.url):
+            return httpx.Response(200, text="<title>Проверка</title>")
+        seen_cookies.append(request.headers.get("cookie", ""))
+        if len(seen_cookies) == 1:
+            return httpx.Response(
+                302,
+                headers={
+                    "Location": "https://www.farpost.ru/verify",
+                    "Set-Cookie": "tainted_verify=1; Path=/",
+                },
+            )
+        return httpx.Response(200, text=listing())
+
+    with FarpostClient(
+        proxy_urls=["http://p1:8080", "http://p2:8080"],
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        offers = client.search(replace(CRITERIA, paint_code=""), deadline=time.monotonic() + 20)
+    assert len(offers) == 1
+    assert seen_cookies == ["", ""]

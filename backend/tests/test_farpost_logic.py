@@ -3,23 +3,35 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import httpx
+import pytest
+from curl_cffi.requests.errors import RequestsError as CurlRequestsError
 
 from apps.core.enums import WorkType
+from apps.lots.integrations.drom import schema_sync
 from apps.lots.integrations.drom.client import DromHttpClient
+from apps.lots.integrations.drom.schemas import DromBlockedError
 from apps.lots.integrations.farpost import service as farpost_service
 from apps.lots.integrations.farpost.client import FarpostClient, ParseResult, PartOffer
 from apps.lots.integrations.farpost.service import (
+    _FALLBACK_SUBTITLES,
     _body_code,
     _search_model,
     _select_best_offer,
     _work_label,
     estimate_repair,
 )
-from apps.lots.integrations.http_client import ProxyRotator, redact_proxy_url
+from apps.lots.integrations.http_client import (
+    HttpFetchResponse,
+    HttpTransportError,
+    ProxyRotator,
+    ResilientHttpSession,
+    redact_proxy_url,
+)
 
 
 def test_proxy_rotator_cycles_and_redacts_credentials():
@@ -195,3 +207,157 @@ def test_drom_http_client_retries_across_configured_proxies():
     )
     assert client.get_html("https://auto.drom.ru/toyota/corolla/") == "<html>ok</html>"
     assert calls == 2
+
+
+def test_schema_sync_imports_and_decodes_cp1251():
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content="<html><title>Тойота</title></html>".encode("cp1251"),
+            headers={"content-type": "text/html; charset=windows-1251"},
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        status, _final_url, html = schema_sync._fetch_text(client, "https://auto.drom.ru/all/")
+    assert status == 200
+    assert "Тойота" in html
+    assert "User-Agent" in schema_sync._SCHEMA_SYNC_HEADERS
+
+
+def test_redact_proxy_url_and_transport_error_scrub_credentials(monkeypatch):
+    assert redact_proxy_url("http://user:s3cr3t@127.0.0.1:abc") == "<proxy>"
+    assert redact_proxy_url("http://user:p[ss@proxy.local:8080") == "<proxy>"
+
+    class FailingCurlSession:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def get(self, _url, **_kwargs):
+            raise CurlRequestsError(
+                "Unsupported proxy syntax in 'http://myuser:topsecret@127.0.0.1:abc'"
+            )
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(
+        "apps.lots.integrations.http_client.curl_requests.Session", FailingCurlSession
+    )
+    session = ResilientHttpSession(
+        proxy_rotator=ProxyRotator(["http://myuser:topsecret@127.0.0.1:abc"])
+    )
+    with pytest.raises(HttpTransportError) as exc_info:
+        session.get("https://www.farpost.ru/")
+    assert "topsecret" not in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
+
+
+def test_http_fetch_response_json_supports_bom_and_cp1251():
+    bom_resp = HttpFetchResponse(200, "https://drom.ru", {}, b'\xef\xbb\xbf{"ok": true}')
+    assert bom_resp.json() == {"ok": True}
+
+    cp1251_resp = HttpFetchResponse(
+        200,
+        "https://drom.ru",
+        {"content-type": "application/json; charset=windows-1251"},
+        '{"name": "Тойота"}'.encode("cp1251"),
+    )
+    assert cp1251_resp.json() == {"name": "Тойота"}
+
+
+def test_single_proxy_drom_blocked_raises_immediately():
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(429)
+
+    client = DromHttpClient(
+        max_retries=2,
+        retry_backoff_sec=0.0,
+        proxy_urls=["http://p1:8080"],
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(DromBlockedError):
+        client.get_html("https://auto.drom.ru/toyota/corolla/")
+    assert calls == 1
+
+
+def test_body_code_preserves_two_letter_jdm_suffixes():
+    assert (
+        _body_code(SimpleNamespace(frame_id="KE2FW-100234", chassis_number="", model_code=""))
+        == "KE2FW"
+    )
+    assert (
+        _body_code(SimpleNamespace(frame_id="", chassis_number="", model_code="LDA-BM5FS"))
+        == "BM5FS"
+    )
+
+
+def test_select_best_offer_never_color_matches_windshield():
+    glass = PartOffer(
+        "1", "https://www.farpost.ru/1", "Стекло лобовое Honda Fit GE6 070", 9000, False
+    )
+    chosen, matched = _select_best_offer(
+        [glass],
+        paint_code="070",
+        paint_cost_rub=10000,
+        panel="windshield",
+        stale=False,
+    )
+    assert chosen == glass
+    assert matched is False
+
+
+def test_mock_spec_farpost_client_and_frontend_subtitles(monkeypatch):
+    monkeypatch.setattr(farpost_service, "_local_cooldown_until", 0.0)
+    monkeypatch.setattr(farpost_service, "get_redis_client", lambda: None)
+    filter_mock = MagicMock()
+    filter_mock.first.return_value = None
+    monkeypatch.setattr(farpost_service.ExternalCache.objects, "filter", lambda **_kw: filter_mock)
+    update_mock = MagicMock()
+    monkeypatch.setattr(farpost_service.ExternalCache.objects, "update_or_create", update_mock)
+
+    mock_client = MagicMock(spec=FarpostClient)
+    mock_client.search.return_value = [
+        PartOffer(
+            "1",
+            "https://www.farpost.ru/1",
+            "Дверь передняя левая Toyota Corolla NRE210",
+            8000,
+            False,
+        )
+    ]
+    offers, stale, reason = farpost_service._search_cached_with_reason(
+        mock_client,
+        farpost_service.PartCriteria(
+            "Toyota", "Corolla", "NRE210", "front_left_door", "дверь", "левая", "передняя", ""
+        ),
+        deadline=time.monotonic() + 10,
+    )
+    assert len(offers) == 1
+    assert not stale
+    assert reason == ""
+    mock_client.search.assert_called_once()
+    mock_client.search_with_metadata.assert_not_called()
+
+    vue_path = (
+        Path(__file__).resolve().parents[2]
+        / "frontend/src/components/lots/detail/print/LotPrintPageTechEconomics.vue"
+    )
+    vue_text = vue_path.read_text(encoding="utf-8")
+    assert "временно недоступен" in vue_text
+    assert "временно недоступен" in _FALLBACK_SUBTITLES["fetch_error"]
+    assert "ограничил выдачу" in vue_text
+    assert "ограничил выдачу" in _FALLBACK_SUBTITLES["rate_limited"]
+    assert "не определён код кузова" in vue_text
+    assert "не определён код кузова" in _FALLBACK_SUBTITLES["missing_identity"]
+    assert "нет подходящих предложений" in vue_text
+    assert "нет подходящих предложений" in _FALLBACK_SUBTITLES["not_found"]

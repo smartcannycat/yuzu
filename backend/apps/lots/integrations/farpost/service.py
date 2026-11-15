@@ -41,7 +41,7 @@ _MODEL_TRIM_RE = re.compile(
     r"custom|crosstar|spada|g4|modulo|nismo|gr\s*sport)\b",
     re.I,
 )
-_BODY_CODE_RE = re.compile(r"[A-Z]{1,5}\d{1,4}[A-Z]?")
+_BODY_CODE_RE = re.compile(r"[A-Z]{1,5}\d{1,4}[A-Z]{0,2}")
 _VIN_RE = re.compile(r"^[A-HJ-NPR-Z0-9]{17}$")
 
 _cooldown_lock = threading.Lock()
@@ -180,7 +180,9 @@ def _search_cached_with_reason(
     offers = _read_offers(entry)
     if offers is not None and not entry.is_expired:
         return offers, False, ""
-    empty = ExternalCache.objects.filter(key=key + ":empty").first()
+    empty = ExternalCache.objects.filter(
+        key=key + ":empty", source=ExternalCacheSource.FARPOST
+    ).first()
     if empty is not None and not empty.is_expired:
         return [], False, "not_found"
     if _is_rate_limit_cooldown_active():
@@ -188,7 +190,10 @@ def _search_cached_with_reason(
         stale_offers, stale = _stale_fallback(entry)
         return stale_offers, stale, "rate_limited"
     try:
-        if isinstance(client, FarpostClient):
+        if (
+            isinstance(client, FarpostClient)
+            and getattr(type(client), "search", None) is FarpostClient.search
+        ):
             parse_result = client.search_with_metadata(query_criteria, deadline=deadline)
         else:
             parse_result = ParseResult(
@@ -315,9 +320,7 @@ def _select_best_offer(
     if not offers:
         return None, False
     best_plain = min(offers, key=lambda item: (item.price_rub, item.offer_id))
-    if stale:
-        return best_plain, False
-    if not paint_code:
+    if stale or not paint_code or panel == "windshield":
         return best_plain, False
     colored = [
         item
@@ -327,8 +330,7 @@ def _select_best_offer(
     if not colored:
         return best_plain, False
     best_colored = min(colored, key=lambda item: (item.price_rub, item.offer_id))
-    effective_paint = 0 if panel == "windshield" else paint_cost_rub
-    if best_colored.price_rub <= best_plain.price_rub + effective_paint:
+    if best_colored.price_rub <= best_plain.price_rub + paint_cost_rub:
         return best_colored, True
     return best_plain, False
 
@@ -391,7 +393,7 @@ def estimate_repair(lot: Lot, *, client: FarpostClient | None = None) -> RepairS
                 has_color_matched_parts |= matched
                 if offer and not stale:
                     subtitle = (
-                        f"Контрактная деталь в заводской цвет {lot.paint_code}"
+                        f"Контрактная деталь в заводской цвет {paint_code}"
                         if matched
                         else "Контрактная деталь; цвет не подтверждён, требуется окраска"
                     )
