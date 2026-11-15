@@ -12,11 +12,13 @@ from apps.lots.integrations.drom.schemas import (
 from apps.lots.integrations.http_client import (
     HttpFetchResponse,
     HttpTransportError,
-    ProxyRotator,
+    ProxyPool,
     ResilientHttpSession,
     decode_html_bytes,
+    wait_for_request_slot,
 )
 
+_DROM_THROTTLE_KEY = "yuzu:drom:throttle"
 _DEFAULT_HEADERS: dict[str, str] = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
@@ -35,14 +37,22 @@ class DromHttpClient:
         timeout_sec: float = 10.0,
         max_retries: int = 1,
         retry_backoff_sec: float = 0.25,
+        request_interval_sec: float = 0.0,
+        request_jitter_sec: float = 0.0,
+        proxy_ban_sec: float = 120.0,
         transport: httpx.BaseTransport | None = None,
         proxy_urls: tuple[str, ...] | list[str] = (),
     ) -> None:
         self._timeout_sec = timeout_sec
         self._max_retries = max(0, max_retries)
         self._retry_backoff_sec = retry_backoff_sec
+        self._request_interval_sec = request_interval_sec
+        self._request_jitter_sec = request_jitter_sec
+        self._proxy_ban_sec = proxy_ban_sec
         self._transport = transport
-        self._proxy_rotator = ProxyRotator(proxy_urls) if proxy_urls else None
+        self._proxy_rotator = (
+            ProxyPool(proxy_urls, ban_cooldown_sec=proxy_ban_sec) if proxy_urls else None
+        )
 
     def get_html(
         self,
@@ -79,13 +89,23 @@ class DromHttpClient:
             headers=headers,
             timeout_sec=self._timeout_sec,
             impersonate="chrome",
+            domain="drom.ru",
             proxy_rotator=self._proxy_rotator,
             transport=self._transport,
         ) as session:
             for attempt in range(total_attempts):
+                if self._transport is None:
+                    wait_for_request_slot(
+                        _DROM_THROTTLE_KEY,
+                        self._request_interval_sec,
+                        self._request_jitter_sec,
+                    )
                 try:
                     response = session.get(url)
                 except HttpTransportError as exc:
+                    session.mark_proxy_blocked(
+                        exc.proxy_key, domain="drom.ru", cooldown_sec=self._proxy_ban_sec
+                    )
                     last_error = exc
                     if attempt < total_attempts - 1:
                         time.sleep(self._retry_backoff_sec * (attempt + 1))
@@ -93,6 +113,9 @@ class DromHttpClient:
                     raise DromFetchError(f"Network error requesting {url}: {exc}") from exc
 
                 if response.status_code in _BLOCKED_STATUSES:
+                    session.mark_proxy_blocked(
+                        response.proxy_key, domain="drom.ru", cooldown_sec=self._proxy_ban_sec
+                    )
                     if (
                         self._proxy_rotator
                         and len(self._proxy_rotator) > 1

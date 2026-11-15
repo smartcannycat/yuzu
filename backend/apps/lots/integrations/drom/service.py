@@ -122,11 +122,22 @@ class DromMarketService:
     def __init__(self, client: DromHttpClient | None = None) -> None:
         app_settings = get_settings()
         timeout = float(
-            getattr(settings, "HTTP_CLIENT_TIMEOUT_SEC", app_settings.HTTP_CLIENT_TIMEOUT_SEC)
+            getattr(
+                settings,
+                "DROM_TIMEOUT_SEC",
+                getattr(
+                    settings,
+                    "HTTP_CLIENT_TIMEOUT_SEC",
+                    app_settings.DROM_TIMEOUT_SEC or app_settings.HTTP_CLIENT_TIMEOUT_SEC,
+                ),
+            )
         )
         self._client = client or DromHttpClient(
             timeout_sec=timeout,
-            proxy_urls=app_settings.DROM_PROXY_URLS,
+            request_interval_sec=float(app_settings.DROM_REQUEST_INTERVAL_SEC or 0.0),
+            request_jitter_sec=float(app_settings.DROM_REQUEST_JITTER_SEC or 0.0),
+            proxy_ban_sec=float(app_settings.SCRAPER_PROXY_BAN_SEC),
+            proxy_urls=app_settings.proxy_urls_for("drom"),
         )
         self._slug_resolver = DromSlugResolver(self._client)
         self._power_resolver = DromPowerResolver(self._client, self._slug_resolver)

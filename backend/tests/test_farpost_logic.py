@@ -16,7 +16,13 @@ from apps.lots.integrations.drom import schema_sync
 from apps.lots.integrations.drom.client import DromHttpClient
 from apps.lots.integrations.drom.schemas import DromBlockedError
 from apps.lots.integrations.farpost import service as farpost_service
-from apps.lots.integrations.farpost.client import FarpostClient, ParseResult, PartOffer
+from apps.lots.integrations.farpost.client import (
+    FarpostClient,
+    FarpostFetchError,
+    ParseResult,
+    PartCriteria,
+    PartOffer,
+)
 from apps.lots.integrations.farpost.service import (
     _FALLBACK_SUBTITLES,
     _body_code,
@@ -26,12 +32,17 @@ from apps.lots.integrations.farpost.service import (
     estimate_repair,
 )
 from apps.lots.integrations.http_client import (
+    HttpBudgetExhaustedError,
     HttpFetchResponse,
     HttpTransportError,
+    ProxyPool,
     ProxyRotator,
     ResilientHttpSession,
+    normalize_proxy_urls,
     redact_proxy_url,
+    wait_for_request_slot,
 )
+from config.settings.config import AppSettings
 
 
 def test_proxy_rotator_cycles_and_redacts_credentials():
@@ -360,4 +371,176 @@ def test_mock_spec_farpost_client_and_frontend_subtitles(monkeypatch):
     assert "не определён код кузова" in vue_text
     assert "не определён код кузова" in _FALLBACK_SUBTITLES["missing_identity"]
     assert "нет подходящих предложений" in vue_text
+    assert "нет подходящих предложений" in vue_text
     assert "нет подходящих предложений" in _FALLBACK_SUBTITLES["not_found"]
+
+
+def test_proxy_pool_isolates_quarantine_by_domain_and_falls_back_gracefully():
+    assert normalize_proxy_urls(
+        ["http://p1:8080", ""],
+        ["http://p1:8080", " http://p2:8080 "],
+    ) == ("http://p1:8080", "http://p2:8080")
+
+    pool = ProxyPool(
+        ["http://u:secret@p1:8080", "http://u:secret@p2:8080"],
+        ban_cooldown_sec=60.0,
+        use_redis=False,
+    )
+    first = pool.next_proxy(domain="www.farpost.ru")
+    assert first == "http://u:secret@p1:8080"
+    pool.mark_blocked(first, domain="www.farpost.ru", cooldown_sec=60.0)
+
+    # Quarantined for farpost.ru, so subsequent farpost calls skip p1...
+    assert pool.next_proxy(domain="www.farpost.ru") == "http://u:secret@p2:8080"
+    assert pool.next_proxy(domain="www.farpost.ru") == "http://u:secret@p2:8080"
+    # ...while drom.ru still treats p1 as healthy.
+    assert pool.is_quarantined("http://u:secret@p1:8080", domain="www.farpost.ru") is True
+    assert pool.is_quarantined("http://u:secret@p1:8080", domain="drom.ru") is False
+    assert pool.next_proxy(domain="drom.ru") == "http://u:secret@p1:8080"
+
+    # When every proxy is quarantined, next_proxy falls back to the earliest-expiring one.
+    pool.mark_blocked("http://u:secret@p2:8080", domain="www.farpost.ru", cooldown_sec=120.0)
+    assert pool.next_proxy(domain="www.farpost.ru") == "http://u:secret@p1:8080"
+
+    pool.clear_cooldown("http://u:secret@p1:8080", domain="www.farpost.ru")
+    assert pool.is_quarantined("http://u:secret@p1:8080", domain="www.farpost.ru") is False
+
+
+def test_proxy_pool_redis_quarantine_uses_hashed_keys_without_credentials(monkeypatch):
+    stored: dict[str, str] = {}
+
+    class FakeRedis:
+        def mget(self, keys):
+            return [stored.get(k) for k in keys]
+
+        def set(self, key, value, ex=None):
+            stored[key] = str(value)
+
+        def delete(self, key):
+            stored.pop(key, None)
+
+    monkeypatch.setattr("apps.lots.integrations.proxy.get_redis_client", lambda: FakeRedis())
+
+    pool_worker_a = ProxyPool(["http://user:topsecret@p1:8080", "http://user:topsecret@p2:8080"])
+    pool_worker_b = ProxyPool(["http://user:topsecret@p1:8080", "http://user:topsecret@p2:8080"])
+    pool_worker_a.mark_blocked("http://user:topsecret@p1:8080", domain="www.farpost.ru")
+
+    assert stored
+    assert all("topsecret" not in key for key in stored)
+    assert pool_worker_b.next_proxy(domain="www.farpost.ru") == "http://user:topsecret@p2:8080"
+
+
+def test_app_settings_merges_shared_scraper_defaults_and_preserves_overrides():
+    shared = AppSettings(
+        _env_file=None,
+        SCRAPER_PROXY_URLS="http://u:p@shared1:8080, http://shared2:8080",
+        SCRAPER_PROXY_BAN_SEC=180,
+        SCRAPER_TIMEOUT_SEC=14.0,
+        SCRAPER_REQUEST_INTERVAL_SEC=2.5,
+        SCRAPER_REQUEST_JITTER_SEC=0.7,
+        SCRAPER_COOLDOWN_SEC=90,
+    )
+    assert shared.HTTP_CLIENT_TIMEOUT_SEC == 14.0
+    assert shared.FARPOST_TIMEOUT_SEC == 14.0
+    assert shared.DROM_TIMEOUT_SEC == 14.0
+    assert shared.FARPOST_REQUEST_INTERVAL_SEC == 2.5
+    assert shared.DROM_REQUEST_INTERVAL_SEC == 2.5
+    assert shared.FARPOST_REQUEST_JITTER_SEC == 0.7
+    assert shared.DROM_REQUEST_JITTER_SEC == 0.7
+    assert shared.FARPOST_COOLDOWN_SEC == 90
+    assert shared.SCRAPER_PROXY_BAN_SEC == 180
+    assert shared.proxy_urls_for("farpost") == ("http://u:p@shared1:8080", "http://shared2:8080")
+    assert shared.proxy_urls_for("drom") == ("http://u:p@shared1:8080", "http://shared2:8080")
+
+    overridden = AppSettings(
+        _env_file=None,
+        SCRAPER_PROXY_URLS=["http://shared1:8080", "http://shared2:8080"],
+        FARPOST_PROXY_URLS=["http://dedicated-fp:8080", "http://shared1:8080"],
+        SCRAPER_TIMEOUT_SEC=12.0,
+        FARPOST_TIMEOUT_SEC=6.0,
+    )
+    assert overridden.proxy_urls_for("farpost") == (
+        "http://dedicated-fp:8080",
+        "http://shared1:8080",
+        "http://shared2:8080",
+    )
+    assert overridden.proxy_urls_for("drom") == ("http://shared1:8080", "http://shared2:8080")
+    assert overridden.FARPOST_TIMEOUT_SEC == 6.0
+    assert overridden.DROM_TIMEOUT_SEC == 12.0
+
+
+def test_farpost_and_drom_rotate_and_quarantine_proxies_on_blocks_and_transport_errors(monkeypatch):
+    monkeypatch.setattr("apps.lots.integrations.proxy.get_redis_client", lambda: None)
+    fp_attempts = 0
+
+    def fp_handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal fp_attempts
+        fp_attempts += 1
+        if fp_attempts == 1:
+            raise httpx.ConnectTimeout("proxy 1 hung")
+        return httpx.Response(
+            200,
+            text="""<html><title>Запчасти</title>
+            <input name="goodPresentState" value="present" checked>
+            <div class="bull-item" data-good-id="10">
+              <a data-role="bulletin-link" href="/vladivostok/zapchasti/10.html">
+                Дверь передняя левая Toyota Corolla NRE210
+              </a>
+              <div class="price-block__final-price"><div data-role="price">12 000₽</div></div>
+            </div></html>""",
+        )
+
+    fp_client = FarpostClient(
+        proxy_urls=["http://p1:8080", "http://p2:8080"],
+        proxy_ban_sec=60.0,
+        transport=httpx.MockTransport(fp_handler),
+    )
+    criteria = PartCriteria(
+        "Toyota", "Corolla", "NRE210", "front_left_door", "дверь", "левая", "передняя", ""
+    )
+    with fp_client:
+        offers = fp_client.search(criteria, deadline=time.monotonic() + 20)
+        assert len(offers) == 1
+        assert fp_attempts == 2
+        assert fp_client._proxy_rotator is not None
+        assert fp_client._proxy_rotator.is_quarantined("http://p1:8080", domain="www.farpost.ru")
+        # Subsequent call skips quarantined p1 and immediately uses p2.
+        assert fp_client._proxy_rotator.next_proxy(domain="www.farpost.ru") == "http://p2:8080"
+
+    drom_attempts = 0
+
+    def drom_handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal drom_attempts
+        drom_attempts += 1
+        if drom_attempts == 1:
+            return httpx.Response(403)
+        return httpx.Response(200, text="<html>ok</html>")
+
+    drom_client = DromHttpClient(
+        max_retries=0,
+        retry_backoff_sec=0.0,
+        proxy_ban_sec=60.0,
+        proxy_urls=["http://p1:8080", "http://p2:8080"],
+        transport=httpx.MockTransport(drom_handler),
+    )
+    assert drom_client.get_html("https://auto.drom.ru/toyota/corolla/") == "<html>ok</html>"
+    assert drom_client._proxy_rotator is not None
+    assert drom_client._proxy_rotator.is_quarantined("http://p1:8080", domain="drom.ru")
+
+
+def test_wait_for_request_slot_raises_on_budget_exhausted(monkeypatch):
+    monkeypatch.setattr(
+        "apps.lots.integrations.http_client.acquire_distributed_interval_slot", lambda *_a: 5.0
+    )
+    with pytest.raises(HttpBudgetExhaustedError):
+        wait_for_request_slot("yuzu:test:throttle", 1.0, deadline=time.monotonic() + 0.5)
+
+    client = FarpostClient(
+        request_interval_sec=1.0,
+        transport=None,
+    )
+    with pytest.raises(FarpostFetchError, match="budget"):
+        client._fetch_and_parse_page(
+            PartCriteria("Toyota", "Corolla", "NRE210", "front_left_door", "дверь"),
+            deadline=time.monotonic() + 0.5,
+        )

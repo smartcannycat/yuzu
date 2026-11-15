@@ -348,7 +348,8 @@ def estimate_repair(lot: Lot, *, client: FarpostClient | None = None) -> RepairS
         timeout_sec=settings.FARPOST_TIMEOUT_SEC,
         request_interval_sec=settings.FARPOST_REQUEST_INTERVAL_SEC,
         request_jitter_sec=settings.FARPOST_REQUEST_JITTER_SEC,
-        proxy_urls=settings.FARPOST_PROXY_URLS,
+        proxy_ban_sec=settings.SCRAPER_PROXY_BAN_SEC,
+        proxy_urls=settings.proxy_urls_for("farpost"),
     )
     deadline = time.monotonic() + settings.FARPOST_BUDGET_SEC
     matrix = repair_matrix()

@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import json
-import random
 import re
-import threading
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -13,13 +11,14 @@ from urllib.parse import urljoin, urlparse
 
 from scrapling import Selector
 
-from apps.core.redis_utils import acquire_distributed_interval_slot
 from apps.lots.integrations.http_client import (
+    HttpBudgetExhaustedError,
     HttpFetchResponse,
     HttpTransportError,
-    ProxyRotator,
+    ProxyPool,
     ResilientHttpSession,
     decode_html_bytes,
+    wait_for_request_slot,
 )
 
 if TYPE_CHECKING:
@@ -28,6 +27,7 @@ if TYPE_CHECKING:
     import httpx
 
 _FARPOST_THROTTLE_KEY = "yuzu:farpost:throttle"
+_FARPOST_URL = "https://www.farpost.ru/vladivostok/zapchasti/"
 _MIN_SANE_PART_PRICE_RUB = 1000
 _MAX_RESPONSE_BYTES = 3_000_000
 _PAGE_SIZE = 50
@@ -36,9 +36,6 @@ _DEFAULT_HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.5,en;q=0.3",
 }
-
-_local_throttle_lock = threading.Lock()
-_local_next_request_at = 0.0
 
 
 class FarpostFetchError(RuntimeError):
@@ -390,22 +387,15 @@ def _is_accessory_listing(name: str) -> bool:
 
 
 def _throttle_wait(deadline: float, interval_sec: float, jitter_sec: float = 0.0) -> None:
-    global _local_next_request_at
-    if interval_sec <= 0 and jitter_sec <= 0:
-        return
-    jitter = random.uniform(0.0, jitter_sec) if jitter_sec > 0 else 0.0
-    wait_sec = acquire_distributed_interval_slot(_FARPOST_THROTTLE_KEY, interval_sec)
-    if wait_sec is None:
-        with _local_throttle_lock:
-            now = time.monotonic()
-            scheduled = max(now, _local_next_request_at)
-            wait_sec = scheduled - now
-            _local_next_request_at = scheduled + interval_sec
-    total_wait = wait_sec + jitter
-    if total_wait > 0:
-        if time.monotonic() + total_wait >= deadline:
-            raise FarpostFetchError("Farpost search budget exhausted")
-        time.sleep(total_wait)
+    try:
+        wait_for_request_slot(
+            _FARPOST_THROTTLE_KEY,
+            interval_sec,
+            jitter_sec,
+            deadline=deadline,
+        )
+    except HttpBudgetExhaustedError as exc:
+        raise FarpostFetchError("Farpost search budget exhausted") from exc
 
 
 def _extract_exact_feed_count(page: Selector) -> tuple[int | None, bool]:
@@ -537,14 +527,20 @@ class FarpostClient:
         timeout_sec: float = 8.0,
         request_interval_sec: float = 0.0,
         request_jitter_sec: float = 0.0,
+        proxy_ban_sec: float = 120.0,
         proxy_urls: Sequence[str] = (),
         transport: httpx.BaseTransport | None = None,
     ):
         self.timeout_sec = timeout_sec
         self.request_interval_sec = request_interval_sec
         self.request_jitter_sec = request_jitter_sec
+        self.proxy_ban_sec = proxy_ban_sec
         self.transport = transport
-        self._proxy_rotator = ProxyRotator(proxy_urls) if proxy_urls else None
+        self._proxy_rotator = (
+            ProxyPool(proxy_urls, domain="www.farpost.ru", ban_cooldown_sec=proxy_ban_sec)
+            if proxy_urls
+            else None
+        )
         self._session: ResilientHttpSession | None = None
 
     def _build_session(self) -> ResilientHttpSession:
@@ -552,6 +548,7 @@ class FarpostClient:
             headers=_DEFAULT_HEADERS,
             timeout_sec=self.timeout_sec,
             impersonate="chrome",
+            domain="www.farpost.ru",
             proxy_rotator=self._proxy_rotator,
             transport=self.transport,
         )
@@ -587,12 +584,17 @@ class FarpostClient:
         if page > 1:
             params["page"] = page
         response: HttpFetchResponse = session.get(
-            "https://www.farpost.ru/vladivostok/zapchasti/",
+            _FARPOST_URL,
             params=params,
             timeout=min(self.timeout_sec, remaining),
             max_bytes=_MAX_RESPONSE_BYTES,
         )
         if response.status_code == 429 or urlparse(response.url).path.startswith("/verify"):
+            session.mark_proxy_blocked(
+                response.proxy_key,
+                url=_FARPOST_URL,
+                cooldown_sec=self.proxy_ban_sec,
+            )
             raise FarpostRateLimitedError("Farpost rate limited or anti-bot verification requested")
         if response.status_code >= 400:
             raise FarpostFetchError(f"Farpost returned HTTP {response.status_code}")
@@ -609,14 +611,19 @@ class FarpostClient:
     ) -> ParseResult:
         max_attempts = min(len(self._proxy_rotator), 3) if self._proxy_rotator else 1
         last_rate_err: FarpostRateLimitedError | None = None
+        last_transport_err: HttpTransportError | None = None
         for attempt in range(max_attempts):
             if self.transport is None:
                 _throttle_wait(deadline, self.request_interval_sec, self.request_jitter_sec)
+            active_session = self._session
             try:
-                if self._session is not None:
-                    html, final_url = self._fetch_html(self._session, criteria, deadline, page=page)
+                if active_session is not None:
+                    html, final_url = self._fetch_html(
+                        active_session, criteria, deadline, page=page
+                    )
                 else:
                     with self._build_session() as session:
+                        active_session = session
                         html, final_url = self._fetch_html(session, criteria, deadline, page=page)
                 return parse_listing_page(html, criteria, source_url=final_url)
             except FarpostRateLimitedError as exc:
@@ -625,9 +632,19 @@ class FarpostClient:
                     continue
                 raise
             except HttpTransportError as exc:
+                if active_session is not None:
+                    active_session.mark_proxy_blocked(
+                        exc.proxy_key,
+                        url=_FARPOST_URL,
+                        cooldown_sec=self.proxy_ban_sec,
+                    )
+                last_transport_err = exc
+                if attempt < max_attempts - 1 and deadline - time.monotonic() > 1.0:
+                    continue
                 raise FarpostFetchError(f"Farpost request failed: {exc}") from exc
-        assert last_rate_err is not None
-        raise last_rate_err
+        if last_rate_err is not None:
+            raise last_rate_err
+        raise FarpostFetchError(f"Farpost request failed: {last_transport_err}")
 
     def search_with_metadata(self, criteria: PartCriteria, *, deadline: float) -> ParseResult:
         if time.monotonic() >= deadline:
