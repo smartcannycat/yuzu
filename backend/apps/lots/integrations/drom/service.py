@@ -26,6 +26,7 @@ from apps.lots.integrations.drom.schemas import (
     DromSearchCriteria,
 )
 from apps.lots.integrations.drom.slugs import DromSlugResolver, ResolvedDromSlug
+from config.settings.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +80,13 @@ class DromMarketService:
     """Orchestrates Drom analog search, Read-Through caching, and power_hp lookup."""
 
     def __init__(self, client: DromHttpClient | None = None) -> None:
+        app_settings = get_settings()
+        timeout = float(
+            getattr(settings, "HTTP_CLIENT_TIMEOUT_SEC", app_settings.HTTP_CLIENT_TIMEOUT_SEC)
+        )
         self._client = client or DromHttpClient(
-            timeout_sec=float(getattr(settings, "HTTP_CLIENT_TIMEOUT_SEC", 10.0))
+            timeout_sec=timeout,
+            proxy_urls=app_settings.DROM_PROXY_URLS,
         )
         self._slug_resolver = DromSlugResolver(self._client)
         self._power_resolver = DromPowerResolver(self._client, self._slug_resolver)

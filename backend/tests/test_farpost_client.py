@@ -256,3 +256,143 @@ def test_verify_redirect_and_429_raise_rate_limited_and_context_manager_reuses_c
         with pytest.raises(FarpostRateLimitedError):
             client.search(CRITERIA, deadline=time.monotonic() + 20)
     assert "ring=abc123" in requests[1].headers.get("cookie", "")
+
+
+def test_unchecked_stock_filter_with_zero_exact_feed_returns_empty_without_error():
+    html = """<html><title>Купить б/у бампер</title>
+    <script id="ctr-viewdir-event" type="application/json">{"exactFeedCount":0}</script>
+    <input name="goodPresentState" value="" checked>
+    <div class="bull-item" data-good-id="999">
+      <a data-role="bulletin-link" href="/vladivostok/zapchasti/bumper-999.html">
+        Бампер передний Honda Freed GT5 NH883P
+      </a>
+      <div class="price-block__final-price"><div data-role="price">15 000₽</div></div>
+    </div></html>"""
+    result = parse(
+        html,
+        PartCriteria("Honda", "Freed", "GB5", "front_bumper", "бампер", "", "передний", "NH883P"),
+    )
+    assert result == []
+
+
+def test_accepts_complete_parts_sold_in_assembly_and_rejects_standalone_accessories():
+    door_in_assembly = listing(
+        "Дверь передняя левая Toyota Corolla NRE210 в сборе с ручкой, замком и зеркалом",
+        annotation="Контрактная, без повреждений",
+    )
+    assert len(parse(door_in_assembly, replace(CRITERIA, paint_code=""))) == 1
+
+    bumper_with_grille = listing(
+        "Бампер передний Honda Freed GB5 с решеткой и туманками",
+        annotation="Контрактный, без дефектов",
+    )
+    freed = PartCriteria("Honda", "Freed", "GB5", "front_bumper", "бампер", "", "передний", "")
+    assert len(parse(bumper_with_grille, freed)) == 1
+
+    standalone_handle = listing(
+        "Ручка двери передней левой Toyota Corolla NRE210",
+        annotation="",
+    )
+    assert parse(standalone_handle, replace(CRITERIA, paint_code="")) == []
+
+
+def test_relaxed_make_or_model_when_exact_body_code_matches_and_blocks_foreign_make():
+    # Missing brand word ("Toyota") when model + exact body_code match
+    no_make = listing("Дверь передняя левая Corolla NRE210 цвет 070", annotation="")
+    assert len(parse(no_make)) == 1
+
+    # Missing model word ("Impreza") when make + exact body_code match
+    subaru = PartCriteria(
+        "Subaru", "Impreza", "GP2", "front_left_fender", "крыло", "левое", "переднее", ""
+    )
+    no_model = listing("Крыло переднее левое Subaru GP2", annotation="")
+    assert len(parse(no_model, subaru)) == 1
+
+    # Farpost sister manufacturer tag on Lexus LS500
+    lexus = PartCriteria("Lexus", "LS500", "VXFA50", "front_bumper", "бампер", "", "передний", "")
+    ls500 = listing("Бампер Lexus LS500 5211950F20 VXFA50, передний", annotation="Toyota")
+    assert len(parse(ls500, lexus)) == 1
+
+    # Conflicting make still rejected even if body code appears in compatibility list
+    foreign_make = listing(
+        "Дверь передняя левая Honda NRE210 цвет 070",
+        annotation="",
+    )
+    assert parse(foreign_make) == []
+
+
+def test_plural_fender_wordform_and_snippet_preserved():
+    subaru = PartCriteria(
+        "Subaru", "Impreza", "GP2", "front_left_fender", "крыло", "левое", "переднее", ""
+    )
+    html = listing(
+        "Крылья Subaru Impreza GP2, переднее левое",
+        annotation="Цвет NH883P в идеале",
+    )
+    offers = parse(html, subaru)
+    assert len(offers) == 1
+    assert "NH883P" in offers[0].snippet
+
+
+def test_client_fetches_second_page_only_when_page1_filtered_empty_and_feed_exceeds_50():
+    pages: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        page = request.url.params.get("page", "1")
+        pages.append(page)
+        if page == "1":
+            return httpx.Response(
+                200,
+                text="""<html><title>Запчасти</title>
+                <input name="goodPresentState" value="present" checked>
+                <script id="ctr-viewdir-event">{"exactFeedCount":116}</script>
+                <div class="bull-item" data-good-id="1">
+                  <a data-role="bulletin-link" href="/vladivostok/zapchasti/1.html">
+                    Крыло Subaru Impreza GJ2 переднее левое
+                  </a>
+                  <div class="price-block__final-price"><div data-role="price">2 000₽</div></div>
+                </div></html>""",
+            )
+        return httpx.Response(
+            200,
+            text="""<html><title>Запчасти</title>
+            <input name="goodPresentState" value="present" checked>
+            <script id="ctr-viewdir-event">{"exactFeedCount":116}</script>
+            <div class="bull-item" data-good-id="2">
+              <a data-role="bulletin-link" href="/vladivostok/zapchasti/2.html">
+                Крыло Subaru Impreza GP2 переднее левое
+              </a>
+              <div class="price-block__final-price"><div data-role="price">4 500₽</div></div>
+            </div></html>""",
+        )
+
+    criteria = PartCriteria(
+        "Subaru", "Impreza", "GP2", "front_left_fender", "крыло", "левое", "переднее", ""
+    )
+    client = FarpostClient(transport=httpx.MockTransport(handler))
+    result = client.search_with_metadata(criteria, deadline=time.monotonic() + 20)
+    assert pages == ["1", "2"]
+    assert len(result.offers) == 1
+    assert result.offers[0].price_rub == 4500
+    assert result.exact_feed_count == 116
+
+
+def test_client_rotates_proxies_on_verify_challenge():
+    attempts: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # MockTransport verifies retry count cleanly while session tracks used proxies.
+        attempts.append(str(request.url))
+        if len(attempts) == 1:
+            return httpx.Response(302, headers={"Location": "https://www.farpost.ru/verify"})
+        if "verify" in str(request.url):
+            return httpx.Response(200, text="<title>Проверка</title>")
+        return httpx.Response(200, text=listing())
+
+    client = FarpostClient(
+        proxy_urls=["http://user:secret@p1:8080", "http://user:secret@p2:8080"],
+        transport=httpx.MockTransport(handler),
+    )
+    offers = client.search(replace(CRITERIA, paint_code=""), deadline=time.monotonic() + 20)
+    assert len(offers) == 1
+    assert len(attempts) == 3  # 1st attempt + redirect -> /verify, then 2nd proxy attempt

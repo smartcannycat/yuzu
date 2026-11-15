@@ -39,7 +39,11 @@ function partSourceLabel(part: DamagedPartItem): string {
   if (part.in_stock_vladivostok) {
     return part.subtitle_ru?.includes('в заводской цвет') ? 'Farpost, в цвет' : 'Farpost'
   }
-  return part.subtitle_ru?.includes('из кэша') ? 'кэш Farpost' : 'оценка по матрице'
+  if (part.subtitle_ru?.includes('из кэша')) return 'кэш Farpost'
+  if (part.subtitle_ru?.includes('не определён код кузова')) return 'нет кода кузова'
+  if (part.subtitle_ru?.includes('ограничил выдачу')) return 'лимит Farpost'
+  if (part.subtitle_ru?.includes('нет подходящих предложений')) return 'нет на Farpost'
+  return 'оценка по матрице'
 }
 </script>
 
