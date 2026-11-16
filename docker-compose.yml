@@ -52,6 +52,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
       target: dev
+      args:
+        INSTALL_TESSERACT: ${INSTALL_TESSERACT:-false}
     container_name: yuzu_api_dev
     restart: unless-stopped
     command: ["granian", "--interface", "asginl", "config.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-paths", "/app/apps", "--reload-paths", "/app/config"]
@@ -82,6 +84,7 @@ services:
       ML_SERVICE_URL: http://ml:8001
       ML_SERVICE_API_KEY: ${ML_SERVICE_API_KEY:-dev-ml-service-key}
       LOT_PARSER_BACKEND: ${LOT_PARSER_BACKEND:-apps.lots.integrations.ml.parser.MlServiceParser}
+      FARPOST_CAPTCHA_OCR_ENABLED: ${FARPOST_CAPTCHA_OCR_ENABLED:-false}
       RUN_MIGRATIONS: "true"
     depends_on:
       db:
@@ -102,6 +105,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
       target: dev
+      args:
+        INSTALL_TESSERACT: ${INSTALL_TESSERACT:-false}
     container_name: yuzu_worker_dev
     restart: unless-stopped
     command: ["celery", "-A", "config", "worker", "--loglevel=info", "--concurrency=4"]
@@ -127,6 +132,7 @@ services:
       ML_SERVICE_URL: http://ml:8001
       ML_SERVICE_API_KEY: ${ML_SERVICE_API_KEY:-dev-ml-service-key}
       LOT_PARSER_BACKEND: ${LOT_PARSER_BACKEND:-apps.lots.integrations.ml.parser.MlServiceParser}
+      FARPOST_CAPTCHA_OCR_ENABLED: ${FARPOST_CAPTCHA_OCR_ENABLED:-false}
       RUN_MIGRATIONS: "false"
     depends_on:
       db:

@@ -14,7 +14,6 @@ from django.utils.module_loading import import_string
 
 from apps.core.enums import (
     BatchStatus,
-    FuelType,
     ItemProcessingStatus,
     MascotMood,
     TaskStep,
@@ -301,10 +300,20 @@ def _advance_step(item: BatchItem, step: TaskStep) -> None:
 
 
 def _fail_item(item: BatchItem, step: TaskStep, message: str) -> None:
-    item.status = ItemProcessingStatus.FAILED
-    item.current_step = step
-    item.error_message = message
-    item.save(update_fields=["status", "current_step", "error_message", "updated_at"])
+    updated = (
+        BatchItem.objects.filter(pk=item.pk)
+        .exclude(status=ItemProcessingStatus.FAILED)
+        .update(
+            status=ItemProcessingStatus.FAILED,
+            current_step=step,
+            error_message=message,
+            updated_at=timezone.now(),
+        )
+    )
+    if updated:
+        item.status = ItemProcessingStatus.FAILED
+        item.current_step = step
+        item.error_message = message
 
 
 def _missing_summary_fields(lot: Lot) -> list[str]:
@@ -504,12 +513,6 @@ def _step_customs_calc(item: BatchItem) -> bool:
             "Недостаточно данных для расчёта таможни: " + ", ".join(missing),
         )
         return False
-    if lot.fuel_type == FuelType.EV and lot.power_hp is None:
-        warnings = list(lot.ocr_warnings or [])
-        if _EV_MISSING_POWER_WARNING not in warnings:
-            warnings.append(_EV_MISSING_POWER_WARNING)
-            lot.ocr_warnings = warnings
-            lot.save(update_fields=["ocr_warnings", "updated_at"])
     try:
         recompute_lot_economics(lot, bid_jpy=bid_jpy)
         lot.refresh_from_db()
@@ -560,13 +563,17 @@ def _run_step_in_worker(step_fn, item: BatchItem) -> bool:
 
 
 def _run_parallel_steps(item: BatchItem, step_fns: list) -> bool:
-    with ThreadPoolExecutor(max_workers=len(step_fns)) as pool:
+    pool = ThreadPoolExecutor(max_workers=len(step_fns))
+    succeeded = False
+    try:
         futures = {pool.submit(_run_step_in_worker, fn, item): fn for fn in step_fns}
         for future in as_completed(futures):
             if not future.result():
-                pool.shutdown(wait=False, cancel_futures=True)
                 return False
-    return True
+        succeeded = True
+        return True
+    finally:
+        pool.shutdown(wait=succeeded, cancel_futures=not succeeded)
 
 
 def _run_ocr_stage(item: BatchItem) -> bool:

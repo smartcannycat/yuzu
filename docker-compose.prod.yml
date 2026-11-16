@@ -80,6 +80,7 @@ services:
       ML_SERVICE_URL: http://ml:8001
       ML_SERVICE_API_KEY: ${ML_SERVICE_API_KEY:?ML_SERVICE_API_KEY must be set}
       LOT_PARSER_BACKEND: ${LOT_PARSER_BACKEND:-apps.lots.integrations.ml.parser.MlServiceParser}
+      FARPOST_CAPTCHA_OCR_ENABLED: ${FARPOST_CAPTCHA_OCR_ENABLED:-true}
       CBRF_FALLBACK_RATES: ${CBRF_FALLBACK_RATES:-{"eur_rub":95.0,"usd_rub":85.0,"jpy_rub":0.5825,"cbrf_date":"12.11.2026"}}
       RUN_MIGRATIONS: "true"
     depends_on:
@@ -129,6 +130,7 @@ services:
       ML_SERVICE_URL: http://ml:8001
       ML_SERVICE_API_KEY: ${ML_SERVICE_API_KEY:?ML_SERVICE_API_KEY must be set}
       LOT_PARSER_BACKEND: ${LOT_PARSER_BACKEND:-apps.lots.integrations.ml.parser.MlServiceParser}
+      FARPOST_CAPTCHA_OCR_ENABLED: ${FARPOST_CAPTCHA_OCR_ENABLED:-true}
       CBRF_FALLBACK_RATES: ${CBRF_FALLBACK_RATES:-{"eur_rub":95.0,"usd_rub":85.0,"jpy_rub":0.5825,"cbrf_date":"12.11.2026"}}
       RUN_MIGRATIONS: "false"
     depends_on:

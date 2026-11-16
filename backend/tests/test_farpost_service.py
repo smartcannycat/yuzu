@@ -405,3 +405,30 @@ def test_rate_limit_cooldown_stops_remaining_panel_requests(lot, monkeypatch):
     assert client.search.call_count == 1
     assert len(result.parts) == 2
     assert all(p.is_statistical_fallback for p in result.parts)
+
+
+@pytest.mark.django_db
+def test_upsert_external_cache_survives_integrity_error_race(monkeypatch):
+    from django.db import IntegrityError
+
+    from apps.lots.integrations.cache import upsert_external_cache
+
+    upsert_external_cache(
+        "farpost:race:key",
+        source=ExternalCacheSource.FARPOST,
+        payload={"offers": []},
+        ttl=timedelta(minutes=5),
+    )
+
+    def raise_unique(*_args, **_kwargs):
+        raise IntegrityError("duplicate key value violates unique constraint")
+
+    monkeypatch.setattr(ExternalCache.objects, "update_or_create", raise_unique)
+    upsert_external_cache(
+        "farpost:race:key",
+        source=ExternalCacheSource.FARPOST,
+        payload={"offers": [{"offer_id": "99", "price_rub": 5000}]},
+        ttl=timedelta(minutes=10),
+    )
+    entry = ExternalCache.objects.get(key="farpost:race:key")
+    assert entry.payload == {"offers": [{"offer_id": "99", "price_rub": 5000}]}

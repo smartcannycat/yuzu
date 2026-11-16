@@ -130,6 +130,98 @@ def _to_rates_input(rates_data: schemas.CurrencyRates) -> CurrencyRatesInput:
     )
 
 
+def _resolve_applied_bid_jpy(
+    lot: Lot,
+    ladder: WiseCostLadder | None,
+    bid_jpy: int | None,
+) -> int:
+    """Resolve the JPY auction bid in priority order: explicit -> lot -> ladder."""
+    applied_bid_jpy = bid_jpy
+    if applied_bid_jpy is None:
+        applied_bid_jpy = lot.auction_bid_jpy
+    if applied_bid_jpy is None and ladder is not None:
+        applied_bid_jpy = ladder.car_bid_jpy
+    if not applied_bid_jpy:
+        raise ValueError("Отсутствует ставка на аукционе")
+    return applied_bid_jpy
+
+
+def _resolve_freight_rub(
+    customs_model: CustomsCalculation | None,
+    rates: CurrencyRatesInput,
+    custom_freight_rub: int | None,
+) -> int:
+    if custom_freight_rub is not None:
+        return custom_freight_rub
+    if customs_model is not None:
+        return customs_model.freight_vladivostok_rub
+    return math.floor(DEFAULT_FREIGHT_USD * rates.usd_rub + 0.5)
+
+
+def _save_customs_calculation(
+    lot: Lot,
+    customs_model: CustomsCalculation | None,
+    *,
+    result: Any,
+    selected_commercial: bool,
+    rates_data: schemas.CurrencyRates,
+    rates_model: CurrencyRatesSnapshot | None,
+) -> CustomsCalculation:
+    if customs_model is None:
+        customs_model = CustomsCalculation(lot=lot)
+    customs_model.age_corridor = result.age_corridor
+    customs_model.duty_calculation_mode = result.duty_calculation_mode
+    customs_model.engine_cc = result.engine_cc
+    customs_model.duty_rate_eur_per_cc = result.duty_rate_eur_per_cc
+    customs_model.effective_duty_pct = result.effective_duty_pct
+    customs_model.customs_duty_eur = result.customs_duty_eur
+    customs_model.customs_duty_rub = result.customs_duty_rub
+    customs_model.excise_rub = result.excise_rub
+    customs_model.import_vat_rub = result.import_vat_rub
+    customs_model.is_under_160_hp = result.is_under_160_hp
+    customs_model.util_mode_selected_commercial = selected_commercial
+    customs_model.is_commercial_util = result.is_commercial_util
+    customs_model.utilization_fee_rub = result.utilization_fee_rub
+    customs_model.customs_clearance_fee_rub = result.customs_clearance_fee_rub
+    customs_model.freight_vladivostok_rub = result.freight_vladivostok_rub
+    customs_model.broker_svh_sbkts_rub = result.broker_svh_sbkts_rub
+    customs_model.meti_sanction_risk = result.meti_sanction_risk
+    customs_model.save()
+    if rates_model is None:
+        CurrencyRatesSnapshot.objects.create(customs=customs_model, **rates_data.model_dump())
+    return customs_model
+
+
+def _save_wise_ladder(
+    lot: Lot,
+    ladder: WiseCostLadder | None,
+    ladder_result: Any,
+) -> WiseCostLadder:
+    if ladder is None:
+        ladder = WiseCostLadder(lot=lot)
+    ladder.car_bid_jpy = ladder_result.car_bid_jpy
+    ladder.car_bid_rub = ladder_result.car_bid_rub
+    ladder.turnkey_cost_rub = ladder_result.turnkey_cost_rub
+    ladder.market_price_rf_rub = ladder_result.market_price_rf_rub
+    ladder.net_benefit_rub = ladder_result.net_benefit_rub
+    ladder.benefit_percentage = ladder_result.benefit_percentage
+    ladder.save()
+    WiseCostStep.objects.filter(ladder=ladder).delete()
+    WiseCostStep.objects.bulk_create(
+        WiseCostStep(
+            ladder=ladder,
+            step_number=step.step_number,
+            name_ru=step.name_ru,
+            amount_rub=step.amount_rub,
+            original_currency=step.original_currency,
+            original_amount=step.original_amount,
+            is_optional=step.is_optional,
+        )
+        for step in ladder_result.steps
+    )
+    return ladder
+
+
 def recompute_lot_economics(
     lot: Lot,
     *,
@@ -161,25 +253,10 @@ def recompute_lot_economics(
         rates = _to_rates_input(rates_data)
 
         ladder = WiseCostLadder.objects.filter(lot=lot).first()
-        # Base bid priority: explicit request -> the lot's base (sheet/history/
-        # derived) bid -> the previously stored ladder bid (legacy rows only).
-        applied_bid_jpy = bid_jpy
-        if applied_bid_jpy is None:
-            applied_bid_jpy = lot.auction_bid_jpy
-        if applied_bid_jpy is None and ladder is not None:
-            applied_bid_jpy = ladder.car_bid_jpy
-        if not applied_bid_jpy:
-            raise ValueError("Отсутствует ставка на аукционе")
+        applied_bid_jpy = _resolve_applied_bid_jpy(lot, ladder, bid_jpy)
         bid_rub = math.floor(applied_bid_jpy * rates.jpy_rub + 0.5)
         fob_rub = math.floor(DEFAULT_JAPAN_FOB_JPY * rates.jpy_rub + 0.5)
-        freight_rub = custom_freight_rub
-        if freight_rub is None:
-            freight_rub = (
-                customs_model.freight_vladivostok_rub
-                if customs_model is not None
-                else math.floor(DEFAULT_FREIGHT_USD * rates.usd_rub + 0.5)
-            )
-
+        freight_rub = _resolve_freight_rub(customs_model, rates, custom_freight_rub)
         selected_commercial = (
             is_commercial_util
             if is_commercial_util is not None
@@ -199,7 +276,6 @@ def recompute_lot_economics(
             raise ValueError("Отсутствует объём двигателя для расчёта пошлины")
         if not lot.first_reg_year:
             raise ValueError("Отсутствует год первой регистрации для расчёта пошлины")
-        customs_value_rub = bid_rub + fob_rub + freight_rub
 
         result = calculate_customs(
             CustomsInput(
@@ -209,7 +285,7 @@ def recompute_lot_economics(
                 first_reg_year=lot.first_reg_year,
                 first_reg_month=lot.first_reg_month,
                 is_commercial_util=selected_commercial,
-                customs_value_rub=customs_value_rub,
+                customs_value_rub=bid_rub + fob_rub + freight_rub,
                 freight_rub=freight_rub,
                 broker_rub=customs_model.broker_svh_sbkts_rub if customs_model else None,
                 mild_hybrid=lot.is_verified_mild_hybrid,
@@ -238,51 +314,15 @@ def recompute_lot_economics(
             )
         )
 
-        if customs_model is None:
-            customs_model = CustomsCalculation(lot=lot)
-        customs_model.age_corridor = result.age_corridor
-        customs_model.duty_calculation_mode = result.duty_calculation_mode
-        customs_model.engine_cc = result.engine_cc
-        customs_model.duty_rate_eur_per_cc = result.duty_rate_eur_per_cc
-        customs_model.effective_duty_pct = result.effective_duty_pct
-        customs_model.customs_duty_eur = result.customs_duty_eur
-        customs_model.customs_duty_rub = result.customs_duty_rub
-        customs_model.excise_rub = result.excise_rub
-        customs_model.import_vat_rub = result.import_vat_rub
-        customs_model.is_under_160_hp = result.is_under_160_hp
-        customs_model.util_mode_selected_commercial = selected_commercial
-        customs_model.is_commercial_util = result.is_commercial_util
-        customs_model.utilization_fee_rub = result.utilization_fee_rub
-        customs_model.customs_clearance_fee_rub = result.customs_clearance_fee_rub
-        customs_model.freight_vladivostok_rub = result.freight_vladivostok_rub
-        customs_model.broker_svh_sbkts_rub = result.broker_svh_sbkts_rub
-        customs_model.meti_sanction_risk = result.meti_sanction_risk
-        customs_model.save()
-        if rates_model is None:
-            CurrencyRatesSnapshot.objects.create(customs=customs_model, **rates_data.model_dump())
-
-        if ladder is None:
-            ladder = WiseCostLadder(lot=lot)
-        ladder.car_bid_jpy = ladder_result.car_bid_jpy
-        ladder.car_bid_rub = ladder_result.car_bid_rub
-        ladder.turnkey_cost_rub = ladder_result.turnkey_cost_rub
-        ladder.market_price_rf_rub = ladder_result.market_price_rf_rub
-        ladder.net_benefit_rub = ladder_result.net_benefit_rub
-        ladder.benefit_percentage = ladder_result.benefit_percentage
-        ladder.save()
-        WiseCostStep.objects.filter(ladder=ladder).delete()
-        WiseCostStep.objects.bulk_create(
-            WiseCostStep(
-                ladder=ladder,
-                step_number=step.step_number,
-                name_ru=step.name_ru,
-                amount_rub=step.amount_rub,
-                original_currency=step.original_currency,
-                original_amount=step.original_amount,
-                is_optional=step.is_optional,
-            )
-            for step in ladder_result.steps
+        _save_customs_calculation(
+            lot,
+            customs_model,
+            result=result,
+            selected_commercial=selected_commercial,
+            rates_data=rates_data,
+            rates_model=rates_model,
         )
+        _save_wise_ladder(lot, ladder, ladder_result)
 
         target_slider_max = compute_bid_slider_max_jpy(
             market_price_rf_rub=market_price_rub,
@@ -360,7 +400,7 @@ def _resolve_start_bid_jpy(lot: Lot) -> int | None:
         StartBidInput(
             market_price_rf_rub=lot.market_price_rf_rub,
             rates=rates,
-            on_date=timezone.localdate(),
+            on_date=_resolve_calculation_date(lot, None),
             customs_params=CustomsInput(
                 engine_cc=0 if lot.fuel_type == FuelType.EV else lot.engine_cc,
                 fuel_type=lot.fuel_type,

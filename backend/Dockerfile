@@ -32,6 +32,13 @@ RUN chmod +x /entrypoint.sh
 # ==========================================
 FROM base AS dev
 
+ARG INSTALL_TESSERACT=false
+RUN if [ "$INSTALL_TESSERACT" = "true" ]; then \
+    apt-get update && apt-get install -y --no-install-recommends \
+        tesseract-ocr \
+    && rm -rf /var/lib/apt/lists/*; \
+fi
+
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project
 
@@ -57,6 +64,11 @@ RUN uv sync --frozen --no-dev --no-install-project
 # Stage 4: Production target (minimal runtime)
 # ==========================================
 FROM base AS prod
+
+# Install tesseract-ocr for optional/default Farpost image CAPTCHA OCR in production
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=prod-builder --chown=appuser:appgroup /app/.venv /app/.venv
 

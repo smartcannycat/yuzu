@@ -293,11 +293,22 @@ export interface CrossAuditReport {
   history: PastAuctionRecord[]
 }
 
+export type PartSourceKind =
+  | 'farpost_color_match'
+  | 'farpost_plain'
+  | 'farpost_cache'
+  | 'missing_identity'
+  | 'rate_limited'
+  | 'fetch_error'
+  | 'not_found'
+  | 'matrix'
+
 export interface DamagedPartItem {
   panel_id: BodyPanel
   defect_code: string
   part_name_ru: string
   subtitle_ru: string | null
+  source_kind?: PartSourceKind | string
   price_from_rub: number
   in_stock_vladivostok: boolean
   is_statistical_fallback: boolean

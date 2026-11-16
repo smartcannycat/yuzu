@@ -1,0 +1,131 @@
+"""Brand and model alias tables used by Farpost part-listing filters."""
+
+from __future__ import annotations
+
+import re
+
+_MAKE_ALIASES: dict[str, tuple[str, ...]] = {
+    "toyota": ("toyota", "тойота"),
+    "honda": ("honda", "хонда"),
+    "nissan": ("nissan", "ниссан"),
+    "mazda": ("mazda", "мазда"),
+    "subaru": ("subaru", "субару"),
+    "suzuki": ("suzuki", "сузуки"),
+    "mitsubishi": ("mitsubishi", "митсубиси", "мицубиси"),
+    "daihatsu": ("daihatsu", "дайхатсу"),
+    "lexus": ("lexus", "лексус"),
+    "mercedes": ("mercedes", "mercedesbenz", "мерседес", "мерседесбенц"),
+    "mercedesbenz": ("mercedesbenz", "mercedes", "мерседес", "мерседесбенц"),
+    "bmw": ("bmw", "бмв"),
+    "audi": ("audi", "ауди"),
+    "volkswagen": ("volkswagen", "vw", "фольксваген"),
+    "mini": ("mini", "мини"),
+    "hyundai": ("hyundai", "хендай", "хундай", "хендэ"),
+    "kia": ("kia", "киа"),
+    "volvo": ("volvo", "вольво"),
+    "porsche": ("porsche", "порше"),
+    "landrover": ("landrover", "лендровер"),
+    "ford": ("ford", "форд"),
+    "chevrolet": ("chevrolet", "шевроле"),
+    "geely": ("geely", "джили"),
+    "chery": ("chery", "чери"),
+    "haval": ("haval", "хавал", "хавейл"),
+}
+
+_SISTER_MAKES: dict[str, frozenset[str]] = {
+    "toyota": frozenset({"toyota", "lexus", "daihatsu"}),
+    "lexus": frozenset({"lexus", "toyota"}),
+    "daihatsu": frozenset({"daihatsu", "toyota"}),
+    "nissan": frozenset({"nissan", "infiniti"}),
+    "infiniti": frozenset({"infiniti", "nissan"}),
+    "honda": frozenset({"honda", "acura"}),
+    "acura": frozenset({"acura", "honda"}),
+    "hyundai": frozenset({"hyundai", "kia", "genesis"}),
+    "kia": frozenset({"kia", "hyundai", "genesis"}),
+    "genesis": frozenset({"genesis", "hyundai", "kia"}),
+}
+
+_MODEL_ALIASES: dict[str, tuple[str, ...]] = {
+    "freed": ("freed", "фрид"),
+    "freedspike": ("freedspike", "freed", "фридспайк", "фрид"),
+    "fit": ("fit", "фит"),
+    "vezel": ("vezel", "везел"),
+    "corolla": ("corolla", "королла"),
+    "corollafielder": ("corollafielder", "fielder", "филдер", "короллафилдер"),
+    "corollatouring": ("corollatouring", "короллатуринг"),
+    "prius": ("prius", "приус"),
+    "priusalpha": ("priusalpha", "приусальфа"),
+    "aqua": ("aqua", "аква"),
+    "vitz": ("vitz", "витц"),
+    "yaris": ("yaris", "ярис"),
+    "yariscross": ("yariscross", "ярискросс"),
+    "tank": ("tank", "танк"),
+    "roomy": ("roomy", "руми"),
+    "raize": ("raize", "райз"),
+    "rocky": ("rocky", "рокки"),
+    "rush": ("rush", "раш"),
+    "probox": ("probox", "пробокс"),
+    "succeed": ("succeed", "саксид"),
+    "stepwgn": ("stepwgn", "степвагон", "степвагн"),
+    "note": ("note", "ноут", "нот"),
+    "roox": ("roox", "рукс"),
+    "serena": ("serena", "серена"),
+    "xtrail": ("xtrail", "икстрейл"),
+    "rav4": ("rav4", "рав4"),
+    "harrier": ("harrier", "харриер"),
+    "alphard": ("alphard", "альфард"),
+    "vellfire": ("vellfire", "веллфайр"),
+    "voxy": ("voxy", "вокси"),
+    "noah": ("noah", "ноах"),
+    "camry": ("camry", "камри"),
+    "crown": ("crown", "краун"),
+    "wish": ("wish", "виш"),
+    "estima": ("estima", "эстима"),
+    "chr": ("chr", "схр"),
+    "landcruiser": ("landcruiser", "лендкрузер", "крузер"),
+    "landcruiserprado": ("landcruiserprado", "prado", "прадо"),
+    "sienta": ("sienta", "сиента"),
+    "insight": ("insight", "инсайт"),
+    "shuttle": ("shuttle", "шатл"),
+    "odyssey": ("odyssey", "одиссей"),
+    "civic": ("civic", "цивик"),
+    "nbox": ("nbox", "нбокс"),
+    "nwgn": ("nwgn", "нвгн"),
+    "impreza": ("impreza", "импреза"),
+    "levorg": ("levorg", "леворг"),
+    "forester": ("forester", "форестер"),
+    "xv": ("xv", "хв"),
+    "legacy": ("legacy", "легаси"),
+    "outback": ("outback", "аутбек"),
+    "delica": ("delica", "делика"),
+    "delicad5": ("delicad5", "delica", "деликад5", "делика"),
+    "outlander": ("outlander", "аутлендер"),
+    "eclipsecross": ("eclipsecross", "эклипскросс"),
+    "demio": ("demio", "демио"),
+    "axela": ("axela", "аксела"),
+    "cx5": ("cx5", "сх5"),
+    "swift": ("swift", "свифт"),
+    "jimny": ("jimny", "джимни"),
+    "solio": ("solio", "солио"),
+    "hustler": ("hustler", "хастлер"),
+    "spacia": ("spacia", "спейсия"),
+    "wagonr": ("wagonr", "вагонр"),
+    "tanto": ("tanto", "танто"),
+}
+
+_COMPOUND_ALIAS_PATTERNS: dict[str, str] = {
+    "mercedesbenz": r"mercedes[\s-]*benz",
+    "мерседесбенц": r"мерседес[\s-]*бенц",
+    "landrover": r"land[\s-]*rover",
+    "лендровер": r"ленд[\s-]*ровер",
+}
+
+_MAKE_CONFLICT_PATTERNS: dict[str, re.Pattern[str]] = {
+    make_name: re.compile(
+        r"(?<![a-zа-я0-9])(?:"
+        + "|".join(_COMPOUND_ALIAS_PATTERNS.get(v, re.escape(v)) for v in variants)
+        + r")(?![a-zа-я0-9])",
+        re.I,
+    )
+    for make_name, variants in _MAKE_ALIASES.items()
+}

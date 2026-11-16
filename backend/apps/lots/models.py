@@ -19,6 +19,7 @@ from apps.core.enums import (
     ItemProcessingStatus,
     LotArchiveReason,
     OdometerStatus,
+    PartSourceKind,
     PowerHpSource,
     RiskLevel,
     SystemKey,
@@ -537,6 +538,12 @@ class DamagedPartItem(models.Model):
     defect_code = models.CharField(max_length=10)
     part_name_ru = models.CharField(max_length=200)
     subtitle_ru = models.CharField(max_length=200, blank=True, null=True)
+    source_kind = models.CharField(
+        max_length=32,
+        choices=PartSourceKind.choices,
+        blank=True,
+        default="",
+    )
     price_from_rub = models.BigIntegerField(default=0)
     in_stock_vladivostok = models.BooleanField(default=False)
     is_statistical_fallback = models.BooleanField(default=False)

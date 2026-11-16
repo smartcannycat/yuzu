@@ -1,16 +1,14 @@
-"""Database-independent unit tests for Farpost/Drom HTTP helpers and repair service logic."""
+"""Database-independent unit tests for Farpost/Drom service logic and settings wiring."""
 
 from __future__ import annotations
 
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock
 
 import httpx
 import pytest
-from curl_cffi.requests.errors import RequestsError as CurlRequestsError
-from redis.exceptions import RedisError
 
 from apps.core.enums import WorkType
 from apps.lots.integrations.drom import schema_sync
@@ -20,7 +18,7 @@ from apps.lots.integrations.drom.service import DromMarketService
 from apps.lots.integrations.farpost import service as farpost_service
 from apps.lots.integrations.farpost.client import (
     FarpostClient,
-    FarpostFetchError,
+    FarpostRateLimitedError,
     ParseResult,
     PartCriteria,
     PartOffer,
@@ -33,20 +31,7 @@ from apps.lots.integrations.farpost.service import (
     _work_label,
     estimate_repair,
 )
-from apps.lots.integrations.http_client import (
-    HttpBudgetExhaustedError,
-    HttpFetchResponse,
-    HttpTransportError,
-    ProxyPool,
-    ProxyRotator,
-    ResilientHttpSession,
-    clear_local_throttle_state,
-    normalize_proxy_urls,
-    proxy_fingerprint,
-    redact_proxy_url,
-    reset_shared_proxy_pools,
-    wait_for_request_slot,
-)
+from apps.lots.integrations.http_client import clear_local_throttle_state, reset_shared_proxy_pools
 from config.settings.config import AppSettings
 
 
@@ -57,16 +42,6 @@ def _reset_shared_scraper_state():
     yield
     reset_shared_proxy_pools()
     clear_local_throttle_state()
-
-
-def test_proxy_rotator_cycles_and_redacts_credentials():
-    rotator = ProxyRotator(["http://u1:s1@proxy1.local:8080", "http://proxy2.local:3128"])
-    assert len(rotator) == 2
-    assert rotator.next_proxy() == "http://u1:s1@proxy1.local:8080"
-    assert rotator.next_proxy() == "http://proxy2.local:3128"
-    assert rotator.next_proxy() == "http://u1:s1@proxy1.local:8080"
-    assert redact_proxy_url("http://u1:s1@proxy1.local:8080") == "http://proxy1.local:8080"
-    assert redact_proxy_url(None) is None
 
 
 def test_body_code_ignores_17_char_vin_and_uses_model_code():
@@ -86,6 +61,17 @@ def test_body_code_ignores_17_char_vin_and_uses_model_code():
 
     jdm = SimpleNamespace(frame_id="ZRE212-1002345", chassis_number="", model_code="3BA-ZRE212W")
     assert _body_code(jdm) == "ZRE212"
+
+
+def test_body_code_preserves_two_letter_jdm_suffixes():
+    assert (
+        _body_code(SimpleNamespace(frame_id="KE2FW-100234", chassis_number="", model_code=""))
+        == "KE2FW"
+    )
+    assert (
+        _body_code(SimpleNamespace(frame_id="", chassis_number="", model_code="LDA-BM5FS"))
+        == "BM5FS"
+    )
 
 
 def test_search_model_strips_noisy_trims_only():
@@ -133,6 +119,21 @@ def test_select_best_offer_optimizes_part_plus_paint_cost():
     assert matched_plain is False
 
 
+def test_select_best_offer_never_color_matches_windshield():
+    glass = PartOffer(
+        "1", "https://www.farpost.ru/1", "Стекло лобовое Honda Fit GE6 070", 9000, False
+    )
+    chosen, matched = _select_best_offer(
+        [glass],
+        paint_code="070",
+        paint_cost_rub=10000,
+        panel="windshield",
+        stale=False,
+    )
+    assert chosen == glass
+    assert matched is False
+
+
 def test_work_label_distinguishes_sto_norm_from_matrix_bodywork():
     assert _work_label(WorkType.MOUNT_DISMOUNT, "Передний бампер", "front_bumper").endswith(
         "(норматив СТО)"
@@ -163,7 +164,7 @@ def test_search_cached_skips_negative_cache_when_exact_feed_exists(monkeypatch):
 
     offers, stale, reason = farpost_service._search_cached_with_reason(
         client,
-        farpost_service.PartCriteria(
+        PartCriteria(
             "Subaru", "Impreza", "GP2", "front_left_fender", "крыло", "левое", "переднее", ""
         ),
         deadline=time.monotonic() + 10,
@@ -214,7 +215,45 @@ def test_estimate_repair_reports_specific_fallback_subtitles(monkeypatch):
     assert "ограничил выдачу" in (res_limited.parts[0].subtitle_ru or "")
 
 
-def test_drom_http_client_retries_across_configured_proxies():
+def test_mock_spec_farpost_client_and_frontend_subtitles(monkeypatch):
+    monkeypatch.setattr(farpost_service, "_local_cooldown_until", 0.0)
+    monkeypatch.setattr(farpost_service, "get_redis_client", lambda: None)
+    filter_mock = MagicMock()
+    filter_mock.first.return_value = None
+    monkeypatch.setattr(farpost_service.ExternalCache.objects, "filter", lambda **_kw: filter_mock)
+    upsert_mock = MagicMock()
+    monkeypatch.setattr(farpost_service, "upsert_external_cache", upsert_mock)
+
+    mock_client = MagicMock(spec=FarpostClient)
+    mock_client.search.return_value = [
+        PartOffer(
+            "1",
+            "https://www.farpost.ru/1",
+            "Дверь передняя левая Toyota Corolla NRE210",
+            8000,
+            False,
+        )
+    ]
+    offers, stale, reason = farpost_service._search_cached_with_reason(
+        mock_client,
+        PartCriteria(
+            "Toyota", "Corolla", "NRE210", "front_left_door", "дверь", "левая", "передняя", ""
+        ),
+        deadline=time.monotonic() + 10,
+    )
+    assert len(offers) == 1
+    assert not stale
+    assert reason == ""
+    mock_client.search.assert_called_once()
+    mock_client.search_with_metadata.assert_not_called()
+
+    assert "временно недоступен" in _FALLBACK_SUBTITLES["fetch_error"]
+    assert "ограничил выдачу" in _FALLBACK_SUBTITLES["rate_limited"]
+    assert "не определён код кузова" in _FALLBACK_SUBTITLES["missing_identity"]
+    assert "нет подходящих предложений" in _FALLBACK_SUBTITLES["not_found"]
+
+
+def test_drom_http_client_retries_and_single_proxy_blocked_raises_immediately():
     calls = 0
 
     def handler(_request: httpx.Request) -> httpx.Response:
@@ -233,6 +272,23 @@ def test_drom_http_client_retries_across_configured_proxies():
     assert client.get_html("https://auto.drom.ru/toyota/corolla/") == "<html>ok</html>"
     assert calls == 2
 
+    single_calls = 0
+
+    def single_handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal single_calls
+        single_calls += 1
+        return httpx.Response(429)
+
+    single_client = DromHttpClient(
+        max_retries=2,
+        retry_backoff_sec=0.0,
+        proxy_urls=["http://p1:8080"],
+        transport=httpx.MockTransport(single_handler),
+    )
+    with pytest.raises(DromBlockedError):
+        single_client.get_html("https://auto.drom.ru/toyota/corolla/")
+    assert single_calls == 1
+
 
 def test_schema_sync_imports_and_decodes_cp1251():
     def handler(_request: httpx.Request) -> httpx.Response:
@@ -247,233 +303,6 @@ def test_schema_sync_imports_and_decodes_cp1251():
     assert status == 200
     assert "Тойота" in html
     assert "User-Agent" in schema_sync._SCHEMA_SYNC_HEADERS
-
-
-def test_redact_proxy_url_and_transport_error_scrub_credentials(monkeypatch):
-    assert redact_proxy_url("http://user:s3cr3t@127.0.0.1:abc") == "<proxy>"
-    assert redact_proxy_url("http://user:p[ss@proxy.local:8080") == "<proxy>"
-
-    class FailingCurlSession:
-        def __init__(self, **_kwargs):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def get(self, _url, **_kwargs):
-            raise CurlRequestsError(
-                "Unsupported proxy syntax in 'http://myuser:topsecret@127.0.0.1:abc'"
-            )
-
-        def close(self):
-            return None
-
-    monkeypatch.setattr(
-        "apps.lots.integrations.http_client.curl_requests.Session", FailingCurlSession
-    )
-    session = ResilientHttpSession(
-        proxy_rotator=ProxyRotator(["http://myuser:topsecret@127.0.0.1:abc"])
-    )
-    with pytest.raises(HttpTransportError) as exc_info:
-        session.get("https://www.farpost.ru/")
-    assert "topsecret" not in str(exc_info.value)
-    assert exc_info.value.__cause__ is None
-
-
-def test_http_fetch_response_json_supports_bom_and_cp1251():
-    bom_resp = HttpFetchResponse(200, "https://drom.ru", {}, b'\xef\xbb\xbf{"ok": true}')
-    assert bom_resp.json() == {"ok": True}
-
-    cp1251_resp = HttpFetchResponse(
-        200,
-        "https://drom.ru",
-        {"content-type": "application/json; charset=windows-1251"},
-        '{"name": "Тойота"}'.encode("cp1251"),
-    )
-    assert cp1251_resp.json() == {"name": "Тойота"}
-
-
-def test_single_proxy_drom_blocked_raises_immediately():
-    calls = 0
-
-    def handler(_request: httpx.Request) -> httpx.Response:
-        nonlocal calls
-        calls += 1
-        return httpx.Response(429)
-
-    client = DromHttpClient(
-        max_retries=2,
-        retry_backoff_sec=0.0,
-        proxy_urls=["http://p1:8080"],
-        transport=httpx.MockTransport(handler),
-    )
-    with pytest.raises(DromBlockedError):
-        client.get_html("https://auto.drom.ru/toyota/corolla/")
-    assert calls == 1
-
-
-def test_body_code_preserves_two_letter_jdm_suffixes():
-    assert (
-        _body_code(SimpleNamespace(frame_id="KE2FW-100234", chassis_number="", model_code=""))
-        == "KE2FW"
-    )
-    assert (
-        _body_code(SimpleNamespace(frame_id="", chassis_number="", model_code="LDA-BM5FS"))
-        == "BM5FS"
-    )
-
-
-def test_select_best_offer_never_color_matches_windshield():
-    glass = PartOffer(
-        "1", "https://www.farpost.ru/1", "Стекло лобовое Honda Fit GE6 070", 9000, False
-    )
-    chosen, matched = _select_best_offer(
-        [glass],
-        paint_code="070",
-        paint_cost_rub=10000,
-        panel="windshield",
-        stale=False,
-    )
-    assert chosen == glass
-    assert matched is False
-
-
-def test_mock_spec_farpost_client_and_frontend_subtitles(monkeypatch):
-    monkeypatch.setattr(farpost_service, "_local_cooldown_until", 0.0)
-    monkeypatch.setattr(farpost_service, "get_redis_client", lambda: None)
-    filter_mock = MagicMock()
-    filter_mock.first.return_value = None
-    monkeypatch.setattr(farpost_service.ExternalCache.objects, "filter", lambda **_kw: filter_mock)
-    update_mock = MagicMock()
-    monkeypatch.setattr(farpost_service.ExternalCache.objects, "update_or_create", update_mock)
-
-    mock_client = MagicMock(spec=FarpostClient)
-    mock_client.search.return_value = [
-        PartOffer(
-            "1",
-            "https://www.farpost.ru/1",
-            "Дверь передняя левая Toyota Corolla NRE210",
-            8000,
-            False,
-        )
-    ]
-    offers, stale, reason = farpost_service._search_cached_with_reason(
-        mock_client,
-        farpost_service.PartCriteria(
-            "Toyota", "Corolla", "NRE210", "front_left_door", "дверь", "левая", "передняя", ""
-        ),
-        deadline=time.monotonic() + 10,
-    )
-    assert len(offers) == 1
-    assert not stale
-    assert reason == ""
-    mock_client.search.assert_called_once()
-    mock_client.search_with_metadata.assert_not_called()
-
-    vue_path = (
-        Path(__file__).resolve().parents[2]
-        / "frontend/src/components/lots/detail/print/LotPrintPageTechEconomics.vue"
-    )
-    vue_text = vue_path.read_text(encoding="utf-8")
-    assert "временно недоступен" in vue_text
-    assert "временно недоступен" in _FALLBACK_SUBTITLES["fetch_error"]
-    assert "ограничил выдачу" in vue_text
-    assert "ограничил выдачу" in _FALLBACK_SUBTITLES["rate_limited"]
-    assert "не определён код кузова" in vue_text
-    assert "не определён код кузова" in _FALLBACK_SUBTITLES["missing_identity"]
-    assert "нет подходящих предложений" in vue_text
-    assert "нет подходящих предложений" in vue_text
-    assert "нет подходящих предложений" in _FALLBACK_SUBTITLES["not_found"]
-
-
-def test_proxy_pool_isolates_quarantine_by_domain_and_falls_back_gracefully():
-    assert normalize_proxy_urls(
-        ["http://p1:8080", ""],
-        ["http://p1:8080", " http://p2:8080 "],
-    ) == ("http://p1:8080", "http://p2:8080")
-
-    pool = ProxyPool(
-        ["http://u:secret@p1:8080", "http://u:secret@p2:8080"],
-        ban_cooldown_sec=60.0,
-        use_redis=False,
-    )
-    first = pool.next_proxy(domain="www.farpost.ru")
-    assert first == "http://u:secret@p1:8080"
-    pool.mark_blocked(first, domain="www.farpost.ru", cooldown_sec=60.0)
-
-    # Quarantined for farpost.ru, so subsequent farpost calls skip p1...
-    assert pool.next_proxy(domain="www.farpost.ru") == "http://u:secret@p2:8080"
-    assert pool.next_proxy(domain="www.farpost.ru") == "http://u:secret@p2:8080"
-    # ...while drom.ru still treats p1 as healthy.
-    assert pool.is_quarantined("http://u:secret@p1:8080", domain="www.farpost.ru") is True
-    assert pool.is_quarantined("http://u:secret@p1:8080", domain="drom.ru") is False
-    assert pool.next_proxy(domain="drom.ru") == "http://u:secret@p1:8080"
-
-    # When every proxy is quarantined, next_proxy falls back to the earliest-expiring one.
-    pool.mark_blocked("http://u:secret@p2:8080", domain="www.farpost.ru", cooldown_sec=120.0)
-    assert pool.next_proxy(domain="www.farpost.ru") == "http://u:secret@p1:8080"
-
-    pool.clear_cooldown("http://u:secret@p1:8080", domain="www.farpost.ru")
-    assert pool.is_quarantined("http://u:secret@p1:8080", domain="www.farpost.ru") is False
-
-
-def test_proxy_pool_redis_quarantine_uses_hashed_keys_without_credentials(monkeypatch):
-    stored: dict[str, str] = {}
-
-    class FakeRedis:
-        def mget(self, keys):
-            return [stored.get(k) for k in keys]
-
-        def set(self, key, value, ex=None):
-            stored[key] = str(value)
-
-        def delete(self, key):
-            stored.pop(key, None)
-
-    monkeypatch.setattr("apps.lots.integrations.proxy.get_redis_client", lambda: FakeRedis())
-
-    pool_worker_a = ProxyPool(["http://user:topsecret@p1:8080", "http://user:topsecret@p2:8080"])
-    pool_worker_b = ProxyPool(["http://user:topsecret@p1:8080", "http://user:topsecret@p2:8080"])
-    pool_worker_a.mark_blocked(
-        "http://user:topsecret@p1:8080", domain="www.farpost.ru", cooldown_sec=30.0
-    )
-
-    assert stored
-    assert all("topsecret" not in key for key in stored)
-    assert all(val.startswith("exp:") for val in stored.values())
-    assert pool_worker_b.next_proxy(domain="www.farpost.ru") == "http://user:topsecret@p2:8080"
-
-    # Both quarantined in Redis with different TTLs -> pick earliest-expiring one.
-    pool_worker_a.mark_blocked(
-        "http://user:topsecret@p2:8080", domain="www.farpost.ru", cooldown_sec=120.0
-    )
-    assert pool_worker_b.next_proxy(domain="www.farpost.ru") == "http://user:topsecret@p1:8080"
-
-    # Subdomain normalization groups auto.drom.ru and drom.ru together.
-    pool_worker_a.mark_blocked(
-        "http://user:topsecret@p1:8080", domain="auto.drom.ru", cooldown_sec=30.0
-    )
-    assert pool_worker_b.is_quarantined(
-        "http://user:topsecret@p1:8080", domain="vladivostok.drom.ru"
-    )
-
-    # Redis errors degrade cleanly to in-process state without crashing.
-    class BrokenRedis:
-        def mget(self, keys):
-            raise RedisError("redis down")
-
-        def set(self, key, value, ex=None):
-            raise RedisError("redis down")
-
-        def delete(self, key):
-            raise RedisError("redis down")
-
-    monkeypatch.setattr("apps.lots.integrations.proxy.get_redis_client", lambda: BrokenRedis())
-    pool_worker_b.mark_blocked("http://user:topsecret@p2:8080", domain="drom.ru", cooldown_sec=30.0)
-    assert pool_worker_b.is_quarantined("http://user:topsecret@p2:8080", domain="drom.ru")
 
 
 def test_app_settings_shared_scraper_configuration():
@@ -558,42 +387,6 @@ def test_farpost_and_drom_rotate_and_quarantine_proxies_on_blocks_and_transport_
     assert drom_client.get_html("https://auto.drom.ru/toyota/corolla/") == "<html>ok</html>"
     assert drom_client._proxy_rotator is not None
     assert drom_client._proxy_rotator.is_quarantined("http://p1:8080", domain="drom.ru")
-
-
-def test_wait_for_request_slot_raises_on_budget_exhausted(monkeypatch):
-    monkeypatch.setattr(
-        "apps.lots.integrations.http_client.acquire_distributed_interval_slot",
-        lambda *_a, **_kw: -1.0,
-    )
-    with pytest.raises(HttpBudgetExhaustedError):
-        wait_for_request_slot("yuzu:test:throttle", 1.0, deadline=time.monotonic() + 0.5)
-
-    client = FarpostClient(
-        request_interval_sec=1.0,
-        transport=None,
-    )
-    with pytest.raises(FarpostFetchError, match="budget"):
-        client._fetch_and_parse_page(
-            PartCriteria("Toyota", "Corolla", "NRE210", "front_left_door", "дверь"),
-            deadline=time.monotonic() + 0.5,
-        )
-
-
-def test_wait_for_request_slot_local_fallback_does_not_leak_slot_and_scopes_per_proxy(monkeypatch):
-    monkeypatch.setattr(
-        "apps.lots.integrations.http_client.acquire_distributed_interval_slot",
-        lambda *_a, **_kw: None,
-    )
-    key = "yuzu:test:no-leak"
-    # First call reserves immediate slot; next call would wait ~2s.
-    wait_for_request_slot(key, 2.0, deadline=time.monotonic() + 5.0)
-    with pytest.raises(HttpBudgetExhaustedError):
-        wait_for_request_slot(key, 2.0, deadline=time.monotonic() + 0.2)
-
-    # Rejected call must not push _local_next_request_at forward (slot stays at +2s, not +4s).
-    monkeypatch.setattr("apps.lots.integrations.http_client.time.sleep", lambda _sec: None)
-    # Only one 2s wait remains before budget 3.0s expires; if leaked twice, this would raise.
-    wait_for_request_slot(key, 2.0, deadline=time.monotonic() + 3.0)
 
 
 def test_shared_proxy_pool_and_http_200_captcha_5xx_rotation(monkeypatch):
@@ -683,19 +476,28 @@ def test_shared_proxy_pool_and_http_200_captcha_5xx_rotation(monkeypatch):
     assert drom_client._proxy_rotator.is_quarantined("http://p1:8080", domain="drom.ru")
 
 
-def test_oversized_response_does_not_quarantine_healthy_proxy(monkeypatch):
+def test_farpost_client_marks_blocked_proxy_once_per_429_failure(monkeypatch):
     monkeypatch.setattr("apps.lots.integrations.proxy.get_redis_client", lambda: None)
-    pool = ProxyPool(
-        ["http://p1:8080"], domain="farpost.ru", ban_cooldown_sec=60.0, use_redis=False
+    client = FarpostClient(
+        proxy_urls=["http://p1:8080"],
+        proxy_ban_sec=60.0,
+        transport=httpx.MockTransport(lambda _r: httpx.Response(429)),
     )
-    session = ResilientHttpSession(
-        proxy_rotator=pool,
-        transport=httpx.MockTransport(lambda _r: httpx.Response(200, content=b"x" * 100)),
+    mark_calls = 0
+    original = client._proxy_rotator.mark_blocked
+
+    def counting_mark_blocked(*args, **kwargs):
+        nonlocal mark_calls
+        mark_calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(client._proxy_rotator, "mark_blocked", counting_mark_blocked)
+    criteria = PartCriteria(
+        "Toyota", "Corolla", "NRE210", "front_left_door", "дверь", "левая", "передняя", ""
     )
-    with session, pytest.raises(HttpTransportError) as exc_info:
-        session.get("https://www.farpost.ru/", max_bytes=10)
-    assert exc_info.value.proxy_key == ""
-    assert not pool.is_quarantined("http://p1:8080", domain="farpost.ru")
+    with pytest.raises(FarpostRateLimitedError):
+        client.search(criteria, deadline=time.monotonic() + 20)
+    assert mark_calls == 1
 
 
 def test_services_read_shared_scraper_settings(monkeypatch):
@@ -719,28 +521,6 @@ def test_services_read_shared_scraper_settings(monkeypatch):
     assert drom_svc._client._proxy_ban_sec == 95.0
     assert drom_svc._client._proxy_rotator is not None
     assert drom_svc._client._proxy_rotator.next_proxy() == "http://shared-proxy:8080"
-
-    seen_proxy_keys: list[str] = []
-
-    def _capture_slot(key: str, *_a, **_kw):
-        seen_proxy_keys.append(key)
-        return None
-
-    monkeypatch.setattr(
-        "apps.lots.integrations.http_client.acquire_distributed_interval_slot", _capture_slot
-    )
-    pool = ProxyPool(["http://p1:8080", "http://p2:8080"], domain="farpost.ru", use_redis=False)
-    session = ResilientHttpSession(proxy_rotator=pool)
-    mock_ok = MagicMock(status_code=200, url="https://www.farpost.ru/", headers={}, content=b"ok")
-    monkeypatch.setattr(session, "_get_curl", lambda *_a, **_kw: mock_ok)
-    with session:
-        session.get("https://www.farpost.ru/", throttle_key="yuzu:test", interval_sec=1.0)
-        session.get("https://www.farpost.ru/", throttle_key="yuzu:test", interval_sec=1.0)
-
-    assert seen_proxy_keys == [
-        f"yuzu:test:{proxy_fingerprint('http://p1:8080')}",
-        f"yuzu:test:{proxy_fingerprint('http://p2:8080')}",
-    ]
 
     captured_fp_kwargs: dict[str, object] = {}
 
@@ -771,4 +551,100 @@ def test_services_read_shared_scraper_settings(monkeypatch):
         "request_jitter_sec": 0.3,
         "proxy_ban_sec": 95,
         "proxy_urls": ["http://shared-proxy:8080"],
+        "captcha_solver": ANY,
     }
+
+
+def test_estimate_repair_forwards_captcha_and_ocr_settings(monkeypatch):
+    from apps.lots.integrations.captcha import FarpostCaptchaSolver, TesseractImageCaptchaSolver
+
+    fake_settings = AppSettings(
+        _env_file=None,
+        FARPOST_CAPTCHA_MAX_ATTEMPTS=4,
+        FARPOST_CAPTCHA_SOLVE_BUDGET_SEC=12.5,
+        FARPOST_CAPTCHA_MAX_WORKERS=3,
+        FARPOST_CAPTCHA_OCR_ENABLED=True,
+        FARPOST_CAPTCHA_OCR_COMMAND="/opt/bin/tesseract",
+        SCRAPER_TIMEOUT_SEC=11.0,
+    )
+    monkeypatch.setattr(
+        "apps.lots.integrations.farpost.service.get_settings", lambda: fake_settings
+    )
+    captured_kwargs: dict[str, object] = {}
+
+    class CapturingFarpostClient:
+        def __init__(self, **kwargs):
+            captured_kwargs.update(kwargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return None
+
+    monkeypatch.setattr(
+        "apps.lots.integrations.farpost.service.FarpostClient", CapturingFarpostClient
+    )
+    dummy_lot = SimpleNamespace(
+        make="Toyota",
+        model="Corolla",
+        model_code="NRE210",
+        frame_id="",
+        chassis_number="",
+        paint_code="",
+        defects=SimpleNamespace(all=lambda: []),
+    )
+    estimate_repair(dummy_lot)
+
+    solver = captured_kwargs["captcha_solver"]
+    assert isinstance(solver, FarpostCaptchaSolver)
+    assert solver.max_attempts == 4
+    assert solver.solve_budget_sec == 12.5
+    assert solver.max_workers == 3
+    assert solver.request_timeout_sec == 11.0
+    assert isinstance(solver.image_solver, TesseractImageCaptchaSolver)
+    assert solver.image_solver.command == "/opt/bin/tesseract"
+
+
+def test_farpost_image_captcha_failure_does_not_activate_global_cooldown(monkeypatch):
+    farpost_service.reset_farpost_cooldown()
+    monkeypatch.setattr(farpost_service, "get_redis_client", lambda: None)
+    filter_mock = MagicMock()
+    filter_mock.first.return_value = None
+    monkeypatch.setattr(farpost_service.ExternalCache.objects, "filter", lambda **_kw: filter_mock)
+
+    def image_challenge_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/vladivostok/zapchasti/":
+            return httpx.Response(302, headers={"Location": "https://www.farpost.ru/verify?u=test"})
+        return httpx.Response(
+            200,
+            text=(
+                '<html><div class="cap4"><img src="?i=tok">'
+                '<form action="/verify"><input name="s" value="tok"></form></div></html>'
+            ),
+        )
+
+    client = FarpostClient(transport=httpx.MockTransport(image_challenge_handler))
+    offers, stale, reason = farpost_service._search_cached_with_reason(
+        client,
+        PartCriteria(
+            "Toyota", "Corolla", "NRE210", "front_left_door", "дверь", "левая", "передняя", ""
+        ),
+        deadline=time.monotonic() + 20,
+    )
+    assert offers == []
+    assert stale is True
+    assert reason == "fetch_error"
+    assert farpost_service._is_rate_limit_cooldown_active() is False
+
+
+def test_part_source_kind_matches_frontend_labels():
+    from apps.core.enums import PartSourceKind
+
+    vue_path = (
+        Path(__file__).resolve().parents[2]
+        / "frontend/src/components/lots/detail/print/LotPrintPageTechEconomics.vue"
+    )
+    vue_text = vue_path.read_text(encoding="utf-8")
+    for kind in PartSourceKind:
+        assert kind.value in vue_text

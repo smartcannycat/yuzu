@@ -35,15 +35,22 @@ const ladderSteps = computed(() => {
   })
 })
 
+const PART_SOURCE_LABELS: Record<string, string> = {
+  farpost_color_match: 'Farpost, в цвет',
+  farpost_plain: 'Farpost',
+  farpost_cache: 'кэш Farpost',
+  missing_identity: 'нет кода кузова',
+  rate_limited: 'лимит Farpost',
+  fetch_error: 'ошибка Farpost',
+  not_found: 'нет на Farpost',
+  matrix: 'оценка по матрице',
+}
+
 function partSourceLabel(part: DamagedPartItem): string {
-  if (part.in_stock_vladivostok) {
-    return part.subtitle_ru?.includes('в заводской цвет') ? 'Farpost, в цвет' : 'Farpost'
+  if (part.source_kind && PART_SOURCE_LABELS[part.source_kind]) {
+    return PART_SOURCE_LABELS[part.source_kind]
   }
-  if (part.subtitle_ru?.includes('из кэша')) return 'кэш Farpost'
-  if (part.subtitle_ru?.includes('не определён код кузова')) return 'нет кода кузова'
-  if (part.subtitle_ru?.includes('ограничил выдачу')) return 'лимит Farpost'
-  if (part.subtitle_ru?.includes('временно недоступен')) return 'ошибка Farpost'
-  if (part.subtitle_ru?.includes('нет подходящих предложений')) return 'нет на Farpost'
+  if (part.in_stock_vladivostok) return 'Farpost'
   return 'оценка по матрице'
 }
 </script>

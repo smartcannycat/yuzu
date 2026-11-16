@@ -9,8 +9,10 @@ from apps.lots.integrations.drom.katashiki import (
     normalize_katashiki_candidates,
 )
 from apps.lots.integrations.drom.schemas import DromCatalogSpec
+from apps.lots.integrations.url_guard import UnsafeExternalUrlError, validate_external_url
 
 _DROM_CATALOG_BASE = "https://www.drom.ru"
+_DROM_ALLOWED_HOSTS = frozenset({"drom.ru"})
 _HP_RE = re.compile(r"(\d{2,3})\s*л\.с\.", re.IGNORECASE)
 _ENGINE_CC_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*л(?![.\w]|с\b)", re.IGNORECASE)
 _YEARS_RE = re.compile(r"(\d{2})\.(\d{4})\s*[-–—]\s*(?:(\d{2})\.(\d{4})|(н\.в\.))")
@@ -57,7 +59,14 @@ def parse_catalog_generations(html: str, *, model_code: str | None = None) -> li
         href = str(link["href"])
         if "/g_" not in href:
             continue
-        full_url = urljoin(_DROM_CATALOG_BASE, href)
+        try:
+            full_url = validate_external_url(
+                urljoin(_DROM_CATALOG_BASE, href),
+                allowed_hosts=_DROM_ALLOWED_HOSTS,
+                check_dns=False,
+            )
+        except UnsafeExternalUrlError:
+            continue
         if full_url in seen:
             continue
         seen.add(full_url)

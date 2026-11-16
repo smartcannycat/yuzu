@@ -42,6 +42,13 @@ from apps.lots.pipeline import _step_cross_audit
 from config.settings.config import AppSettings
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "aleado"
+_FROZEN_NOW = datetime(2026, 11, 13, 12, 0, tzinfo=UTC)
+
+
+@pytest.fixture(autouse=True)
+def _freeze_aleado_now(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep fixture trading dates (2026-11-14..18) deterministically in the future."""
+    monkeypatch.setattr("apps.lots.integrations.aleado.service.timezone.now", lambda: _FROZEN_NOW)
 
 
 def _fixture(name: str) -> str:
@@ -537,7 +544,7 @@ def test_audit_lot_verifies_matching_chassis(freed_lot: Lot) -> None:
 @pytest.mark.django_db
 def test_audit_lot_verified_past_history_triggers_rules(freed_lot: Lot) -> None:
     """Verified past rows feed history and anomaly rules."""
-    past_date = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
+    past_date = (_FROZEN_NOW - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
 
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
@@ -634,7 +641,7 @@ def test_audit_lot_candidate_chassis_mismatch_is_not_history(freed_lot: Lot) -> 
 @pytest.mark.django_db
 def test_audit_lot_grade_regression_on_verified_past_is_critical(freed_lot: Lot) -> None:
     """Chassis-verified past R-grade row triggers the CRITICAL rule."""
-    past_date = (datetime.now() - timedelta(days=10)).strftime("%Y-%m-%d %H:%M:%S")
+    past_date = (_FROZEN_NOW - timedelta(days=10)).strftime("%Y-%m-%d %H:%M:%S")
 
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)

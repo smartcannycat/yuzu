@@ -68,6 +68,11 @@ class AppSettings(BaseSettings):
     FARPOST_BUDGET_SEC: float = Field(default=30.0, gt=0, allow_inf_nan=False)
     FARPOST_COOLDOWN_SEC: int = Field(default=45, ge=0)
     FARPOST_CACHE_TTL_HOURS: int = Field(default=24, ge=1)
+    FARPOST_CAPTCHA_MAX_ATTEMPTS: int = Field(default=2, ge=1, le=5)
+    FARPOST_CAPTCHA_SOLVE_BUDGET_SEC: float = Field(default=20.0, gt=0, allow_inf_nan=False)
+    FARPOST_CAPTCHA_MAX_WORKERS: int = Field(default=8, ge=1, le=32)
+    FARPOST_CAPTCHA_OCR_ENABLED: bool = False
+    FARPOST_CAPTCHA_OCR_COMMAND: str = "tesseract"
 
     # CBRF currency gateway (BE-05)
     CBRF_TIMEOUT_SEC: float = Field(default=5.0, gt=0, allow_inf_nan=False)

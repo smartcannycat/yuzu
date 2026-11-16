@@ -8,7 +8,7 @@ import threading
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from curl_cffi import requests as curl_requests
@@ -25,6 +25,7 @@ from apps.lots.integrations.proxy import (
     reset_shared_proxy_pools,
     scrub_proxy_credentials,
 )
+from apps.lots.integrations.url_guard import UnsafeExternalUrlError, validate_external_url
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -49,6 +50,8 @@ __all__ = [
 
 _local_throttle_lock = threading.Lock()
 _local_next_request_at: dict[str, float] = {}
+_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+_MAX_REDIRECTS = 5
 
 
 class HttpTransportError(RuntimeError):
@@ -61,6 +64,14 @@ class HttpTransportError(RuntimeError):
 
 class HttpBudgetExhaustedError(HttpTransportError):
     """Raised when waiting for the next rate-limit slot would exceed deadline."""
+
+
+@dataclass(frozen=True)
+class _RawHttpResponse:
+    status_code: int
+    url: str
+    headers: Mapping[str, str]
+    content: bytes
 
 
 @dataclass(frozen=True)
@@ -138,6 +149,20 @@ def decode_html_bytes(content: bytes, headers: Mapping[str, str] | None = None) 
     return content.decode("utf-8", errors="replace")
 
 
+def _check_content_length(headers: Mapping[str, str], max_bytes: int | None) -> None:
+    if max_bytes is None:
+        return
+    for key, value in headers.items():
+        if key.lower() == "content-length" and str(value).isdigit() and int(value) > max_bytes:
+            raise HttpTransportError(f"Response size {value} exceeds limit {max_bytes}")
+
+
+def _strip_body_headers(headers: dict[str, str] | None) -> dict[str, str] | None:
+    if not headers:
+        return headers
+    return {k: v for k, v in headers.items() if k.lower() not in {"content-type", "content-length"}}
+
+
 class ResilientHttpSession:
     """HTTP session that uses curl_cffi browser impersonation in production or httpx in tests."""
 
@@ -148,15 +173,19 @@ class ResilientHttpSession:
         timeout_sec: float = 10.0,
         impersonate: str = "chrome",
         domain: str | None = None,
+        allowed_hosts: frozenset[str] | None = None,
         proxy_rotator: ProxyPool | None = None,
         transport: httpx.BaseTransport | None = None,
+        enable_throttle: bool | None = None,
     ) -> None:
         self._headers = dict(headers or {})
         self._timeout_sec = timeout_sec
         self._impersonate = impersonate
         self._domain = domain
+        self._allowed_hosts = allowed_hosts
         self._proxy_rotator = proxy_rotator
         self._transport = transport
+        self._enable_throttle = (transport is None) if enable_throttle is None else enable_throttle
         self._httpx_clients: dict[str, httpx.Client] = {}
         self._curl_sessions: dict[str, curl_requests.Session] = {}
         self._proxy_domains: dict[str, str] = {}
@@ -216,6 +245,37 @@ class ResilientHttpSession:
                 cooldown_sec=cooldown_sec,
             )
 
+    def _select_proxy(
+        self,
+        *,
+        proxy: str | None,
+        proxy_key: str | None,
+        domain: str | None,
+    ) -> tuple[str | None, str]:
+        if proxy is not None:
+            return proxy, proxy_fingerprint(proxy)
+        if proxy_key and self._proxy_rotator is not None:
+            pinned = self._proxy_rotator.proxy_for_key(proxy_key)
+            if pinned is not None:
+                return pinned, proxy_key
+        if self._proxy_rotator is not None:
+            selected = self._proxy_rotator.next_proxy(domain=domain)
+            return selected, proxy_fingerprint(selected)
+        return None, ""
+
+    def _validate_target_url(
+        self, url: str, *, selected_proxy: str | None, check_dns: bool = False
+    ) -> str:
+        try:
+            return validate_external_url(
+                url,
+                allowed_hosts=self._allowed_hosts,
+                check_dns=check_dns,
+                allow_dns_failure=bool(selected_proxy),
+            )
+        except UnsafeExternalUrlError as exc:
+            raise HttpTransportError(f"Blocked unsafe URL {url}: {exc}") from exc
+
     def get(
         self,
         url: str,
@@ -224,6 +284,7 @@ class ResilientHttpSession:
         headers: dict[str, str] | None = None,
         timeout: float | None = None,
         proxy: str | None = None,
+        proxy_key: str | None = None,
         domain: str | None = None,
         max_bytes: int | None = None,
         throttle_key: str = "",
@@ -231,78 +292,243 @@ class ResilientHttpSession:
         jitter_sec: float = 0.0,
         deadline: float | None = None,
     ) -> HttpFetchResponse:
-        effective_timeout = timeout if timeout is not None else self._timeout_sec
-        effective_domain = self._effective_domain(url, domain)
-        selected_proxy = proxy
-        if selected_proxy is None and self._proxy_rotator:
-            selected_proxy = self._proxy_rotator.next_proxy(domain=effective_domain)
-        proxy_key = proxy_fingerprint(selected_proxy)
-        self._last_proxy_key = proxy_key
-        if proxy_key and effective_domain:
-            self._proxy_domains[proxy_key] = effective_domain
-        if self._transport is None and throttle_key and (interval_sec > 0 or jitter_sec > 0):
-            scoped_key = f"{throttle_key}:{proxy_key or 'direct'}"
-            wait_for_request_slot(scoped_key, interval_sec, jitter_sec, deadline=deadline)
-
-        if self._transport is not None:
-            response = self._get_httpx(
-                url,
-                params=params,
-                headers=headers,
-                timeout=effective_timeout,
-                proxy=selected_proxy,
-                proxy_key=proxy_key,
-            )
-        else:
-            response = self._get_curl(
-                url,
-                params=params,
-                headers=headers,
-                timeout=effective_timeout,
-                proxy=selected_proxy,
-                proxy_key=proxy_key,
-            )
-
-        if max_bytes is not None and len(response.content) > max_bytes:
-            raise HttpTransportError(
-                f"Response size {len(response.content)} exceeds limit {max_bytes}",
-            )
-        return HttpFetchResponse(
-            status_code=response.status_code,
-            url=str(response.url),
-            headers={k.lower(): v for k, v in response.headers.items()},
-            content=response.content,
-            used_proxy=redact_proxy_url(selected_proxy),
+        return self._request(
+            "GET",
+            url,
+            params=params,
+            headers=headers,
+            timeout=timeout,
+            proxy=proxy,
             proxy_key=proxy_key,
+            domain=domain,
+            max_bytes=max_bytes,
+            throttle_key=throttle_key,
+            interval_sec=interval_sec,
+            jitter_sec=jitter_sec,
+            deadline=deadline,
         )
 
-    def _get_httpx(
+    def post(
         self,
         url: str,
         *,
+        data: dict[str, Any] | bytes | None = None,
+        headers: dict[str, str] | None = None,
+        timeout: float | None = None,
+        proxy: str | None = None,
+        proxy_key: str | None = None,
+        domain: str | None = None,
+        max_bytes: int | None = None,
+        deadline: float | None = None,
+    ) -> HttpFetchResponse:
+        """POST form data while preserving the current proxy's cookie jar."""
+        return self._request(
+            "POST",
+            url,
+            data=data,
+            headers=headers,
+            timeout=timeout,
+            proxy=proxy,
+            proxy_key=proxy_key,
+            domain=domain,
+            max_bytes=max_bytes,
+            deadline=deadline,
+        )
+
+    def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: dict[str, Any] | None = None,
+        data: dict[str, Any] | bytes | None = None,
+        headers: dict[str, str] | None = None,
+        timeout: float | None = None,
+        proxy: str | None = None,
+        proxy_key: str | None = None,
+        domain: str | None = None,
+        max_bytes: int | None = None,
+        throttle_key: str = "",
+        interval_sec: float = 0.0,
+        jitter_sec: float = 0.0,
+        deadline: float | None = None,
+    ) -> HttpFetchResponse:
+        if deadline is not None and time.monotonic() >= deadline:
+            raise HttpBudgetExhaustedError("Request budget exhausted")
+        effective_timeout = timeout if timeout is not None else self._timeout_sec
+        effective_domain = self._effective_domain(url, domain)
+        selected_proxy, resolved_proxy_key = self._select_proxy(
+            proxy=proxy, proxy_key=proxy_key, domain=effective_domain
+        )
+        self._last_proxy_key = resolved_proxy_key
+        if resolved_proxy_key and effective_domain:
+            self._proxy_domains[resolved_proxy_key] = effective_domain
+
+        current_url = self._validate_target_url(url, selected_proxy=selected_proxy, check_dns=False)
+        if (
+            method == "GET"
+            and self._enable_throttle
+            and throttle_key
+            and (interval_sec > 0 or jitter_sec > 0)
+        ):
+            scoped_key = f"{throttle_key}:{resolved_proxy_key or 'direct'}"
+            wait_for_request_slot(scoped_key, interval_sec, jitter_sec, deadline=deadline)
+
+        should_check_dns = self._transport is None and not selected_proxy
+        if should_check_dns:
+            current_url = self._validate_target_url(
+                current_url, selected_proxy=selected_proxy, check_dns=True
+            )
+
+        current_method = method
+        current_params = params
+        current_data = data
+        current_headers = headers
+
+        # Ephemeral single-call client preserves cookies across manual redirect hops
+        # even when ResilientHttpSession is used outside a ``with`` block.
+        ephemeral_httpx: httpx.Client | None = None
+        ephemeral_curl: curl_requests.Session | None = None
+        try:
+            for hop in range(_MAX_REDIRECTS + 1):
+                if deadline is not None:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise HttpBudgetExhaustedError("Request budget exhausted")
+                    hop_timeout = min(effective_timeout, remaining)
+                else:
+                    hop_timeout = effective_timeout
+
+                if self._transport is not None:
+                    if self._in_context:
+                        client = self._httpx_clients.get(resolved_proxy_key)
+                        if client is None:
+                            client = self._new_httpx_client()
+                            self._httpx_clients[resolved_proxy_key] = client
+                    else:
+                        if ephemeral_httpx is None:
+                            ephemeral_httpx = self._new_httpx_client()
+                        client = ephemeral_httpx
+                    response = self._send_httpx(
+                        client,
+                        current_method,
+                        current_url,
+                        params=current_params,
+                        data=current_data,
+                        headers=current_headers,
+                        timeout=hop_timeout,
+                        proxy=selected_proxy,
+                        proxy_key=resolved_proxy_key,
+                        max_bytes=max_bytes,
+                    )
+                else:
+                    if self._in_context:
+                        curl_sess = self._curl_sessions.get(resolved_proxy_key)
+                        if curl_sess is None:
+                            curl_sess = self._new_curl_session()
+                            self._curl_sessions[resolved_proxy_key] = curl_sess
+                    else:
+                        if ephemeral_curl is None:
+                            ephemeral_curl = self._new_curl_session()
+                        curl_sess = ephemeral_curl
+                    response = self._send_curl(
+                        curl_sess,
+                        current_method,
+                        current_url,
+                        params=current_params,
+                        data=current_data,
+                        headers=current_headers,
+                        timeout=hop_timeout,
+                        proxy=selected_proxy,
+                        proxy_key=resolved_proxy_key,
+                        max_bytes=max_bytes,
+                    )
+
+                location = response.headers.get("location")
+                if response.status_code in _REDIRECT_STATUSES and location:
+                    if hop >= _MAX_REDIRECTS:
+                        raise HttpTransportError(
+                            f"Too many redirects for {url}", proxy_key=resolved_proxy_key
+                        )
+                    next_url = urljoin(response.url or current_url, location)
+                    current_url = self._validate_target_url(
+                        next_url, selected_proxy=selected_proxy, check_dns=should_check_dns
+                    )
+                    if response.status_code in {301, 302, 303}:
+                        current_method = "GET"
+                        current_data = None
+                        current_params = None
+                        current_headers = _strip_body_headers(current_headers)
+                    else:
+                        current_params = None
+                    continue
+
+                return HttpFetchResponse(
+                    status_code=response.status_code,
+                    url=response.url,
+                    headers=response.headers,
+                    content=response.content,
+                    used_proxy=redact_proxy_url(selected_proxy),
+                    proxy_key=resolved_proxy_key,
+                )
+        finally:
+            if ephemeral_httpx is not None:
+                ephemeral_httpx.close()
+            if ephemeral_curl is not None:
+                ephemeral_curl.close()
+
+        raise HttpTransportError(f"Too many redirects for {url}", proxy_key=resolved_proxy_key)
+
+    def _new_httpx_client(self) -> httpx.Client:
+        return httpx.Client(
+            transport=self._transport,
+            headers=self._headers,
+            follow_redirects=False,
+        )
+
+    def _new_curl_session(self) -> curl_requests.Session:
+        return curl_requests.Session(
+            impersonate=self._impersonate,
+            headers=self._headers,
+            default_headers=True,
+        )
+
+    def _send_httpx(
+        self,
+        client: httpx.Client,
+        method: str,
+        url: str,
+        *,
         params: dict[str, Any] | None,
+        data: dict[str, Any] | bytes | None,
         headers: dict[str, str] | None,
         timeout: float,
         proxy: str | None,
         proxy_key: str,
-    ) -> httpx.Response:
+        max_bytes: int | None,
+    ) -> _RawHttpResponse:
+        kwargs: dict[str, Any] = {"headers": headers, "timeout": timeout}
+        if params is not None:
+            kwargs["params"] = params
+        if data is not None:
+            kwargs["data"] = data
         try:
-            if self._in_context:
-                client = self._httpx_clients.get(proxy_key)
-                if client is None:
-                    client = httpx.Client(
-                        transport=self._transport,
-                        headers=self._headers,
-                        follow_redirects=True,
-                    )
-                    self._httpx_clients[proxy_key] = client
-                return client.get(url, params=params, headers=headers, timeout=timeout)
-            with httpx.Client(
-                transport=self._transport,
-                headers=self._headers,
-                follow_redirects=True,
-            ) as client:
-                return client.get(url, params=params, headers=headers, timeout=timeout)
+            with client.stream(method, url, **kwargs) as resp:
+                resp_headers = {k.lower(): v for k, v in resp.headers.items()}
+                _check_content_length(resp_headers, max_bytes)
+                chunks: list[bytes] = []
+                total = 0
+                for chunk in resp.iter_bytes():
+                    total += len(chunk)
+                    if max_bytes is not None and total > max_bytes:
+                        raise HttpTransportError(f"Response size {total} exceeds limit {max_bytes}")
+                    chunks.append(chunk)
+                return _RawHttpResponse(
+                    status_code=resp.status_code,
+                    url=str(resp.url),
+                    headers=resp_headers,
+                    content=b"".join(chunks),
+                )
         except httpx.HTTPError as exc:
             msg, scrubbed = scrub_proxy_credentials(str(exc), proxy)
             err = HttpTransportError(f"Request failed for {url}: {msg}", proxy_key=proxy_key)
@@ -310,41 +536,63 @@ class ResilientHttpSession:
                 raise err from None
             raise err from exc
 
-    def _get_curl(
+    def _send_curl(
         self,
+        session: curl_requests.Session,
+        method: str,
         url: str,
         *,
         params: dict[str, Any] | None,
+        data: dict[str, Any] | bytes | None,
         headers: dict[str, str] | None,
         timeout: float,
         proxy: str | None,
         proxy_key: str,
-    ) -> curl_requests.Response:
+        max_bytes: int | None,
+    ) -> _RawHttpResponse:
         kwargs: dict[str, Any] = {
-            "params": params,
             "headers": headers,
             "timeout": timeout,
-            "allow_redirects": True,
+            "allow_redirects": False,
+            "stream": True,
         }
+        if params is not None:
+            kwargs["params"] = params
+        if data is not None:
+            kwargs["data"] = data
         if proxy:
             kwargs["proxy"] = proxy
         try:
-            if self._in_context:
-                session = self._curl_sessions.get(proxy_key)
-                if session is None:
-                    session = curl_requests.Session(
-                        impersonate=self._impersonate,
-                        headers=self._headers,
-                        default_headers=True,
-                    )
-                    self._curl_sessions[proxy_key] = session
-                return session.get(url, **kwargs)
-            with curl_requests.Session(
-                impersonate=self._impersonate,
-                headers=self._headers,
-                default_headers=True,
-            ) as session:
-                return session.get(url, **kwargs)
+            resp = session.request(method, url, **kwargs)
+            try:
+                resp_headers = {k.lower(): v for k, v in resp.headers.items()}
+                _check_content_length(resp_headers, max_bytes)
+                if hasattr(resp, "iter_content"):
+                    chunks: list[bytes] = []
+                    total = 0
+                    for chunk in resp.iter_content():
+                        total += len(chunk)
+                        if max_bytes is not None and total > max_bytes:
+                            raise HttpTransportError(
+                                f"Response size {total} exceeds limit {max_bytes}"
+                            )
+                        chunks.append(chunk)
+                    content = b"".join(chunks)
+                else:
+                    content = resp.content
+                    if max_bytes is not None and len(content) > max_bytes:
+                        raise HttpTransportError(
+                            f"Response size {len(content)} exceeds limit {max_bytes}"
+                        )
+                return _RawHttpResponse(
+                    status_code=resp.status_code,
+                    url=str(resp.url),
+                    headers=resp_headers,
+                    content=content,
+                )
+            finally:
+                if hasattr(resp, "close"):
+                    resp.close()
         except CurlRequestsError as exc:
             msg, scrubbed = scrub_proxy_credentials(str(exc), proxy)
             err = HttpTransportError(f"Request failed for {url}: {msg}", proxy_key=proxy_key)

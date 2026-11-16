@@ -16,11 +16,15 @@
 	}
 
 	handle /api/* {
-		reverse_proxy {$API_UPSTREAM:http://api:8000}
+		reverse_proxy {$API_UPSTREAM:http://api:8000} {
+			header_up X-Real-IP {remote_host}
+		}
 	}
 
 	handle /admin* {
-		reverse_proxy {$API_UPSTREAM:http://api:8000}
+		reverse_proxy {$API_UPSTREAM:http://api:8000} {
+			header_up X-Real-IP {remote_host}
+		}
 	}
 
 	handle /static/* {

@@ -170,6 +170,7 @@ class DamagedPartItem(StrictBaseModel):
     defect_code: str = Field(..., description="Defect code (XX, X, A2, U2)")
     part_name_ru: str = Field(..., description="Replaceable part name")
     subtitle_ru: str | None = Field(None, description="Subtitle under the row")
+    source_kind: str = Field("", description="Machine-readable price source / fallback reason")
     price_from_rub: int = Field(..., ge=0, description="Lower bound part price in Vladivostok")
     in_stock_vladivostok: bool = Field(..., description="In stock in Vladivostok")
     is_statistical_fallback: bool = Field(

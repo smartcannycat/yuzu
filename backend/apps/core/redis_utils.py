@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import threading
 import time
@@ -102,17 +103,50 @@ def acquire_distributed_interval_slot(
         return None
 
 
+def _parse_ip(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    candidate = value.strip()
+    if not candidate:
+        return None
+    try:
+        return ipaddress.ip_address(candidate)
+    except ValueError:
+        return None
+
+
+_TRUSTED_PROXY_NETWORKS = (
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),
+)
+
+
+def _is_trusted_proxy_ip(ip_obj: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return any(ip_obj in net for net in _TRUSTED_PROXY_NETWORKS)
+
+
 def get_client_ip(request: HttpRequest) -> str:
-    """Extract best-effort client IP behind reverse proxies (Caddy / Traefik)."""
-    real_ip = (request.META.get("HTTP_X_REAL_IP") or "").strip()
-    if real_ip:
-        return real_ip
-    forwarded = (request.META.get("HTTP_X_FORWARDED_FOR") or "").strip()
-    if forwarded:
-        first = forwarded.split(",", 1)[0].strip()
-        if first:
-            return first
-    return (request.META.get("REMOTE_ADDR") or "unknown").strip() or "unknown"
+    """Extract validated client IP, trusting proxy headers only from trusted proxy hops."""
+    remote_ip = _parse_ip(request.META.get("REMOTE_ADDR") or "")
+    if remote_ip is not None and _is_trusted_proxy_ip(remote_ip):
+        forwarded = (request.META.get("HTTP_X_FORWARDED_FOR") or "").strip()
+        if forwarded:
+            valid_hops = [
+                ip_obj for part in forwarded.split(",") if (ip_obj := _parse_ip(part)) is not None
+            ]
+            for ip_obj in reversed(valid_hops):
+                if not _is_trusted_proxy_ip(ip_obj):
+                    return str(ip_obj)
+            if valid_hops:
+                return str(valid_hops[0])
+        real_ip = _parse_ip(request.META.get("HTTP_X_REAL_IP") or "")
+        if real_ip is not None:
+            return str(real_ip)
+    return str(remote_ip) if remote_ip is not None else "unknown"
 
 
 def enforce_rate_limit(

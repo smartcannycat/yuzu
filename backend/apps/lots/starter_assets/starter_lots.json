@@ -758,6 +758,7 @@
         "defect_code": "X",
         "part_name_ru": "Переднее левое крыло",
         "subtitle_ru": "Статистическая оценка; наличие и цвет не подтверждены",
+        "source_kind": "farpost_cache",
         "price_from_rub": 29000,
         "in_stock_vladivostok": false,
         "is_statistical_fallback": true
@@ -767,6 +768,7 @@
         "defect_code": "XX",
         "part_name_ru": "Передняя правая дверь",
         "subtitle_ru": "Статистическая оценка; наличие и цвет не подтверждены",
+        "source_kind": "farpost_cache",
         "price_from_rub": 29000,
         "in_stock_vladivostok": false,
         "is_statistical_fallback": true
@@ -776,6 +778,7 @@
         "defect_code": "X",
         "part_name_ru": "Переднее правое крыло",
         "subtitle_ru": "Статистическая оценка; наличие и цвет не подтверждены",
+        "source_kind": "farpost_cache",
         "price_from_rub": 29000,
         "in_stock_vladivostok": false,
         "is_statistical_fallback": true
@@ -785,6 +788,7 @@
         "defect_code": "XX",
         "part_name_ru": "Капот",
         "subtitle_ru": "Статистическая оценка; наличие и цвет не подтверждены",
+        "source_kind": "farpost_cache",
         "price_from_rub": 29000,
         "in_stock_vladivostok": false,
         "is_statistical_fallback": true

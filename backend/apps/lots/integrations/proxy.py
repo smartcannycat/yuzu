@@ -10,7 +10,7 @@ import re
 import threading
 import time
 from typing import TYPE_CHECKING
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from redis.exceptions import RedisError
 
@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _URL_CREDS_RE = re.compile(r"([a-zA-Z][a-zA-Z0-9+.-]*://)([^/\s:@]+):([^@\s]+)@")
+_URL_USERINFO_RE = re.compile(r"([a-zA-Z][a-zA-Z0-9+.-]*://)([^/\s@]+)@")
 _DEFAULT_PROXY_BAN_SEC = 120.0
 _PROXY_BAN_KEY_PREFIX = "yuzu:proxy:ban"
 
@@ -76,14 +77,21 @@ def scrub_proxy_credentials(text: str, proxy_url: str | None = None) -> tuple[st
         redacted = redacted.replace(proxy_url, redact_proxy_url(proxy_url) or "<proxy>")
         scrubbed = True
     cleaned = _URL_CREDS_RE.sub(r"\1***:***@", redacted)
+    cleaned = _URL_USERINFO_RE.sub(r"\1***@", cleaned)
     if cleaned != redacted:
         scrubbed = True
     if proxy_url:
         try:
             parsed = urlparse(proxy_url)
-            if parsed.password and parsed.password in cleaned:
-                cleaned = cleaned.replace(parsed.password, "***")
-                scrubbed = True
+            for secret in (
+                parsed.password,
+                unquote(parsed.password) if parsed.password else None,
+                parsed.username,
+                unquote(parsed.username) if parsed.username else None,
+            ):
+                if secret and len(secret) >= 3 and secret in cleaned:
+                    cleaned = cleaned.replace(secret, "***")
+                    scrubbed = True
         except ValueError:
             pass
     return cleaned, scrubbed
@@ -159,6 +167,12 @@ class ProxyPool:
             if self._ban_cooldown_sec > 0:
                 blocked[fp] = self._ban_cooldown_sec
         return blocked
+
+    def proxy_for_key(self, proxy_key: str) -> str | None:
+        """Return a configured proxy by its non-sensitive fingerprint."""
+        if not proxy_key:
+            return None
+        return self._by_fingerprint.get(proxy_key)
 
     def next_proxy(self, *, domain: str | None = None) -> str | None:
         """Select the next non-quarantined proxy for ``domain``, falling back gracefully."""
@@ -268,14 +282,15 @@ def get_shared_proxy_pool(
 ) -> ProxyPool:
     """Return a process-wide ProxyPool keyed by normalized configuration."""
     normalized = normalize_proxy_urls(proxy_urls)
+    normalized_domain = _normalize_domain(domain) if domain else None
     cooldown = max(0.0, float(ban_cooldown_sec))
-    key = (normalized, domain, cooldown, use_redis)
+    key = (normalized, normalized_domain, cooldown, use_redis)
     with _shared_pools_lock:
         pool = _shared_pools.get(key)
         if pool is None:
             pool = ProxyPool(
                 normalized,
-                domain=domain,
+                domain=normalized_domain,
                 ban_cooldown_sec=cooldown,
                 use_redis=use_redis,
             )

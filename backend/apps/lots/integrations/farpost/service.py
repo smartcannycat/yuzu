@@ -5,21 +5,23 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import re
 import threading
 import time
 from dataclasses import asdict, replace
 from datetime import timedelta
-from functools import lru_cache
-from pathlib import Path
 
 from django.db import transaction
 from django.utils import timezone
 from redis.exceptions import RedisError
 
-from apps.core.enums import ExternalCacheSource, WorkType
+from apps.core.enums import ExternalCacheSource, PartSourceKind, WorkType
 from apps.core.models import ExternalCache
 from apps.core.redis_utils import get_redis_client
+from apps.lots.integrations.cache import upsert_external_cache
+from apps.lots.integrations.captcha import (
+    FarpostCaptchaSolver,
+    TesseractImageCaptchaSolver,
+)
 from apps.lots.integrations.farpost.client import (
     FarpostClient,
     FarpostFetchError,
@@ -27,64 +29,59 @@ from apps.lots.integrations.farpost.client import (
     ParseResult,
     PartCriteria,
     PartOffer,
-    matches_paint_code,
+)
+from apps.lots.integrations.farpost.matrix import (
+    FIXED_PANELS,
+    LABELS,
+    PANELS,
+    _body_code,
+    _operations,
+    _panel_codes,
+    _search_model,
+    _select_best_offer,
+    _work_label,
+    repair_matrix,
 )
 from apps.lots.models import DamagedPartItem, FarpostRepairSummary, Lot, ServiceWorkItem
 from apps.lots.schemas import FarpostRepairSummary as RepairSchema
 from config.settings.config import get_settings
 
+__all__ = [
+    "FIXED_PANELS",
+    "LABELS",
+    "PANELS",
+    "_body_code",
+    "_cache_key",
+    "_search_model",
+    "_select_best_offer",
+    "_work_label",
+    "estimate_repair",
+    "repair_matrix",
+    "reset_farpost_cooldown",
+    "save_repair_estimate",
+    "search_cached",
+]
+
 logger = logging.getLogger(__name__)
 
 _FARPOST_COOLDOWN_KEY = "yuzu:farpost:cooldown"
-_MODEL_TRIM_RE = re.compile(
-    r"\b(?:hv|hybrid|phev|phv|e:hev|e-power|epower|4wd|awd|2wd|"
-    r"custom|crosstar|spada|g4|modulo|nismo|gr\s*sport)\b",
-    re.I,
-)
-_BODY_CODE_RE = re.compile(r"[A-Z]{1,5}\d{1,4}[A-Z]{0,2}")
-_VIN_RE = re.compile(r"^[A-HJ-NPR-Z0-9]{17}$")
 
 _cooldown_lock = threading.Lock()
 _local_cooldown_until = 0.0
 
-# Each panel has a single query identity; fixed panels require restoration instead.
-PANELS = {
-    "front_bumper": ("Передний бампер", "бампер", "", "передний"),
-    "rear_bumper": ("Задний бампер", "бампер", "", "задний"),
-    "hood": ("Капот", "капот", "", ""),
-    "tailgate": ("Крышка багажника", "багажник", "", ""),
-    "front_left_fender": ("Переднее левое крыло", "крыло", "левое", "переднее"),
-    "front_right_fender": ("Переднее правое крыло", "крыло", "правое", "переднее"),
-    "front_left_door": ("Передняя левая дверь", "дверь", "левая", "передняя"),
-    "front_right_door": ("Передняя правая дверь", "дверь", "правая", "передняя"),
-    "rear_left_door": ("Задняя левая дверь", "дверь", "левая", "задняя"),
-    "rear_right_door": ("Задняя правая дверь", "дверь", "правая", "задняя"),
-    "windshield": ("Лобовое стекло", "стекло", "", "лобовое"),
-}
-FIXED_PANELS = {
-    "roof": "Крыша",
-    "rear_left_quarter": "Заднее левое крыло",
-    "rear_right_quarter": "Заднее правое крыло",
-    "left_sill": "Левый порог",
-    "right_sill": "Правый порог",
-}
-LABELS = {
-    WorkType.MOUNT_DISMOUNT: "Снятие и монтаж",
-    WorkType.PAINT: "Покраска с материалами",
-    WorkType.PDR_AND_POLISH: "PDR / полировка",
-    WorkType.BODYWORK: "Кузовное восстановление",
-}
 _FALLBACK_SUBTITLES = {
-    "missing_identity": "Статистическая оценка; не определён код кузова",
-    "rate_limited": "Статистическая оценка; Farpost временно ограничил выдачу",
-    "fetch_error": "Статистическая оценка; источник Farpost временно недоступен",
-    "not_found": "Статистическая оценка; на Farpost нет подходящих предложений",
+    PartSourceKind.MISSING_IDENTITY.value: "Статистическая оценка; не определён код кузова",
+    PartSourceKind.RATE_LIMITED.value: "Статистическая оценка; Farpost временно ограничил выдачу",
+    PartSourceKind.FETCH_ERROR.value: "Статистическая оценка; источник Farpost временно недоступен",
+    PartSourceKind.NOT_FOUND.value: "Статистическая оценка; на Farpost нет подходящих предложений",
 }
 
 
-@lru_cache
-def repair_matrix() -> dict:
-    return json.loads((Path(__file__).parent / "data/repair_matrix.json").read_text())
+def reset_farpost_cooldown() -> None:
+    """Reset in-process Farpost rate-limit cooldown state (for test isolation)."""
+    global _local_cooldown_until
+    with _cooldown_lock:
+        _local_cooldown_until = 0.0
 
 
 def _cache_key(criteria: PartCriteria) -> str:
@@ -166,6 +163,11 @@ def _stale_fallback(entry: ExternalCache | None) -> tuple[list[PartOffer], bool]
     return [], True
 
 
+def _supports_metadata_search(client: object) -> bool:
+    real_search = getattr(FarpostClient, "search", None)
+    return real_search is not None and getattr(type(client), "search", None) is real_search
+
+
 def _search_cached_with_reason(
     client: FarpostClient,
     criteria: PartCriteria,
@@ -184,16 +186,13 @@ def _search_cached_with_reason(
         key=key + ":empty", source=ExternalCacheSource.FARPOST
     ).first()
     if empty is not None and not empty.is_expired:
-        return [], False, "not_found"
+        return [], False, PartSourceKind.NOT_FOUND.value
     if _is_rate_limit_cooldown_active():
         logger.info("Farpost cooldown active; using fallback for %s", criteria.panel_id)
         stale_offers, stale = _stale_fallback(entry)
-        return stale_offers, stale, "rate_limited"
+        return stale_offers, stale, PartSourceKind.RATE_LIMITED.value
     try:
-        if (
-            isinstance(client, FarpostClient)
-            and getattr(type(client), "search", None) is FarpostClient.search
-        ):
+        if _supports_metadata_search(client):
             parse_result = client.search_with_metadata(query_criteria, deadline=deadline)
         else:
             parse_result = ParseResult(
@@ -202,23 +201,25 @@ def _search_cached_with_reason(
             )
     except FarpostRateLimitedError as exc:
         logger.warning("Farpost rate limited on %s: %s", criteria.panel_id, exc)
-        _activate_rate_limit_cooldown(settings.FARPOST_COOLDOWN_SEC)
+        if getattr(exc, "triggers_global_cooldown", True):
+            _activate_rate_limit_cooldown(settings.FARPOST_COOLDOWN_SEC)
+            reason = PartSourceKind.RATE_LIMITED.value
+        else:
+            reason = PartSourceKind.FETCH_ERROR.value
         stale_offers, stale = _stale_fallback(entry)
-        return stale_offers, stale, "rate_limited"
+        return stale_offers, stale, reason
     except FarpostFetchError as exc:
         logger.warning("Farpost search failed for %s: %s", criteria.panel_id, exc)
         stale_offers, stale = _stale_fallback(entry)
-        return stale_offers, stale, "fetch_error"
+        return stale_offers, stale, PartSourceKind.FETCH_ERROR.value
 
     offers = parse_result.offers
     if offers:
-        ExternalCache.objects.update_or_create(
-            key=key,
-            defaults={
-                "source": ExternalCacheSource.FARPOST,
-                "payload": {"offers": [asdict(offer) for offer in offers]},
-                "expires_at": timezone.now() + timedelta(hours=settings.FARPOST_CACHE_TTL_HOURS),
-            },
+        upsert_external_cache(
+            key,
+            source=ExternalCacheSource.FARPOST,
+            payload={"offers": [asdict(offer) for offer in offers]},
+            ttl=timedelta(hours=settings.FARPOST_CACHE_TTL_HOURS),
         )
         ExternalCache.objects.filter(key=key + ":empty").delete()
         return offers, False, ""
@@ -226,15 +227,13 @@ def _search_cached_with_reason(
     # Only negative-cache when Farpost confirms 0 listings (or mock/unparsed feed count),
     # never when exactFeedCount > 0 simply had incompatible/unlabeled rows on pages 1-2.
     if parse_result.exact_feed_count is None or parse_result.exact_feed_count == 0:
-        ExternalCache.objects.update_or_create(
-            key=key + ":empty",
-            defaults={
-                "source": ExternalCacheSource.FARPOST,
-                "payload": {"offers": []},
-                "expires_at": timezone.now() + timedelta(minutes=10),
-            },
+        upsert_external_cache(
+            key + ":empty",
+            source=ExternalCacheSource.FARPOST,
+            payload={"offers": []},
+            ttl=timedelta(minutes=10),
         )
-    return [], False, "not_found"
+    return [], False, PartSourceKind.NOT_FOUND.value
 
 
 def search_cached(
@@ -248,109 +247,32 @@ def search_cached(
     return offers, stale
 
 
-def _search_model(model: str) -> str:
-    cleaned = re.sub(r"\s+", " ", _MODEL_TRIM_RE.sub(" ", model or "")).strip(" -+/")
-    return cleaned or (model or "").strip()
-
-
-def _body_code(lot: Lot) -> str:
-    # Prefer the raw frame/chassis series (e.g., GB5, GE6, NRE210) over full katashiki codes.
-    candidates: list[str] = []
-    for value in (lot.frame_id, lot.chassis_number):
-        upper = (value or "").upper().strip()
-        if not upper:
-            continue
-        if "-" not in upper and _VIN_RE.fullmatch(upper):
-            # 17-char VINs do not start with a searchable Farpost chassis series.
-            continue
-        candidates.append(upper.split("-", 1)[0])
-    if lot.model_code:
-        upper = lot.model_code.upper().strip()
-        if "-" in upper:
-            candidates.append(upper.split("-", 1)[1])
-        candidates.append(upper)
-    for candidate in candidates:
-        match = _BODY_CODE_RE.search(candidate)
-        if match:
-            return match[0]
-    return ""
-
-
-def _panel_codes(defects: list) -> dict[str, set[str]]:
-    panels: dict[str, set[str]] = {}
-    for defect in defects:
-        tokens = re.findall(r"XX|[A-Z]\d*", (defect.raw_code or "").upper())
-        if not tokens:
-            tokens = list(defect.defect_types)
-        tokens = [
-            f"{code}{defect.severity}" if defect.severity and code in "AUWSCY" else code
-            for code in tokens
-        ]
-        panels.setdefault(defect.panel_id, set()).update(tokens or ["UNKNOWN"])
-    return panels
-
-
-def _operations(codes: set[str], matrix: dict) -> dict[str, int]:
-    work: dict[str, int] = {}
-    for code in codes:
-        key = code
-        if key in matrix["maximum_severity"]:
-            key += str(matrix["maximum_severity"][key])
-        operations = matrix["operations"].get(key)
-        if operations is None:
-            logger.warning("Unknown repair defect code: %s", code)
-            operations = {WorkType.BODYWORK: matrix["bodywork"]}
-        for kind, amount in operations.items():
-            work[kind] = max(work.get(kind, 0), amount)
-    # Restoration prices include preparation and paint, so do not add paint again.
-    if WorkType.BODYWORK in work:
-        work[WorkType.BODYWORK] = max(work[WorkType.BODYWORK], work.pop(WorkType.PAINT, 0))
-        work.pop(WorkType.PDR_AND_POLISH, None)
-    return work
-
-
-def _select_best_offer(
-    offers: list[PartOffer],
-    *,
-    paint_code: str,
-    paint_cost_rub: int,
-    panel: str,
-    stale: bool,
-) -> tuple[PartOffer | None, bool]:
-    if not offers:
-        return None, False
-    best_plain = min(offers, key=lambda item: (item.price_rub, item.offer_id))
-    if stale or not paint_code or panel == "windshield":
-        return best_plain, False
-    colored = [
-        item
-        for item in offers
-        if item.color_matched or matches_paint_code(f"{item.title} {item.snippet}", paint_code)
-    ]
-    if not colored:
-        return best_plain, False
-    best_colored = min(colored, key=lambda item: (item.price_rub, item.offer_id))
-    if best_colored.price_rub <= best_plain.price_rub + paint_cost_rub:
-        return best_colored, True
-    return best_plain, False
-
-
-def _work_label(kind: WorkType, name: str, panel: str) -> str:
-    if kind == WorkType.BODYWORK or panel in FIXED_PANELS:
-        return f"{LABELS[kind]}: {name} (расчёт по матрице)"
-    return f"{LABELS[kind]}: {name} (норматив СТО)"
-
-
-def estimate_repair(lot: Lot, *, client: FarpostClient | None = None) -> RepairSchema:
-    settings = get_settings()
-    managed = client is None
-    active_client = client or FarpostClient(
+def _build_farpost_client(settings) -> FarpostClient:
+    image_solver = (
+        TesseractImageCaptchaSolver(command=settings.FARPOST_CAPTCHA_OCR_COMMAND)
+        if settings.FARPOST_CAPTCHA_OCR_ENABLED
+        else None
+    )
+    return FarpostClient(
         timeout_sec=settings.SCRAPER_TIMEOUT_SEC,
         request_interval_sec=settings.SCRAPER_REQUEST_INTERVAL_SEC,
         request_jitter_sec=settings.SCRAPER_REQUEST_JITTER_SEC,
         proxy_ban_sec=settings.SCRAPER_PROXY_BAN_SEC,
         proxy_urls=settings.SCRAPER_PROXY_URLS,
+        captcha_solver=FarpostCaptchaSolver(
+            max_attempts=settings.FARPOST_CAPTCHA_MAX_ATTEMPTS,
+            solve_budget_sec=settings.FARPOST_CAPTCHA_SOLVE_BUDGET_SEC,
+            max_workers=settings.FARPOST_CAPTCHA_MAX_WORKERS,
+            request_timeout_sec=settings.SCRAPER_TIMEOUT_SEC,
+            image_solver=image_solver,
+        ),
     )
+
+
+def estimate_repair(lot: Lot, *, client: FarpostClient | None = None) -> RepairSchema:
+    settings = get_settings()
+    managed = client is None
+    active_client = client or _build_farpost_client(settings)
     deadline = time.monotonic() + settings.FARPOST_BUDGET_SEC
     matrix = repair_matrix()
     parts, works = [], []
@@ -379,7 +301,7 @@ def estimate_repair(lot: Lot, *, client: FarpostClient | None = None) -> RepairS
                     position,
                     "",
                 )
-                offers, stale, reason = [], False, "missing_identity"
+                offers, stale, reason = [], False, PartSourceKind.MISSING_IDENTITY.value
                 if criteria.make and criteria.model and criteria.body_code:
                     offers, stale, reason = _search_cached_with_reason(
                         active_client, criteria, deadline=deadline
@@ -393,21 +315,29 @@ def estimate_repair(lot: Lot, *, client: FarpostClient | None = None) -> RepairS
                 )
                 has_color_matched_parts |= matched
                 if offer and not stale:
-                    subtitle = (
-                        f"Контрактная деталь в заводской цвет {paint_code}"
-                        if matched
-                        else "Контрактная деталь; цвет не подтверждён, требуется окраска"
-                    )
+                    if matched:
+                        subtitle = f"Контрактная деталь в заводской цвет {paint_code}"
+                        source_kind = PartSourceKind.FARPOST_COLOR_MATCH.value
+                    else:
+                        subtitle = "Контрактная деталь; цвет не подтверждён, требуется окраска"
+                        source_kind = PartSourceKind.FARPOST_PLAIN.value
                 elif offer:
                     subtitle = "Предварительная цена из кэша; наличие и цвет не подтверждены"
+                    source_kind = PartSourceKind.FARPOST_CACHE.value
                 else:
-                    subtitle = _FALLBACK_SUBTITLES.get(reason, _FALLBACK_SUBTITLES["not_found"])
+                    subtitle = _FALLBACK_SUBTITLES.get(
+                        reason, _FALLBACK_SUBTITLES[PartSourceKind.NOT_FOUND.value]
+                    )
+                    source_kind = (
+                        reason if reason in _FALLBACK_SUBTITLES else PartSourceKind.MATRIX.value
+                    )
                 parts.append(
                     {
                         "panel_id": panel,
                         "defect_code": "XX" if "XX" in codes else "X",
                         "part_name_ru": name,
                         "subtitle_ru": subtitle,
+                        "source_kind": source_kind,
                         "price_from_rub": offer.price_rub
                         if offer
                         else matrix["parts"].get(panel, matrix["parts"]["default"]),
