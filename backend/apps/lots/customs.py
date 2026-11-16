@@ -379,14 +379,12 @@ def meti_sanction_risk(
     the data source that verified those characteristics (catalog/OCR);
     by default every hybrid is treated as sanctioned.
     """
-    fuel = str(fuel_type)
+    fuel = str(fuel_type or "")
     if fuel == FuelType.EV:
         return True
     if fuel == FuelType.HYBRID:
         return not mild_hybrid
-    if fuel in (FuelType.GASOLINE, FuelType.DIESEL):
-        return engine_cc is not None and engine_cc > _METI_ICE_MAX_ENGINE_CC
-    return False
+    return engine_cc is not None and engine_cc > _METI_ICE_MAX_ENGINE_CC
 
 
 def is_under_160_hp(power_hp: int | None) -> bool | None:
@@ -651,7 +649,7 @@ class StartBidInput:
     include_repairs: bool = True
     target_margin_pct: float = DEFAULT_TARGET_MARGIN_PCT
     step_jpy: int = DEFAULT_BID_STEP_JPY
-    min_bid_jpy: int = 300_000
+    min_bid_jpy: int = 100_000
     max_bid_jpy: int = 2_500_000
 
 

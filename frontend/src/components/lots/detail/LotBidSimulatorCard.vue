@@ -100,7 +100,7 @@ function submitRubEdit(): void {
   isEditingRub.value = false
   const parsed = parsePositiveIntegerInput(rubTextInput.value)
   if (parsed === null) return
-  const clampedRub = clampBidRub(parsed)
+  const clampedRub = clampBidRub(parsed, props.jpyRate)
   if (clampedRub !== props.displayBidRub) {
     emit('commitRub', clampedRub)
   }

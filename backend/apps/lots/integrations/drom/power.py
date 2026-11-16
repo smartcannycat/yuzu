@@ -50,6 +50,7 @@ class DromPowerResolver:
         fuel_type: str | None = None,
         drive_type: str | None = None,
         year: int | None = None,
+        trim: str | None = None,
     ) -> DromPowerResult:
         """Resolve power_hp from drom.ru/catalog/ specifications."""
         from_catalog = self._lookup_drom_catalog(
@@ -60,6 +61,7 @@ class DromPowerResolver:
             fuel_type=fuel_type,
             drive_type=drive_type,
             year=year,
+            trim=trim,
         )
         if from_catalog is not None:
             return from_catalog
@@ -76,6 +78,7 @@ class DromPowerResolver:
         fuel_type: str | None,
         drive_type: str | None,
         year: int | None,
+        trim: str | None = None,
     ) -> DromPowerResult | None:
         resolved = self._slug_resolver.resolve_catalog_slug(make, model)
         specs = self._fetch_catalog_specs(
@@ -91,6 +94,7 @@ class DromPowerResolver:
         best_hp = _select_best_power_hp(
             specs,
             model=model,
+            trim=trim,
             model_code=model_code,
             engine_cc=engine_cc,
             fuel_type=fuel_type,
@@ -114,10 +118,14 @@ class DromPowerResolver:
         model_code: str | None,
     ) -> list[DromCatalogSpec]:
         candidates = normalize_katashiki_candidates(model_code)
-        code_key = candidates[-1] if candidates else "all"
+        code_key = (
+            candidates[1] if len(candidates) > 1 else (candidates[0] if candidates else "all")
+        )
         cache_key = f"drom:catalog:{make_slug}:{model_slug}:{code_key}"[:512]
+        partial_failure = False
 
         def _fetch_live() -> list[DromCatalogSpec]:
+            nonlocal partial_failure
             model_html = self._fetch_catalog_model_html(
                 make=make,
                 model=model,
@@ -127,7 +135,9 @@ class DromPowerResolver:
             if model_html is None:
                 return []
             gen_urls = parse_catalog_generations(model_html, model_code=model_code)
-            return self._fetch_generation_specs(gen_urls[:_MAX_GENERATIONS_TO_FETCH])
+            specs, complete = self._fetch_generation_specs(gen_urls[:_MAX_GENERATIONS_TO_FETCH])
+            partial_failure = not complete
+            return specs
 
         specs, _ = fetch_with_drom_cache(
             cache_key,
@@ -135,7 +145,7 @@ class DromPowerResolver:
             serialize=lambda items: {"specs": [_serialize_spec(s) for s in items]},
             deserialize=lambda payload: _deserialize_specs(payload.get("specs", [])),
             ttl=_CATALOG_TTL,
-            is_cacheable=bool,
+            is_cacheable=lambda items: bool(items) and not partial_failure,
             fallback_to_stale_on_empty=True,
         )
         return specs or []
@@ -180,17 +190,19 @@ class DromPowerResolver:
             except DromNotFoundError:
                 return None
 
-    def _fetch_generation_specs(self, gen_urls: list[str]) -> list[DromCatalogSpec]:
+    def _fetch_generation_specs(self, gen_urls: list[str]) -> tuple[list[DromCatalogSpec], bool]:
         specs: list[DromCatalogSpec] = []
+        complete = True
         for gen_url in gen_urls:
             try:
                 gen_html = self._client.get_html(gen_url)
             except DromBlockedError:
-                break
+                raise
             except DromFetchError:
+                complete = False
                 continue
             specs.extend(parse_catalog_power_specs(gen_html))
-        return specs
+        return specs, complete
 
 
 def _filter_specs_by_katashiki(
@@ -269,21 +281,30 @@ _IGNORED_TRIM_TOKENS = frozenset(
 def _prefer_specs_by_trim(
     specs: list[DromCatalogSpec],
     model: str | None,
+    trim: str | None = None,
 ) -> list[DromCatalogSpec]:
-    if not model or len({s.power_hp for s in specs}) <= 1:
+    if (not model and not trim) or len({s.power_hp for s in specs}) <= 1:
         return specs
-    model_lower = model.lower()
-    tokens = [
+    model_lower = (model or "").lower()
+    trim_lower = (trim or "").lower()
+    combined_lower = f"{model_lower} {trim_lower}".strip()
+
+    model_tokens = [
         t
         for t in re.split(r"[\s_\-/]+", model_lower)
         if len(t) >= 2 and t not in _IGNORED_TRIM_TOKENS
+    ][1:]
+    trim_tokens = [
+        t
+        for t in re.split(r"[\s_\-/]+", trim_lower)
+        if len(t) >= 2 and t not in _IGNORED_TRIM_TOKENS
     ]
-    for token in tokens[1:]:
+    for token in [*model_tokens, *trim_tokens]:
         pattern = rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])"
         matched = [s for s in specs if s.trim_text and re.search(pattern, s.trim_text)]
         if matched:
             specs = matched
-    if not any(marker in model_lower for marker in _SPECIAL_PERF_TRIM_MARKERS):
+    if not any(marker in combined_lower for marker in _SPECIAL_PERF_TRIM_MARKERS):
         standard = [
             s
             for s in specs
@@ -299,6 +320,7 @@ def _select_best_power_hp(
     specs: list[DromCatalogSpec],
     *,
     model: str | None = None,
+    trim: str | None = None,
     model_code: str | None,
     engine_cc: int | None,
     fuel_type: str | None,
@@ -326,7 +348,7 @@ def _select_best_power_hp(
                 and (s.year_end is None or s.year_end >= year)
             ),
         )
-    pool = _prefer_specs_by_trim(pool, model)
+    pool = _prefer_specs_by_trim(pool, model, trim)
 
     return max(s.power_hp for s in pool)
 

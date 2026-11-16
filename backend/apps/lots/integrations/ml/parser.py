@@ -237,6 +237,12 @@ def _sheet_to_lot_fields(
         if raw_strictness is not None and math.isfinite(raw_strictness)
         else _DEFAULT_AUCTION_STRICTNESS
     )
+    first_reg_month = sheet.first_reg_month
+    if first_reg_month is not None and not 1 <= first_reg_month <= 12:
+        ocr_warnings.append(
+            f"Некорректный месяц первой регистрации '{first_reg_month}' от OCR — сброшен"
+        )
+        first_reg_month = None
 
     return {
         "lot_number": _clip(sheet.lot_number, "lot_number"),
@@ -253,7 +259,7 @@ def _sheet_to_lot_fields(
             FrameIdConfidence, sheet.frame_id_confidence, "frame_id_confidence"
         ),
         "first_reg_year": sheet.first_reg_year,
-        "first_reg_month": sheet.first_reg_month,
+        "first_reg_month": first_reg_month,
         "first_reg_date_str": _clip(sheet.first_reg_date_str, "first_reg_date_str"),
         "is_pass_corridor_3_5": sheet.is_pass_corridor_3_5,
         "engine_cc": sheet.engine_cc,

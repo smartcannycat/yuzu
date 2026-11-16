@@ -163,4 +163,20 @@ describe('useBatchesStore & mock batch pipeline', () => {
     expect(restored.items).toHaveLength(1)
     resetMockLotsWorkspace()
   })
+
+  it('allows appending to partial_failed batches just like backend pipeline', () => {
+    const batchesStore = useBatchesStore()
+    batchesStore.activeBatch = {
+      batch_id: 'batch-partial',
+      status: 'partial_failed',
+      mascot: { mood: 'confused', phrase_ru: 'Часть не готова', badge_text: '1 из 2 готово' },
+      total_count: 2,
+      processed_count: 2,
+      ready_count: 1,
+      failed_count: 1,
+      items: [],
+    }
+    expect(batchesStore.isTerminal).toBe(true)
+    expect(batchesStore.canAppend).toBe(true)
+  })
 })

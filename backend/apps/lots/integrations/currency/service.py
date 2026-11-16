@@ -120,7 +120,7 @@ class CurrencyRatesService:
         is_fallback: bool,
         reason: str | None = None,
     ) -> CurrencyRatesResult:
-        spread_pct = (self._spread * Decimal(100)).normalize()
+        spread_pct = f"{(self._spread * Decimal(100)):f}".rstrip("0").rstrip(".") or "0"
         jpy_source = JPY_RATE_SOURCE_TEMPLATE.format(pct=spread_pct)
         commercial_jpy = float(compute_commercial_jpy(Decimal(str(base.jpy_rub)), self._spread))
         return CurrencyRatesResult(

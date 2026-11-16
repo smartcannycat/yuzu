@@ -57,8 +57,9 @@ logger = logging.getLogger(__name__)
 SOURCE_NAME = "Aleado.com"
 
 # Grades that mark repaired/damaged vehicles on Japanese auction sheets.
-_REPAIRED_GRADES = frozenset({"R", "RA", "0"})
-_NUMERIC_GRADE_RE = re.compile(r"^\d(\.\d)?$")
+_REPAIRED_GRADE_RE = re.compile(r"^(?:R[A-Z0-9]*|0|1|2|99|\*{2,3})$")
+_NUMERIC_GRADE_RE = re.compile(r"^\d(?:\.\d)?$")
+_BODY_CODE_RE = re.compile(r"[A-Z]{1,5}\d{1,4}[A-Z]{0,2}")
 
 # A past row whose lot number and auction house match the current lot is
 # the lot itself (listed for upcoming trading), not history.
@@ -83,33 +84,39 @@ class CrossAuditOutcome:
 def clean_model_code(lot: Lot) -> str:
     """Derive the Aleado model type code from the lot's frame/model code.
 
-    Strips emission prefixes ("6BA-GB5" -> "GB5", "DAA-RU3" -> "RU3").
+    Strips emission prefixes ("6BA-GB5" -> "GB5", "DAA-RU3" -> "RU3") and
+    trailing spec suffixes ("3BA-NRE210W-AWXNB" -> "NRE210W").
     A Frame ID ("GB5-1025108") contributes the part before the dash.
     """
     for value in (lot.frame_id, lot.model_code):
         code = (value or "").upper().strip()
         if not code:
             continue
-        parts = code.split("-")
-        if len(parts) >= 2 and re.fullmatch(r"[A-Z]{2,}\d{1,4}[A-Z]?", parts[-1]):
-            # Emission-prefixed model code (6BA-GB5) or full frame ID.
-            return parts[-1]
-        if re.fullmatch(r"[A-Z]{2,}\d{1,4}[A-Z]?", parts[0]):
+        parts = [part for part in code.split("-") if part]
+        if len(parts) == 2 and parts[-1].isdigit() and _BODY_CODE_RE.fullmatch(parts[0]):
+            return parts[0]
+        if len(parts) >= 2:
+            for part in parts[1:]:
+                if _BODY_CODE_RE.fullmatch(part):
+                    return part
+        if _BODY_CODE_RE.fullmatch(parts[0]):
             return parts[0]
     return ""
 
 
 def _parse_grade(value: str | None) -> float | None:
-    if not value:
+    cleaned = (value or "").upper().strip()
+    if not cleaned:
         return None
-    try:
-        return float(value)
-    except ValueError:
+    if cleaned == "S":
+        return 6.0
+    if not _NUMERIC_GRADE_RE.fullmatch(cleaned):
         return None
+    return float(cleaned)
 
 
 def _is_repaired_grade(value: str | None) -> bool:
-    return (value or "").upper().strip() in _REPAIRED_GRADES
+    return bool(_REPAIRED_GRADE_RE.fullmatch((value or "").upper().strip()))
 
 
 def _format_date(value: Any) -> str:
@@ -122,10 +129,12 @@ def _candidate_is_own_lot(row: AleadoLotRow, lot: Lot) -> bool:
         return False
     if row.lot_number.strip() != own_lot_number:
         return False
-    own_house = (lot.auction_house or "").upper()
-    branch = (lot.auction_branch or "").upper()
-    house = row.auction_house.upper()
-    return branch in house or house.startswith(own_house) or own_house in house
+    own_house = (lot.auction_house or "").upper().strip()
+    branch = (lot.auction_branch or "").upper().strip()
+    house = row.auction_house.upper().strip()
+    return (bool(branch) and branch in house) or (
+        bool(own_house) and (house.startswith(own_house) or own_house in house)
+    )
 
 
 def _normalize_frame_id(value: str | None) -> str:
@@ -178,7 +187,6 @@ def _evaluate_rules(lot: Lot, rows: list[_VerifiedRow]) -> list[AnomalyAlert]:
                     diff_details=context,
                 )
             )
-            continue
 
         if (
             row.mileage_km is not None
@@ -197,11 +205,11 @@ def _evaluate_rules(lot: Lot, rows: list[_VerifiedRow]) -> list[AnomalyAlert]:
                     diff_details=context,
                 )
             )
-            continue
 
         past_grade_num = _parse_grade(row.grade)
         if (
-            past_grade_num is not None
+            not _is_repaired_grade(row.grade)
+            and past_grade_num is not None
             and our_grade_num is not None
             and our_grade_num - past_grade_num >= 0.5
         ):
@@ -300,7 +308,7 @@ def _build_outcome(
                 overall_grade=(row.grade or "-")[:10],
                 mileage_km=row.mileage_km,
                 defects_summary=None,
-                closing_price_jpy=row.start_price_jpy,
+                closing_price_jpy=None,
                 sheet_archive_url=_safe_archive_url(row.photo_url),
             )
         )
@@ -482,9 +490,11 @@ class AleadoCrossAuditService:
         future_verified = 0
         for verified in verified_rows:
             trading_date = verified.row.trading_date
-            if trading_date is not None and timezone.is_naive(trading_date):
+            if trading_date is None:
+                continue
+            if timezone.is_naive(trading_date):
                 trading_date = timezone.make_aware(trading_date)
-            if trading_date is not None and trading_date > now:
+            if trading_date > now:
                 future_verified += 1
             else:
                 verified_past.append(verified)

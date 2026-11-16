@@ -34,9 +34,19 @@
     "Y3": {"bodywork": 8000},
     "S1": {"bodywork": 6500},
     "S2": {"bodywork": 6500},
+    "S3": {"bodywork": 6500},
     "C1": {"bodywork": 37500},
     "C2": {"bodywork": 37500},
-    "P": {"paint": 11000}
+    "C3": {"bodywork": 37500},
+    "P": {"paint": 11000},
+    "P1": {"paint": 11000},
+    "P2": {"paint": 11000},
+    "P3": {"paint": 11000},
+    "G": {"pdr_and_polish": 1500},
+    "G1": {"pdr_and_polish": 1500},
+    "G2": {"pdr_and_polish": 2000},
+    "G3": {"pdr_and_polish": 2500},
+    "R": {}
   },
-  "maximum_severity": {"A": 3, "U": 3, "W": 3, "Y": 3, "S": 2, "C": 2}
+  "maximum_severity": {"A": 3, "U": 3, "W": 3, "Y": 3, "S": 3, "C": 3}
 }

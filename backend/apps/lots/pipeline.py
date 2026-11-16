@@ -290,13 +290,23 @@ def _claim_next_queued_item(batch_id: uuid.UUID) -> BatchItem | None:
         item.status = ItemProcessingStatus.PROCESSING
         item.current_step = TaskStep.GATEKEEPER
         item.save(update_fields=["status", "current_step", "updated_at"])
+        Batch.objects.filter(pk=batch_id).update(updated_at=timezone.now())
         return item
 
 
+def _is_item_failed(item: BatchItem) -> bool:
+    return BatchItem.objects.filter(pk=item.pk, status=ItemProcessingStatus.FAILED).exists()
+
+
 def _advance_step(item: BatchItem, step: TaskStep) -> None:
-    item.current_step = step
-    item.save(update_fields=["current_step", "updated_at"])
-    time.sleep(_PIPELINE_STEP_DELAY_SEC)
+    updated = (
+        BatchItem.objects.filter(pk=item.pk)
+        .exclude(status=ItemProcessingStatus.FAILED)
+        .update(current_step=step, updated_at=timezone.now())
+    )
+    if updated:
+        item.current_step = step
+        time.sleep(_PIPELINE_STEP_DELAY_SEC)
 
 
 def _fail_item(item: BatchItem, step: TaskStep, message: str) -> None:
@@ -369,6 +379,8 @@ def _step_cross_audit(item: BatchItem) -> bool:
             logger.exception("Cross audit baseline failed for item %s", item.pk)
             _fail_item(item, TaskStep.FAILED, "Не удалось зафиксировать результаты кросс-аудита")
             return False
+    if _is_item_failed(item):
+        return False
     try:
         build_safety_checklist(lot)
     except Exception:
@@ -426,8 +438,11 @@ def _step_drom_market(item: BatchItem) -> bool:
             transmission=lot.transmission,
             fuel_type=lot.fuel_type,
             model_code=lot.model_code,
+            trim=lot.trim,
         )
         result = lots_services.DromMarketService().evaluate(criteria)
+        if _is_item_failed(item):
+            return False
         _persist_drom_market_result(lot, result)
         return True
     except DromFetchError as exc:
@@ -443,6 +458,8 @@ def _step_drom_market(item: BatchItem) -> bool:
 def _step_farpost_parts(item: BatchItem) -> bool:
     if item.lot is None:
         _fail_item(item, TaskStep.FAILED, "Лот не привязан к элементу пачки")
+        return False
+    if _is_item_failed(item):
         return False
     try:
         save_repair_estimate(item.lot)
@@ -564,16 +581,19 @@ def _run_step_in_worker(step_fn, item: BatchItem) -> bool:
 
 def _run_parallel_steps(item: BatchItem, step_fns: list) -> bool:
     pool = ThreadPoolExecutor(max_workers=len(step_fns))
-    succeeded = False
+    all_ok = True
     try:
         futures = {pool.submit(_run_step_in_worker, fn, item): fn for fn in step_fns}
         for future in as_completed(futures):
             if not future.result():
-                return False
-        succeeded = True
-        return True
+                all_ok = False
+                break
+        return all_ok
     finally:
-        pool.shutdown(wait=succeeded, cancel_futures=not succeeded)
+        # Cancel unstarted futures on early failure, while waiting for already
+        # started worker threads so they cannot outlive the item or race with
+        # FAILED finalization.
+        pool.shutdown(wait=True, cancel_futures=not all_ok)
 
 
 def _run_ocr_stage(item: BatchItem) -> bool:
@@ -674,6 +694,7 @@ def run_batch_pipeline(batch_id: uuid.UUID) -> None:
             item = _claim_next_queued_item(batch_id)
             if item is not None:
                 _process_item(item)
+                Batch.objects.filter(pk=batch_id).update(updated_at=timezone.now())
                 continue
             with transaction.atomic():
                 batch = Batch.objects.select_for_update().get(id=batch_id)

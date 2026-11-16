@@ -165,7 +165,7 @@ class ChassisOcrClient:
         )
 
         for model_name in candidates:
-            async with self._vision.key_pool.semaphore:
+            async with self._vision.key_pool.acquire():
                 api_key = self._vision.key_pool.next_key()
                 client = self._vision._get_client(api_key)
                 try:
@@ -220,7 +220,7 @@ class ChassisOcrClient:
                         cached=False,
                         duration_ms=int((time.perf_counter() - t0) * 1000),
                     ),
-                    True,
+                    frame_id is not None,
                 )
 
         logger.warning("Chassis OCR failed on all models; last error: %s", last_exc)

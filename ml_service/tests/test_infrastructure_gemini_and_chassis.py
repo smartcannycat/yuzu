@@ -453,10 +453,14 @@ async def test_chassis_ocr_429_does_not_cooldown_model_whitespace_and_corrupt_di
     assert res.frame_id is None
     assert res.raw is None
 
-    # Corrupted disk cache file falls back cleanly to Gemini instead of crashing
+    # Unreadable/null frame_id is not cached permanently on disk
     cache_files = list((tmp_path / "cache").glob("*.json"))
-    assert len(cache_files) == 1
-    cache_files[0].write_text("{corrupt", encoding="utf-8")
+    assert cache_files == []
+
+    # Corrupted disk cache file falls back cleanly to Gemini instead of crashing
+    cache_path = chassis_client._cache_path(img)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text("{corrupt", encoding="utf-8")
 
     vision._clients["k2"] = _FakeGenaiClient(
         models_handler=lambda **_kw: SimpleNamespace(

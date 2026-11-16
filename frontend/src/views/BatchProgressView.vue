@@ -9,6 +9,7 @@ import {
   OctagonAlert,
   Plus,
   RefreshCw,
+  Trash2,
 } from '@lucide/vue'
 import { useMediaQuery } from '@vueuse/core'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
@@ -393,6 +394,31 @@ function getItemSubtitle(item: BatchItemStatus): string {
                   <ChevronRight :size="16" class="text-text-tertiary shrink-0" />
                 </div>
               </button>
+            </BaseCard>
+
+            <!-- Soft-deleted Ready Lot Row -->
+            <BaseCard
+              v-else-if="item.status === 'ready' && !item.summary"
+              variant="surface"
+              padding="none"
+            >
+              <div class="flex items-center justify-between gap-3 px-4 py-3.5">
+                <div class="flex min-w-0 items-center gap-3">
+                  <span
+                    class="bg-surface-inset text-text-secondary flex h-8 w-8 shrink-0 items-center justify-center rounded-sm"
+                  >
+                    <Trash2 :size="16" :stroke-width="2" />
+                  </span>
+                  <div class="min-w-0">
+                    <div class="text-text-primary truncate text-[14px] font-semibold">
+                      {{ getItemTitle(item) }}
+                    </div>
+                    <div class="text-text-secondary truncate text-[12px]">Лот удалён из списка</div>
+                  </div>
+                </div>
+
+                <BaseBadge variant="neutral">Удалён</BaseBadge>
+              </div>
             </BaseCard>
 
             <!-- Failed Item Row -->

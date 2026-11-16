@@ -404,7 +404,7 @@ def test_outcome_info_status(freed_lot: Lot) -> None:
     assert outcome.has_critical_anomaly is False
     assert outcome.times_auctioned == 1
     assert outcome.history[0].auction_house == "TAA Hiroshima"
-    assert outcome.history[0].closing_price_jpy == 100000
+    assert outcome.history[0].closing_price_jpy is None
 
 
 def test_outcome_empty_history_mentions_candidates_checked(freed_lot: Lot) -> None:

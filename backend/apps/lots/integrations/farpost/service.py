@@ -152,12 +152,15 @@ def _activate_rate_limit_cooldown(cooldown_sec: int) -> None:
         logger.debug("Redis cooldown store skipped: %s", exc)
 
 
+_STALE_CACHE_MAX_AGE = timedelta(days=7)
+
+
 def _stale_fallback(entry: ExternalCache | None) -> tuple[list[PartOffer], bool]:
     previous = _read_offers(entry)
     if (
         previous
         and entry is not None
-        and timedelta(0) <= timezone.now() - entry.updated_at <= timedelta(days=1)
+        and timedelta(0) <= timezone.now() - entry.updated_at <= _STALE_CACHE_MAX_AGE
     ):
         return previous, True
     return [], True

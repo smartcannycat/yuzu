@@ -138,7 +138,11 @@ def _compact(value: str) -> str:
 
 def _contains_code(text: str, code: str) -> bool:
     # Highlight spans and vendor formatting may put whitespace inside body codes.
-    pattern = r"(?<![a-z0-9])" + r"\s*".join(map(re.escape, code.lower())) + r"(?![a-z0-9])"
+    # Base multi-digit chassis series (e.g., NRE210, ZRR80) match suffixed variants (NRE210W).
+    suffix = r"[a-z]?" if re.search(r"\d{2,}$", code) else ""
+    pattern = (
+        r"(?<![a-z0-9])" + r"\s*".join(map(re.escape, code.lower())) + suffix + r"(?![a-z0-9])"
+    )
     return bool(re.search(pattern, text.lower()))
 
 

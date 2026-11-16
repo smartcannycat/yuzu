@@ -44,7 +44,8 @@ export const useBatchesStore = defineStore('batches', () => {
 
   const canAppend = computed(() => {
     if (!activeBatch.value) return false
-    return activeBatch.value.status === 'queued' || activeBatch.value.status === 'processing'
+    const status = activeBatch.value.status
+    return status === 'queued' || status === 'processing' || status === 'partial_failed'
   })
 
   async function createBatch(

@@ -195,6 +195,8 @@ def test_cache_ttl_negative_marker_and_stale_age():
     )
     assert search_cached(source(error=True), CRITERIA, deadline=deadline) == ([OFFER], True)
     ExternalCache.objects.filter(key=key).update(updated_at=timezone.now() - timedelta(days=2))
+    assert search_cached(source(error=True), CRITERIA, deadline=deadline) == ([OFFER], True)
+    ExternalCache.objects.filter(key=key).update(updated_at=timezone.now() - timedelta(days=8))
     assert search_cached(source(error=True), CRITERIA, deadline=deadline) == ([], True)
     ExternalCache.objects.filter(key=key).update(payload={"offers": [{"price_rub": "bad"}]})
     assert search_cached(source(error=True), CRITERIA, deadline=deadline) == ([], True)

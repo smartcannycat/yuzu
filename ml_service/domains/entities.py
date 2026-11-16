@@ -211,6 +211,7 @@ class RawExtractionEntity:
             "right_hand_drive": self.right_hand_drive,
             "name_change_deadline": self.name_change_deadline,
             "color_raw": self.color_raw,
+            "color_changed_ru": self.color_changed_ru,
             "paint_code_raw": self.paint_code_raw,
             "shaken_raw": self.shaken_raw,
             "recycling_fee_raw": self.recycling_fee_raw,

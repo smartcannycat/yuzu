@@ -286,12 +286,27 @@ export const useLotsStore = defineStore('lots', () => {
     options: { resetBaseline: boolean },
   ): void {
     if (currentLotDetail.value?.lot_id === lotId) {
+      const current = currentLotDetail.value
       const updatedDetail: LotDetailResponse = {
-        ...currentLotDetail.value,
+        ...current,
         updated_at: response.recalculated_at,
+        passport: {
+          ...current.passport,
+          ...(response.power_hp !== undefined ? { power_hp: response.power_hp } : {}),
+          ...(response.power_hp_source !== undefined
+            ? { power_hp_source: response.power_hp_source }
+            : {}),
+          ...(response.is_under_160_hp !== undefined
+            ? { is_under_160_hp: response.is_under_160_hp }
+            : {}),
+          ...(response.ocr_warnings !== undefined ? { ocr_warnings: response.ocr_warnings } : {}),
+        },
         verdict: response.verdict,
         economics: {
-          ...currentLotDetail.value.economics,
+          ...current.economics,
+          ...(response.bid_slider_min_jpy !== undefined
+            ? { bid_slider_min_jpy: response.bid_slider_min_jpy }
+            : {}),
           is_repairs_included: response.include_repairs,
           is_simulation_modified: options.resetBaseline ? false : response.is_simulation_modified,
           customs: response.customs,

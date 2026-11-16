@@ -8,6 +8,7 @@ from django.utils import timezone
 
 from apps.core.enums import ExternalCacheSource
 from apps.core.models import ExternalCache
+from apps.lots.integrations.cache import upsert_external_cache
 from apps.lots.integrations.currency.domain import BaseRates, parse_fallback_config
 
 CACHE_KEY = "cbrf:currency_rates:v1"
@@ -48,13 +49,13 @@ class CurrencyCache:
         return parsed
 
     def write(self, rates: BaseRates, fetched_at: datetime, *, ttl: timedelta) -> None:
-        payload = self._serialize(rates, fetched_at)
-        defaults = {
-            "source": ExternalCacheSource.CBRF,
-            "payload": payload,
-            "expires_at": fetched_at + ttl,
-        }
-        ExternalCache.objects.update_or_create(key=CACHE_KEY, defaults=defaults)
+        upsert_external_cache(
+            CACHE_KEY,
+            source=ExternalCacheSource.CBRF,
+            payload=self._serialize(rates, fetched_at),
+            ttl=ttl,
+            now=fetched_at,
+        )
 
     def is_paused(self, *, now: datetime | None = None) -> bool:
         entry = ExternalCache.objects.filter(key=PAUSE_KEY).first()
@@ -65,13 +66,12 @@ class CurrencyCache:
 
     def mark_pause(self, *, now: datetime | None = None) -> None:
         moment = now or timezone.now()
-        ExternalCache.objects.update_or_create(
-            key=PAUSE_KEY,
-            defaults={
-                "source": ExternalCacheSource.CBRF,
-                "payload": {"reason": "source_error"},
-                "expires_at": moment + PAUSE_TTL,
-            },
+        upsert_external_cache(
+            PAUSE_KEY,
+            source=ExternalCacheSource.CBRF,
+            payload={"reason": "source_error"},
+            ttl=PAUSE_TTL,
+            now=moment,
         )
 
     def clear_pause(self) -> None:

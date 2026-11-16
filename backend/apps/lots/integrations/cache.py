@@ -9,7 +9,7 @@ from django.utils import timezone
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from datetime import timedelta
+    from datetime import datetime, timedelta
 
     from apps.core.enums import ExternalCacheSource
     from apps.core.models import ExternalCache
@@ -41,21 +41,22 @@ def upsert_external_cache(
     source: ExternalCacheSource,
     payload: dict[str, Any],
     ttl: timedelta,
+    now: datetime | None = None,
 ) -> None:
     """Atomically upsert an ExternalCache row, surviving concurrent inserts cleanly."""
     from apps.core.models import ExternalCache
 
-    now = timezone.now()
+    moment = now or timezone.now()
     defaults = {
         "source": source,
         "payload": payload,
-        "expires_at": now + ttl,
+        "expires_at": moment + ttl,
     }
     try:
         with transaction.atomic():
             ExternalCache.objects.update_or_create(key=key, defaults=defaults)
     except IntegrityError:
-        ExternalCache.objects.filter(key=key).update(**defaults, updated_at=now)
+        ExternalCache.objects.filter(key=key).update(**defaults, updated_at=moment)
 
 
 def fetch_with_external_cache[T](
