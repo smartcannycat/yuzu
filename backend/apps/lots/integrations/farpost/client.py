@@ -11,6 +11,11 @@ from urllib.parse import urljoin, urlparse
 
 from scrapling import Selector
 
+from apps.lots.integrations.captcha.farpost import (
+    FarpostCaptchaError,
+    FarpostCaptchaSolver,
+    is_farpost_challenge_response,
+)
 from apps.lots.integrations.http_client import (
     HttpBudgetExhaustedError,
     HttpFetchResponse,
@@ -521,6 +526,10 @@ class FarpostClient:
         proxy_ban_sec: float = 120.0,
         proxy_urls: Sequence[str] = (),
         transport: httpx.BaseTransport | None = None,
+        captcha_solver: FarpostCaptchaSolver | None = None,
+        captcha_max_attempts: int = 2,
+        captcha_solve_budget_sec: float = 20.0,
+        captcha_max_workers: int | None = None,
     ):
         self.timeout_sec = timeout_sec
         self.request_interval_sec = request_interval_sec
@@ -533,6 +542,12 @@ class FarpostClient:
             )
             if proxy_urls
             else None
+        )
+        self._captcha_solver = captcha_solver or FarpostCaptchaSolver(
+            max_attempts=captcha_max_attempts,
+            solve_budget_sec=captcha_solve_budget_sec,
+            max_workers=captcha_max_workers,
+            request_timeout_sec=timeout_sec,
         )
         self._session: ResilientHttpSession | None = None
 
@@ -586,13 +601,32 @@ class FarpostClient:
             jitter_sec=self.request_jitter_sec,
             deadline=deadline,
         )
-        if response.status_code in {403, 429} or urlparse(response.url).path.startswith("/verify"):
+        if response.status_code in {403, 429}:
             session.mark_proxy_blocked(
                 response.proxy_key,
                 url=_FARPOST_URL,
                 cooldown_sec=self.proxy_ban_sec,
             )
-            raise FarpostRateLimitedError("Farpost rate limited or anti-bot verification requested")
+            raise FarpostRateLimitedError("Farpost rate limited the request")
+        if is_farpost_challenge_response(response):
+            try:
+                response = self._captcha_solver.solve(session, response, deadline=deadline)
+            except FarpostCaptchaError as exc:
+                session.mark_proxy_blocked(
+                    response.proxy_key,
+                    url=_FARPOST_URL,
+                    cooldown_sec=self.proxy_ban_sec,
+                )
+                raise FarpostRateLimitedError(
+                    "Farpost anti-bot verification could not be solved"
+                ) from exc
+        if response.status_code in {403, 429}:
+            session.mark_proxy_blocked(
+                response.proxy_key,
+                url=_FARPOST_URL,
+                cooldown_sec=self.proxy_ban_sec,
+            )
+            raise FarpostRateLimitedError("Farpost rate limited the request")
         if response.status_code >= 500:
             session.mark_proxy_blocked(
                 response.proxy_key,

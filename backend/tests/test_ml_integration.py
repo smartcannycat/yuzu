@@ -451,7 +451,7 @@ def test_missing_auction_house_defaults_to_other_with_warning(batch_item) -> Non
     lot.refresh_from_db()
     assert lot.auction_house == AuctionHouse.OTHER
     assert lot.auction_strictness_index == pytest.approx(0.65)
-    assert any("auction_house" in warning for warning in lot.ocr_warnings)
+    assert any("Аукционный дом не указан" in warning for warning in lot.ocr_warnings)
 
 
 @pytest.mark.django_db

@@ -74,11 +74,25 @@ contains planning estimates from the project research, not current STO quotes.
 A part without a documented price uses the generic RUB 29,000 reserve. Work prices
 include material costs where applicable. Duplicate defects do not duplicate work.
 
-Farpost may return an anti-bot challenge with HTTP 200. The client treats it as an
-error and does not bypass it. A live listing excerpt is stored under
-`tests/fixtures/farpost`; its stock filter was not selected in the original page.
-The parser tests select that filter explicitly to exercise the captured markup.
-An end-to-end live quote still requires a response that confirms local stock.
+Farpost may return an anti-bot `/verify` page with HTTP 200. The shared
+`apps/lots/integrations/captcha` package detects the Bottopotamus challenge,
+fetches the ALTCHA proof-of-work JSON and solves it locally (legacy v1 and modern
+v2, including SHA, PBKDF2 and argon2id). The solved payload is submitted with the
+signed `s` token and the request continues on the same proxy and cookie jar, so a
+verification challenge no longer aborts a batch. `FARPOST_CAPTCHA_MAX_ATTEMPTS`,
+`FARPOST_CAPTCHA_SOLVE_BUDGET_SEC` and `FARPOST_CAPTCHA_MAX_WORKERS` control the
+solver. If Farpost escalates to its secondary image CAPTCHA, a Tesseract-based solver is
+enabled by default in production (`docker-compose.prod.yml` sets
+`FARPOST_CAPTCHA_OCR_ENABLED=true` and the `prod` image includes `tesseract-ocr`).
+In local/dev setups it stays optional and defaults to `false` (enable with
+`FARPOST_CAPTCHA_OCR_ENABLED=true`, and pass `INSTALL_TESSERACT=true` when
+building the `dev` Docker target); when disabled or unavailable, the usual
+cached/statistical fallback is used.
+
+A live listing excerpt is stored under `tests/fixtures/farpost`; its stock
+filter was not selected in the original page. The parser tests select that
+filter explicitly to exercise the captured markup. An end-to-end live quote
+still requires a response that confirms local stock.
 
 ## Commands
 

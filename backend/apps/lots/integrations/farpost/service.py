@@ -20,6 +20,10 @@ from redis.exceptions import RedisError
 from apps.core.enums import ExternalCacheSource, WorkType
 from apps.core.models import ExternalCache
 from apps.core.redis_utils import get_redis_client
+from apps.lots.integrations.captcha import (
+    FarpostCaptchaSolver,
+    TesseractImageCaptchaSolver,
+)
 from apps.lots.integrations.farpost.client import (
     FarpostClient,
     FarpostFetchError,
@@ -190,10 +194,8 @@ def _search_cached_with_reason(
         stale_offers, stale = _stale_fallback(entry)
         return stale_offers, stale, "rate_limited"
     try:
-        if (
-            isinstance(client, FarpostClient)
-            and getattr(type(client), "search", None) is FarpostClient.search
-        ):
+        real_search = getattr(FarpostClient, "search", None)
+        if real_search is not None and getattr(type(client), "search", None) is real_search:
             parse_result = client.search_with_metadata(query_criteria, deadline=deadline)
         else:
             parse_result = ParseResult(
@@ -344,12 +346,24 @@ def _work_label(kind: WorkType, name: str, panel: str) -> str:
 def estimate_repair(lot: Lot, *, client: FarpostClient | None = None) -> RepairSchema:
     settings = get_settings()
     managed = client is None
+    image_solver = (
+        TesseractImageCaptchaSolver(command=settings.FARPOST_CAPTCHA_OCR_COMMAND)
+        if settings.FARPOST_CAPTCHA_OCR_ENABLED
+        else None
+    )
     active_client = client or FarpostClient(
         timeout_sec=settings.SCRAPER_TIMEOUT_SEC,
         request_interval_sec=settings.SCRAPER_REQUEST_INTERVAL_SEC,
         request_jitter_sec=settings.SCRAPER_REQUEST_JITTER_SEC,
         proxy_ban_sec=settings.SCRAPER_PROXY_BAN_SEC,
         proxy_urls=settings.SCRAPER_PROXY_URLS,
+        captcha_solver=FarpostCaptchaSolver(
+            max_attempts=settings.FARPOST_CAPTCHA_MAX_ATTEMPTS,
+            solve_budget_sec=settings.FARPOST_CAPTCHA_SOLVE_BUDGET_SEC,
+            max_workers=settings.FARPOST_CAPTCHA_MAX_WORKERS,
+            request_timeout_sec=settings.SCRAPER_TIMEOUT_SEC,
+            image_solver=image_solver,
+        ),
     )
     deadline = time.monotonic() + settings.FARPOST_BUDGET_SEC
     matrix = repair_matrix()

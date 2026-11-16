@@ -160,6 +160,12 @@ class ProxyPool:
                 blocked[fp] = self._ban_cooldown_sec
         return blocked
 
+    def proxy_for_key(self, proxy_key: str) -> str | None:
+        """Return a configured proxy by its non-sensitive fingerprint."""
+        if not proxy_key:
+            return None
+        return self._by_fingerprint.get(proxy_key)
+
     def next_proxy(self, *, domain: str | None = None) -> str | None:
         """Select the next non-quarantined proxy for ``domain``, falling back gracefully."""
         if not self._proxies:

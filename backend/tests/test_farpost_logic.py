@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock
 
 import httpx
 import pytest
@@ -771,4 +771,137 @@ def test_services_read_shared_scraper_settings(monkeypatch):
         "request_jitter_sec": 0.3,
         "proxy_ban_sec": 95,
         "proxy_urls": ["http://shared-proxy:8080"],
+        "captcha_solver": ANY,
     }
+
+
+def test_resilient_http_session_post_proxy_pinning_and_error_scrubbing(monkeypatch):
+    monkeypatch.setattr("apps.lots.integrations.proxy.get_redis_client", lambda: None)
+    pool = ProxyPool(
+        ["http://u:secret@p1:8080", "http://u:secret@p2:8080"],
+        domain="farpost.ru",
+        use_redis=False,
+    )
+    p1_key = proxy_fingerprint("http://u:secret@p1:8080")
+    assert pool.proxy_for_key(p1_key) == "http://u:secret@p1:8080"
+    assert pool.proxy_for_key("missing") is None
+    assert pool.proxy_for_key("") is None
+
+    def post_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oversized":
+            return httpx.Response(200, content=b"x" * 64)
+        return httpx.Response(200, text=f"posted:{request.content.decode()}")
+
+    session = ResilientHttpSession(
+        proxy_rotator=pool,
+        transport=httpx.MockTransport(post_handler),
+    )
+    with session:
+        resp = session.post(
+            "https://www.farpost.ru/verify",
+            data={"s": "tok", "altcha": "sol"},
+            proxy_key=p1_key,
+            deadline=time.monotonic() + 10,
+        )
+        assert resp.status_code == 200
+        assert resp.proxy_key == p1_key
+        assert "s=tok" in resp.content.decode()
+        assert p1_key in session._httpx_clients
+
+        with pytest.raises(HttpTransportError, match="exceeds limit"):
+            session.post(
+                "https://www.farpost.ru/oversized",
+                data={"a": "1"},
+                max_bytes=10,
+                proxy_key=p1_key,
+            )
+
+        with pytest.raises(HttpBudgetExhaustedError):
+            session.post(
+                "https://www.farpost.ru/verify",
+                data={"a": "1"},
+                deadline=time.monotonic() - 1.0,
+            )
+
+        session.drop_proxy_session(p1_key)
+        assert p1_key not in session._httpx_clients
+
+    class FailingCurlPostSession:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, _url, **_kwargs):
+            raise CurlRequestsError(
+                "POST proxy auth failed for 'http://myuser:topsecret@127.0.0.1:8080'"
+            )
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(
+        "apps.lots.integrations.http_client.curl_requests.Session", FailingCurlPostSession
+    )
+    curl_session = ResilientHttpSession(
+        proxy_rotator=ProxyPool(["http://myuser:topsecret@127.0.0.1:8080"], use_redis=False)
+    )
+    with pytest.raises(HttpTransportError) as exc_info:
+        curl_session.post("https://www.farpost.ru/verify", data={"s": "1"})
+    assert "topsecret" not in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
+
+
+def test_estimate_repair_forwards_captcha_and_ocr_settings(monkeypatch):
+    from apps.lots.integrations.captcha import FarpostCaptchaSolver, TesseractImageCaptchaSolver
+
+    fake_settings = AppSettings(
+        _env_file=None,
+        FARPOST_CAPTCHA_MAX_ATTEMPTS=4,
+        FARPOST_CAPTCHA_SOLVE_BUDGET_SEC=12.5,
+        FARPOST_CAPTCHA_MAX_WORKERS=3,
+        FARPOST_CAPTCHA_OCR_ENABLED=True,
+        FARPOST_CAPTCHA_OCR_COMMAND="/opt/bin/tesseract",
+        SCRAPER_TIMEOUT_SEC=11.0,
+    )
+    monkeypatch.setattr(
+        "apps.lots.integrations.farpost.service.get_settings", lambda: fake_settings
+    )
+    captured_kwargs: dict[str, object] = {}
+
+    class CapturingFarpostClient:
+        def __init__(self, **kwargs):
+            captured_kwargs.update(kwargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return None
+
+    monkeypatch.setattr(
+        "apps.lots.integrations.farpost.service.FarpostClient", CapturingFarpostClient
+    )
+    dummy_lot = SimpleNamespace(
+        make="Toyota",
+        model="Corolla",
+        model_code="NRE210",
+        frame_id="",
+        chassis_number="",
+        paint_code="",
+        defects=SimpleNamespace(all=lambda: []),
+    )
+    estimate_repair(dummy_lot)
+
+    solver = captured_kwargs["captcha_solver"]
+    assert isinstance(solver, FarpostCaptchaSolver)
+    assert solver.max_attempts == 4
+    assert solver.solve_budget_sec == 12.5
+    assert solver.max_workers == 3
+    assert solver.request_timeout_sec == 11.0
+    assert isinstance(solver.image_solver, TesseractImageCaptchaSolver)
+    assert solver.image_solver.command == "/opt/bin/tesseract"
