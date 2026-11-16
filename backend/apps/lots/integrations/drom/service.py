@@ -4,8 +4,6 @@ from dataclasses import dataclass, replace
 from datetime import timedelta
 from typing import Any
 
-from django.conf import settings
-
 from apps.lots.integrations.drom.cache import fetch_with_drom_cache
 from apps.lots.integrations.drom.client import DromHttpClient
 from apps.lots.integrations.drom.filtering import (
@@ -121,18 +119,25 @@ class DromMarketService:
 
     def __init__(self, client: DromHttpClient | None = None) -> None:
         app_settings = get_settings()
-        timeout = float(
-            getattr(settings, "HTTP_CLIENT_TIMEOUT_SEC", app_settings.HTTP_CLIENT_TIMEOUT_SEC)
-        )
+        self._managed_client = client is None
         self._client = client or DromHttpClient(
-            timeout_sec=timeout,
-            proxy_urls=app_settings.DROM_PROXY_URLS,
+            timeout_sec=app_settings.SCRAPER_TIMEOUT_SEC,
+            request_interval_sec=app_settings.SCRAPER_REQUEST_INTERVAL_SEC,
+            request_jitter_sec=app_settings.SCRAPER_REQUEST_JITTER_SEC,
+            proxy_ban_sec=float(app_settings.SCRAPER_PROXY_BAN_SEC),
+            proxy_urls=app_settings.SCRAPER_PROXY_URLS,
         )
         self._slug_resolver = DromSlugResolver(self._client)
         self._power_resolver = DromPowerResolver(self._client, self._slug_resolver)
 
     def evaluate(self, criteria: DromSearchCriteria) -> DromMarketResult:
         """Fetch Drom market analogs and engine power_hp for a parsed auction lot."""
+        if self._managed_client and hasattr(type(self._client), "__enter__"):
+            with self._client:
+                return self._evaluate_with_client(criteria)
+        return self._evaluate_with_client(criteria)
+
+    def _evaluate_with_client(self, criteria: DromSearchCriteria) -> DromMarketResult:
         power = self._power_resolver.resolve(
             make=criteria.make,
             model=criteria.model,

@@ -62,10 +62,11 @@ adds painting costs. Fixed panels use restoration estimates; glass does not incu
 painting costs. The step saves the existing repair API contract without exposing
 listing URLs or updating completed lots.
 
-`FARPOST_TIMEOUT_SEC` defaults to 5 seconds per request. `FARPOST_BUDGET_SEC`
-defaults to 20 seconds for source requests per lot. Successful searches are cached
-in PostgreSQL for one hour; valid empty searches for ten minutes. Source failures
-use successful results up to one day old, then the statistical matrix. Stale
+`SCRAPER_TIMEOUT_SEC` defaults to 10 seconds per request and `SCRAPER_PROXY_URLS`
+provides the shared rotating proxy pool across Drom and Farpost. `FARPOST_BUDGET_SEC`
+defaults to 30 seconds for source requests per lot. Successful Farpost searches are
+cached in PostgreSQL for 24 hours; valid empty searches for 10 minutes. Source
+failures use successful results up to one day old, then the statistical matrix. Stale
 results do not confirm current stock or a color match.
 
 The versioned matrix in `apps/lots/integrations/farpost/data/repair_matrix.json`

@@ -56,15 +56,18 @@ class AppSettings(BaseSettings):
     ML_SERVICE_TIMEOUT_SEC: float = 30.0
     ML_SERVICE_API_KEY: str = ""
     CBRF_API_URL: str = "https://www.cbr-xml-daily.ru/daily_json.js"
-    HTTP_CLIENT_TIMEOUT_SEC: float = 10.0
-    FARPOST_TIMEOUT_SEC: float = Field(default=8.0, gt=0, allow_inf_nan=False)
+
+    # Shared scraper transport & rate-limit settings (used by Drom and Farpost)
+    SCRAPER_PROXY_URLS: list[str] | str = []
+    SCRAPER_PROXY_BAN_SEC: int = Field(default=120, ge=0)
+    SCRAPER_TIMEOUT_SEC: float = Field(default=10.0, gt=0, allow_inf_nan=False)
+    SCRAPER_REQUEST_INTERVAL_SEC: float = Field(default=1.2, ge=0, allow_inf_nan=False)
+    SCRAPER_REQUEST_JITTER_SEC: float = Field(default=0.4, ge=0, allow_inf_nan=False)
+
+    # Farpost-specific repair workflow settings
     FARPOST_BUDGET_SEC: float = Field(default=30.0, gt=0, allow_inf_nan=False)
-    FARPOST_REQUEST_INTERVAL_SEC: float = Field(default=1.5, ge=0, allow_inf_nan=False)
-    FARPOST_REQUEST_JITTER_SEC: float = Field(default=0.4, ge=0, allow_inf_nan=False)
     FARPOST_COOLDOWN_SEC: int = Field(default=45, ge=0)
     FARPOST_CACHE_TTL_HOURS: int = Field(default=24, ge=1)
-    FARPOST_PROXY_URLS: list[str] | str = []
-    DROM_PROXY_URLS: list[str] | str = []
 
     # CBRF currency gateway (BE-05)
     CBRF_TIMEOUT_SEC: float = Field(default=5.0, gt=0, allow_inf_nan=False)
@@ -91,8 +94,7 @@ class AppSettings(BaseSettings):
         "ALLOWED_HOSTS",
         "CORS_ALLOWED_ORIGINS",
         "CSRF_TRUSTED_ORIGINS",
-        "FARPOST_PROXY_URLS",
-        "DROM_PROXY_URLS",
+        "SCRAPER_PROXY_URLS",
     )
     @classmethod
     def parse_comma_separated_list(cls, value: list[str] | str) -> list[str]:
