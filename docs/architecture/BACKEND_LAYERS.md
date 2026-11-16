@@ -36,6 +36,6 @@ flowchart TD
 
 ## Automated Enforcement (`import-linter` & `ruff`)
 
-- `[tool.importlinter]` in `backend/pyproject.toml` enforces architectural boundaries (activated incrementally across PR 2 → PR 4).
+- `[tool.importlinter]` in `backend/pyproject.toml` enforces all architectural layer boundaries (6 contracts across `core`, `lots.models`, `integrations`, `lots.calculator`, `lots.pipeline`, and `lots.lifecycle`).
 - `ruff` checks complexity (`C901`, `max-complexity = 12`) and code hygiene alongside pytest.
 - Module size soft target: **≤ 300–350 lines** per module (split before growing monoliths).

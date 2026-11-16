@@ -54,7 +54,7 @@ class TestAdapters:
     def test_schema_is_strict(self) -> None:
         from pydantic import ValidationError
 
-        from apps.lots.schemas import CurrencyRates
+        from apps.lots.api.schemas import CurrencyRates
 
         with pytest.raises(ValidationError):
             CurrencyRates.model_validate({"jpy_rub_bank": 0.6})

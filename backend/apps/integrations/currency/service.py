@@ -14,12 +14,12 @@ from apps.integrations.currency.client import CbrfClient, CbrfFetchError
 from apps.integrations.currency.domain import (
     JPY_RATE_SOURCE_TEMPLATE,
     BaseRates,
+    CurrencyRates,
     CurrencyRatesResult,
     RatesOrigin,
     compute_commercial_jpy,
     parse_fallback_config,
 )
-from apps.lots.schemas import CurrencyRates
 from config.settings.config import get_settings
 
 logger = logging.getLogger(__name__)

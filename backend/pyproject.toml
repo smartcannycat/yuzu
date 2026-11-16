@@ -101,12 +101,10 @@ source_modules = ["apps.lots.models"]
 forbidden_modules = [
     "apps.lots.api",
     "apps.lots.pipeline",
-    "apps.lots.recalc",
-    "apps.lots.economics",
-    "apps.lots.scoring",
-    "apps.lots.safety",
-    "apps.lots.customs",
-    "apps.lots.queries",
+    "apps.lots.calculator",
+    "apps.lots.services",
+    "apps.lots.lifecycle",
+    "apps.lots.starter_lots",
     "apps.integrations",
 ]
 
@@ -117,15 +115,39 @@ source_modules = ["apps.integrations"]
 forbidden_modules = [
     "apps.lots.api",
     "apps.lots.pipeline",
-    "apps.lots.recalc",
-    "apps.lots.economics",
-    "apps.lots.scoring",
-    "apps.lots.safety",
-    "apps.lots.customs",
-    "apps.lots.queries",
+    "apps.lots.calculator",
+    "apps.lots.services",
     "apps.lots.lifecycle",
     "apps.lots.media",
     "apps.lots.starter_lots",
+]
+
+[[tool.importlinter.contracts]]
+name = "Calculator domain is independent of API, pipeline, and integrations"
+type = "forbidden"
+source_modules = ["apps.lots.calculator"]
+forbidden_modules = [
+    "apps.lots.api",
+    "apps.lots.pipeline",
+    "apps.lots.services",
+    "apps.integrations",
+]
+
+[[tool.importlinter.contracts]]
+name = "Pipeline does not import API controllers, schemas, or queries"
+type = "forbidden"
+source_modules = ["apps.lots.pipeline"]
+forbidden_modules = [
+    "apps.lots.api",
+]
+
+[[tool.importlinter.contracts]]
+name = "Lots lifecycle is independent of API and integrations"
+type = "forbidden"
+source_modules = ["apps.lots.lifecycle"]
+forbidden_modules = [
+    "apps.lots.api",
+    "apps.integrations",
 ]
 
 [tool.pytest.ini_options]

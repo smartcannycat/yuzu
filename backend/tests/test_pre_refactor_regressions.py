@@ -41,8 +41,11 @@ from apps.integrations.farpost.parser import _contains_code
 from apps.integrations.farpost.service import estimate_repair
 from apps.integrations.ml.parser import _sheet_to_lot_fields
 from apps.integrations.ml.schemas import NormalizedSheet, ParserResponse
-from apps.lots.customs import meti_sanction_risk
-from apps.lots.economics import _resolve_start_bid_jpy
+from apps.lots.api.queries import _build_normalized_sheet
+from apps.lots.api.schemas import RecalculateRequest
+from apps.lots.calculator.customs import meti_sanction_risk
+from apps.lots.calculator.economics import _resolve_start_bid_jpy
+from apps.lots.calculator.safety import build_safety_checklist
 from apps.lots.models import (
     CurrencyRatesSnapshot,
     CustomsCalculation,
@@ -53,10 +56,7 @@ from apps.lots.models import (
     PastAuctionRecord,
     WiseCostLadder,
 )
-from apps.lots.queries import _build_normalized_sheet
-from apps.lots.recalc import recalculate_lot
-from apps.lots.safety import build_safety_checklist
-from apps.lots.schemas import RecalculateRequest
+from apps.lots.services import recalculate_lot
 from apps.users.models import User
 
 

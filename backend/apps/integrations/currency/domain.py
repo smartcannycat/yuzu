@@ -5,6 +5,10 @@ from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from enum import StrEnum
 
+from pydantic import Field
+
+from apps.core.schemas import StrictBaseModel
+
 _RATE_QUANT = Decimal("0.0001")
 
 
@@ -105,3 +109,13 @@ def parse_fallback_config(raw: dict[str, str | float] | None) -> BaseRates | Non
 
 
 JPY_RATE_SOURCE_TEMPLATE = "Расчётный ориентир: ЦБ РФ + {pct}%"
+
+
+class CurrencyRates(StrictBaseModel):
+    """Public snapshot contract for resolved CBRF / commercial JPY rates."""
+
+    jpy_rub_bank: float = Field(..., description="Commercial JPY/RUB rate (Far East bank)")
+    jpy_rate_source: str = Field("ДВ-банк (ориентир)", description="Source of JPY/RUB rate")
+    eur_rub_cbrf: float = Field(..., description="Official EUR/RUB rate from CBRF")
+    usd_rub_cbrf: float = Field(..., description="Official USD/RUB rate from CBRF")
+    cbrf_date: str = Field(..., description="CBRF rate fixation date (DD.MM.YYYY)")

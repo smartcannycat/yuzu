@@ -444,7 +444,7 @@ def test_step_drom_market_persists_lot_and_market_info(user_factory) -> None:
         )
 
     mock_service = DromMarketService(client=DromHttpClient(transport=httpx.MockTransport(handler)))
-    with patch("apps.lots.services.DromMarketService", return_value=mock_service):
+    with patch("apps.lots.pipeline.stages.DromMarketService", return_value=mock_service):
         ok = _step_drom_market(item)
 
     assert ok is True
@@ -481,7 +481,7 @@ def test_step_drom_market_marks_item_failed_on_unavailable_model(user_factory) -
     mock_service = DromMarketService(
         client=DromHttpClient(max_retries=0, transport=httpx.MockTransport(blocked_handler))
     )
-    with patch("apps.lots.services.DromMarketService", return_value=mock_service):
+    with patch("apps.lots.pipeline.stages.DromMarketService", return_value=mock_service):
         ok = _step_drom_market(item)
 
     assert ok is False

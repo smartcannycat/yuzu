@@ -47,7 +47,7 @@ from apps.integrations.drom.schemas import (
 )
 from apps.integrations.drom.service import DromMarketService, _build_market_cache_key
 from apps.integrations.drom.slugs import DromSlugResolver, normalize_slug
-from apps.lots import schemas
+from apps.lots.api import schemas
 from apps.lots.models import (
     Batch,
     BatchItem,
@@ -634,7 +634,7 @@ def test_step_drom_market_preserves_manual_power_hp(user_factory) -> None:
         )
 
     mock_service = DromMarketService(client=DromHttpClient(transport=httpx.MockTransport(handler)))
-    with patch("apps.lots.services.DromMarketService", return_value=mock_service):
+    with patch("apps.lots.pipeline.stages.DromMarketService", return_value=mock_service):
         assert _step_drom_market(item) is True
 
     lot.refresh_from_db()
@@ -840,7 +840,7 @@ def test_concurrent_write_drom_cache_and_step_drom_market(user_factory) -> None:
             service = DromMarketService(
                 client=DromHttpClient(transport=httpx.MockTransport(handler))
             )
-            with patch("apps.lots.services.DromMarketService", return_value=service):
+            with patch("apps.lots.pipeline.stages.DromMarketService", return_value=service):
                 return _step_drom_market(batch_item)
         finally:
             connections.close_all()
@@ -1007,7 +1007,7 @@ def test_full_lot_step_drom_market_and_contract_serialization(user_factory) -> N
         )
 
     mock_service = DromMarketService(client=DromHttpClient(transport=httpx.MockTransport(handler)))
-    with patch("apps.lots.services.DromMarketService", return_value=mock_service):
+    with patch("apps.lots.pipeline.stages.DromMarketService", return_value=mock_service):
         assert _step_drom_market(item) is True
 
     lot.refresh_from_db()

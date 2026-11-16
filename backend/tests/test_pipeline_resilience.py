@@ -32,8 +32,9 @@ from apps.integrations.ml.parser import (
     _sheet_to_lot_fields,
 )
 from apps.integrations.ml.schemas import NormalizedSheet, ParserResponse
-from apps.lots.customs import CurrencyRatesInput, CustomsInput, calculate_customs
-from apps.lots.economics import (
+from apps.lots.api.queries import _sanitize_strictness_index
+from apps.lots.calculator.customs import CurrencyRatesInput, CustomsInput, calculate_customs
+from apps.lots.calculator.economics import (
     DEFAULT_BID_SLIDER_MAX_JPY,
     EV_MISSING_POWER_WARNING,
     MAX_DYNAMIC_BID_SLIDER_MAX_JPY,
@@ -41,7 +42,6 @@ from apps.lots.economics import (
     compute_bid_slider_max_jpy,
     ensure_dynamic_bid_slider_max,
 )
-from apps.lots.queries import _sanitize_strictness_index
 
 
 def _ssr_html_with_groups(groups: list[dict]) -> bytes:

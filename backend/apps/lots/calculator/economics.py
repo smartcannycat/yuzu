@@ -1,13 +1,32 @@
+"""Transactional economics recomputation and start-bid resolution."""
+
+from __future__ import annotations
+
 import math
 from datetime import date
-from typing import Any
 
 from django.db import transaction
 from django.utils import timezone
 
 from apps.core.enums import AgeCorridor, FuelType, PowerHpSource
-from apps.lots import schemas
-from apps.lots.customs import (
+from apps.lots.calculator.baseline import (
+    DEFAULT_BID_SLIDER_MAX_JPY,
+    DEFAULT_BID_SLIDER_MIN_JPY,
+    EV_MISSING_POWER_WARNING,
+    MAX_DYNAMIC_BID_SLIDER_MAX_JPY,
+    _extract_rates,
+    _sync_ev_missing_power_warning,
+    build_baseline_snapshot,
+    compute_bid_slider_max_jpy,
+    ensure_dynamic_bid_slider_max,
+    ensure_lot_baseline,
+    extract_rates,
+    is_simulation_modified,
+    save_customs_calculation,
+    save_wise_ladder,
+    to_rates_input,
+)
+from apps.lots.calculator.customs import (
     DEFAULT_FREIGHT_USD,
     DEFAULT_JAPAN_FOB_JPY,
     CurrencyRatesInput,
@@ -19,116 +38,41 @@ from apps.lots.customs import (
     derive_start_bid_from_market,
 )
 from apps.lots.models import (
-    CurrencyRatesSnapshot,
     CustomsCalculation,
     FarpostRepairSummary,
     Lot,
     PastAuctionRecord,
     WiseCostLadder,
-    WiseCostStep,
 )
+
+__all__ = [
+    "DEFAULT_BID_SLIDER_MAX_JPY",
+    "DEFAULT_BID_SLIDER_MIN_JPY",
+    "EV_MISSING_POWER_WARNING",
+    "MAX_DYNAMIC_BID_SLIDER_MAX_JPY",
+    "_extract_rates",
+    "_missing_customs_inputs",
+    "_resolve_start_bid_jpy",
+    "_sync_ev_missing_power_warning",
+    "build_baseline_snapshot",
+    "compute_bid_slider_max_jpy",
+    "ensure_dynamic_bid_slider_max",
+    "ensure_lot_baseline",
+    "extract_rates",
+    "is_simulation_modified",
+    "recompute_lot_economics",
+]
 
 _LEGACY_COROLLA_FRAME_ID = "NRE210-2005418"
-DEFAULT_BID_SLIDER_MIN_JPY = 100_000
-DEFAULT_BID_SLIDER_MAX_JPY = 2_500_000
-MAX_DYNAMIC_BID_SLIDER_MAX_JPY = 50_000_000
-_SLIDER_MAX_STEP_JPY = 100_000
-EV_MISSING_POWER_WARNING = (
-    "Мощность (л.с.) для электромобиля не найдена — акциз принят равным 0 ₽, "
-    "укажите мощность вручную в симуляторе"
-)
-
-
-def compute_bid_slider_max_jpy(
-    *,
-    market_price_rf_rub: int | None,
-    jpy_rub: float | None,
-    auction_bid_jpy: int | None = None,
-    current_max_jpy: int | None = None,
-) -> int:
-    """Compute a bid slider upper bound (JPY) scaled for high-value vehicles."""
-    candidates = [
-        DEFAULT_BID_SLIDER_MAX_JPY,
-        current_max_jpy or 0,
-        auction_bid_jpy or 0,
-    ]
-    if market_price_rf_rub and market_price_rf_rub > 0 and jpy_rub and jpy_rub > 0:
-        estimated_jpy = (
-            math.ceil((market_price_rf_rub / jpy_rub) / _SLIDER_MAX_STEP_JPY) * _SLIDER_MAX_STEP_JPY
-        )
-        candidates.append(estimated_jpy)
-    return min(MAX_DYNAMIC_BID_SLIDER_MAX_JPY, max(candidates))
-
-
-def _sync_ev_missing_power_warning(
-    lot: Lot,
-    power_hp: int | None,
-    lot_update_fields: list[str],
-) -> None:
-    """Keep EV missing-power warning aligned with current ``power_hp`` state."""
-    warnings = list(lot.ocr_warnings or [])
-    if lot.fuel_type == FuelType.EV and power_hp is None:
-        if EV_MISSING_POWER_WARNING not in warnings:
-            warnings.append(EV_MISSING_POWER_WARNING)
-            lot.ocr_warnings = warnings
-            lot_update_fields.append("ocr_warnings")
-    elif EV_MISSING_POWER_WARNING in warnings:
-        lot.ocr_warnings = [w for w in warnings if w != EV_MISSING_POWER_WARNING]
-        lot_update_fields.append("ocr_warnings")
-
-
-def ensure_dynamic_bid_slider_max(lot: Lot, jpy_rub: float | None = None) -> int:
-    """Ensure ``lot.bid_slider_max_jpy`` fits the car's estimated JPY value."""
-    if jpy_rub is None:
-        rates_data, _ = _extract_rates(lot, None)
-        if rates_data is not None:
-            jpy_rub = rates_data.jpy_rub_bank
-    target_max = compute_bid_slider_max_jpy(
-        market_price_rf_rub=lot.market_price_rf_rub,
-        jpy_rub=jpy_rub,
-        auction_bid_jpy=lot.auction_bid_jpy,
-        current_max_jpy=lot.bid_slider_max_jpy,
-    )
-    if target_max != (lot.bid_slider_max_jpy or 0):
-        lot.bid_slider_max_jpy = target_max
-        if lot.pk is not None:
-            lot.save(update_fields=["bid_slider_max_jpy", "updated_at"])
-    return target_max
 
 
 def _resolve_calculation_date(lot: Lot, on_date: date | None) -> date:
     if on_date is not None:
         return on_date
     if lot.frame_id == _LEGACY_COROLLA_FRAME_ID and not hasattr(lot, "batch_item"):
-        # TODO(BE-05/BE-11): benchmark freeze. The canonical Corolla
-        # fixture pins the declaration date so the seeded lot keeps
-        # reproducing the "3-5 years" corridor of the API contract
-        # (its real age at the 12.11.2026 rates snapshot is 6 years).
-        # Remove once a real declaration date source exists.
+        # Canonical seeded benchmark pins declaration date to stay in 3-5y corridor.
         return date(2025, 10, 15)
     return timezone.localdate()
-
-
-def _extract_rates(
-    lot: Lot, customs_model: CustomsCalculation | None
-) -> tuple[schemas.CurrencyRates | None, CurrencyRatesSnapshot | None]:
-    rates_model = (
-        CurrencyRatesSnapshot.objects.filter(customs=customs_model).first()
-        if customs_model is not None
-        else None
-    )
-    raw_rates = rates_model if rates_model is not None else lot.customs_rates_input
-    if raw_rates is None:
-        return None, rates_model
-    return schemas.CurrencyRates.model_validate(raw_rates), rates_model
-
-
-def _to_rates_input(rates_data: schemas.CurrencyRates) -> CurrencyRatesInput:
-    return CurrencyRatesInput(
-        jpy_rub=rates_data.jpy_rub_bank,
-        eur_rub=rates_data.eur_rub_cbrf,
-        usd_rub=rates_data.usd_rub_cbrf,
-    )
 
 
 def _resolve_applied_bid_jpy(
@@ -136,7 +80,6 @@ def _resolve_applied_bid_jpy(
     ladder: WiseCostLadder | None,
     bid_jpy: int | None,
 ) -> int:
-    """Resolve the JPY auction bid in priority order: explicit -> lot -> ladder."""
     applied_bid_jpy = bid_jpy
     if applied_bid_jpy is None:
         applied_bid_jpy = lot.auction_bid_jpy
@@ -159,70 +102,6 @@ def _resolve_freight_rub(
     return math.floor(DEFAULT_FREIGHT_USD * rates.usd_rub + 0.5)
 
 
-def _save_customs_calculation(
-    lot: Lot,
-    customs_model: CustomsCalculation | None,
-    *,
-    result: Any,
-    selected_commercial: bool,
-    rates_data: schemas.CurrencyRates,
-    rates_model: CurrencyRatesSnapshot | None,
-) -> CustomsCalculation:
-    if customs_model is None:
-        customs_model = CustomsCalculation(lot=lot)
-    customs_model.age_corridor = result.age_corridor
-    customs_model.duty_calculation_mode = result.duty_calculation_mode
-    customs_model.engine_cc = result.engine_cc
-    customs_model.duty_rate_eur_per_cc = result.duty_rate_eur_per_cc
-    customs_model.effective_duty_pct = result.effective_duty_pct
-    customs_model.customs_duty_eur = result.customs_duty_eur
-    customs_model.customs_duty_rub = result.customs_duty_rub
-    customs_model.excise_rub = result.excise_rub
-    customs_model.import_vat_rub = result.import_vat_rub
-    customs_model.is_under_160_hp = result.is_under_160_hp
-    customs_model.util_mode_selected_commercial = selected_commercial
-    customs_model.is_commercial_util = result.is_commercial_util
-    customs_model.utilization_fee_rub = result.utilization_fee_rub
-    customs_model.customs_clearance_fee_rub = result.customs_clearance_fee_rub
-    customs_model.freight_vladivostok_rub = result.freight_vladivostok_rub
-    customs_model.broker_svh_sbkts_rub = result.broker_svh_sbkts_rub
-    customs_model.meti_sanction_risk = result.meti_sanction_risk
-    customs_model.save()
-    if rates_model is None:
-        CurrencyRatesSnapshot.objects.create(customs=customs_model, **rates_data.model_dump())
-    return customs_model
-
-
-def _save_wise_ladder(
-    lot: Lot,
-    ladder: WiseCostLadder | None,
-    ladder_result: Any,
-) -> WiseCostLadder:
-    if ladder is None:
-        ladder = WiseCostLadder(lot=lot)
-    ladder.car_bid_jpy = ladder_result.car_bid_jpy
-    ladder.car_bid_rub = ladder_result.car_bid_rub
-    ladder.turnkey_cost_rub = ladder_result.turnkey_cost_rub
-    ladder.market_price_rf_rub = ladder_result.market_price_rf_rub
-    ladder.net_benefit_rub = ladder_result.net_benefit_rub
-    ladder.benefit_percentage = ladder_result.benefit_percentage
-    ladder.save()
-    WiseCostStep.objects.filter(ladder=ladder).delete()
-    WiseCostStep.objects.bulk_create(
-        WiseCostStep(
-            ladder=ladder,
-            step_number=step.step_number,
-            name_ru=step.name_ru,
-            amount_rub=step.amount_rub,
-            original_currency=step.original_currency,
-            original_amount=step.original_amount,
-            is_optional=step.is_optional,
-        )
-        for step in ladder_result.steps
-    )
-    return ladder
-
-
 def recompute_lot_economics(
     lot: Lot,
     *,
@@ -233,25 +112,15 @@ def recompute_lot_economics(
     custom_freight_rub: int | None = None,
     on_date: date | None = None,
 ) -> None:
-    """(Re)compute customs, Wise Cost Ladder and lot totals via the BE-09 engine.
-
-    Requires a currency rates snapshot (seeded fixtures or the BE-05 gateway).
-    The age corridor is resolved from the vehicle registration dates against
-    the declaration/calculation date. The utilization fee mode selected by
-    the user is kept separately from the applied one: a personal selection
-    is only downgraded to the commercial grid while power is unknown or
-    above 160 hp, and is restored automatically once ``custom_power_hp``
-    confirms the privilege. All writes (including the manual power override)
-    happen in a single transaction.
-    """
+    """(Re)compute customs, Wise Cost Ladder and lot totals in one atomic transaction."""
     with transaction.atomic():
         lot = Lot.objects.select_for_update().get(pk=lot.pk)
         calculation_date = _resolve_calculation_date(lot, on_date)
         customs_model = CustomsCalculation.objects.filter(lot=lot).first()
-        rates_data, rates_model = _extract_rates(lot, customs_model)
+        rates_data, rates_model = extract_rates(lot, customs_model)
         if rates_data is None:
             raise ValueError("Отсутствуют курсы валют для расчёта экономики лота")
-        rates = _to_rates_input(rates_data)
+        rates = to_rates_input(rates_data)
 
         ladder = WiseCostLadder.objects.filter(lot=lot).first()
         applied_bid_jpy = _resolve_applied_bid_jpy(lot, ladder, bid_jpy)
@@ -315,7 +184,7 @@ def recompute_lot_economics(
             )
         )
 
-        _save_customs_calculation(
+        save_customs_calculation(
             lot,
             customs_model,
             result=result,
@@ -323,7 +192,7 @@ def recompute_lot_economics(
             rates_data=rates_data,
             rates_model=rates_model,
         )
-        _save_wise_ladder(lot, ladder, ladder_result)
+        save_wise_ladder(lot, ladder, ladder_result)
 
         target_slider_max = compute_bid_slider_max_jpy(
             market_price_rf_rub=market_price_rub,
@@ -354,20 +223,12 @@ def recompute_lot_economics(
 
 
 def _resolve_start_bid_jpy(lot: Lot) -> int | None:
-    """Start bid for a new lot, by priority (see BE-09 start bid spec):
-
-    1. Sheet data: the bid captured by the OCR pipeline (``auction_bid_jpy``).
-    2. Auction history: the most recent closing price from the cross-audit
-       archive (``PastAuctionRecord.closing_price_jpy``).
-    3. Reverse calculation from the Drom market price: the highest slider
-       step bid whose turnkey cost leaves a 15% target margin.
-
-    """
+    """Resolve initial bid from sheet -> auction history -> target-margin reverse grid."""
     min_bid = min(lot.bid_slider_min_jpy or DEFAULT_BID_SLIDER_MIN_JPY, DEFAULT_BID_SLIDER_MIN_JPY)
     step_bid = lot.bid_slider_step_jpy or 10_000
 
     customs_model = CustomsCalculation.objects.filter(lot=lot).first()
-    rates_data, _ = _extract_rates(lot, customs_model)
+    rates_data, _ = extract_rates(lot, customs_model)
     max_bid = compute_bid_slider_max_jpy(
         market_price_rf_rub=lot.market_price_rf_rub,
         jpy_rub=rates_data.jpy_rub_bank if rates_data is not None else None,
@@ -393,16 +254,14 @@ def _resolve_start_bid_jpy(lot: Lot) -> int | None:
         return None
     if not lot.first_reg_year or (lot.fuel_type != FuelType.EV and not lot.engine_cc):
         return None
-
     if rates_data is None:
         return None
-    rates = _to_rates_input(rates_data)
 
     repair = FarpostRepairSummary.objects.filter(lot=lot).first()
     result = derive_start_bid_from_market(
         StartBidInput(
             market_price_rf_rub=lot.market_price_rf_rub,
-            rates=rates,
+            rates=to_rates_input(rates_data),
             on_date=_resolve_calculation_date(lot, None),
             customs_params=CustomsInput(
                 engine_cc=0 if lot.fuel_type == FuelType.EV else lot.engine_cc,
@@ -443,56 +302,3 @@ def _missing_customs_inputs(lot: Lot, bid_jpy: int | None) -> list[str]:
     if not lot.customs_rates_input and (customs is None or not hasattr(customs, "rates_snapshot")):
         missing.append("снимок курсов валют (шлюз ЦБ РФ)")
     return missing
-
-
-def build_baseline_snapshot(
-    lot: Lot,
-    customs_model: CustomsCalculation,
-    ladder: WiseCostLadder,
-) -> dict[str, Any]:
-    """Build an immutable JSON snapshot of the lot's initial economics parameters."""
-    return {
-        "bid_jpy": int(lot.auction_bid_jpy or ladder.car_bid_jpy),
-        "is_commercial_util": bool(customs_model.util_mode_selected_commercial),
-        "include_repairs": bool(lot.is_repairs_included),
-        "power_hp": lot.power_hp,
-        "power_hp_source": lot.power_hp_source,
-        "freight_rub": int(customs_model.freight_vladivostok_rub),
-    }
-
-
-def ensure_lot_baseline(
-    lot: Lot,
-    customs_model: CustomsCalculation,
-    ladder: WiseCostLadder,
-) -> dict[str, Any]:
-    """Persist ``baseline_economics`` on ``lot`` if not captured yet and return it."""
-    if isinstance(lot.baseline_economics, dict) and "bid_jpy" in lot.baseline_economics:
-        return dict(lot.baseline_economics)
-    snapshot = build_baseline_snapshot(lot, customs_model, ladder)
-    lot.baseline_economics = snapshot
-    lot.save(update_fields=["baseline_economics", "updated_at"])
-    return snapshot
-
-
-def is_simulation_modified(
-    lot: Lot,
-    customs_model: CustomsCalculation,
-    ladder: WiseCostLadder,
-) -> bool:
-    """Return True when the current persisted simulation differs from baseline."""
-    base = lot.baseline_economics
-    if not isinstance(base, dict) or "bid_jpy" not in base:
-        return False
-    freight_base = base.get("freight_rub")
-    return (
-        int(ladder.car_bid_jpy) != int(base["bid_jpy"])
-        or bool(customs_model.util_mode_selected_commercial)
-        != bool(base.get("is_commercial_util", False))
-        or bool(lot.is_repairs_included) != bool(base.get("include_repairs", True))
-        or lot.power_hp != base.get("power_hp")
-        or (
-            freight_base is not None
-            and int(customs_model.freight_vladivostok_rub) != int(freight_base)
-        )
-    )

@@ -31,8 +31,8 @@ from apps.integrations.farpost.matrix import (
     _work_label,
     repair_matrix,
 )
+from apps.integrations.farpost.schemas import FarpostRepairEstimate as RepairSchema
 from apps.lots.models import DamagedPartItem, FarpostRepairSummary, Lot, ServiceWorkItem
-from apps.lots.schemas import FarpostRepairSummary as RepairSchema
 from config.settings.config import get_settings
 
 __all__ = [

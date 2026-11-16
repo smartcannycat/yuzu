@@ -1,23 +1,48 @@
-"""Lot economics mutation services (recalculate endpoint)."""
+"""Transactional recalculation and baseline-reset orchestration (API-free)."""
+
+from __future__ import annotations
 
 import math
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from django.db import transaction
 from django.utils import timezone
 
-from apps.core.enums import TrafficLightColor
 from apps.core.exceptions import BadRequestProblemError, NotFoundProblemError
-from apps.lots import schemas
-from apps.lots.economics import (
+from apps.lots.calculator.baseline import (
     MAX_DYNAMIC_BID_SLIDER_MAX_JPY,
-    _extract_rates,
     ensure_lot_baseline,
+    extract_rates,
     is_simulation_modified,
-    recompute_lot_economics,
 )
-from apps.lots.models import CustomsCalculation, Lot, WiseCostLadder
-from apps.lots.scoring import compute_verdict
-from apps.users.models import User
+from apps.lots.calculator.economics import recompute_lot_economics
+from apps.lots.calculator.scoring import compute_verdict
+from apps.lots.models import (
+    CustomsCalculation,
+    Lot,
+    TrafficLightVerdict,
+    WiseCostLadder,
+)
+
+if TYPE_CHECKING:
+    from datetime import datetime
+
+    from apps.users.models import User
+
+
+@dataclass(frozen=True)
+class RecalcOutcome:
+    """Domain result returned after transactional lot recalculation or baseline reset."""
+
+    lot: Lot
+    customs: CustomsCalculation
+    ladder: WiseCostLadder
+    verdict: TrafficLightVerdict
+    applied_bid_rub: int
+    is_simulation_modified: bool
+    pdf_report_stale: bool
+    recalculated_at: datetime
 
 
 def _get_ready_user_lot(user: User, lot_id) -> Lot:
@@ -32,68 +57,54 @@ def _get_ready_user_lot(user: User, lot_id) -> Lot:
         .first()
     )
     if lot is None:
-        raise NotFoundProblemError(
-            "Лот не найден",
-            title="Лот не найден",
-        )
+        raise NotFoundProblemError("Лот не найден", title="Лот не найден")
     return lot
 
 
-def _build_recalc_response(
+def _load_recalc_outcome(
     lot: Lot,
     *,
-    verdict,
+    verdict: TrafficLightVerdict,
     pdf_report_stale: bool,
-) -> schemas.RecalculateResponse:
+) -> RecalcOutcome:
     lot.refresh_from_db()
-
     customs_model = CustomsCalculation.objects.select_related("rates_snapshot").get(lot=lot)
     ladder = WiseCostLadder.objects.select_related("lot").get(lot=lot)
     rates_model = customs_model.rates_snapshot
     applied_bid_rub = math.floor(ladder.car_bid_jpy * rates_model.jpy_rub_bank + 0.5)
-
-    return schemas.RecalculateResponse(
-        lot_id=lot.pk,
-        recalculated_at=timezone.now(),
-        applied_bid_jpy=ladder.car_bid_jpy,
+    return RecalcOutcome(
+        lot=lot,
+        customs=customs_model,
+        ladder=ladder,
+        verdict=verdict,
         applied_bid_rub=applied_bid_rub,
-        is_commercial_util=customs_model.is_commercial_util,
-        include_repairs=lot.is_repairs_included,
-        customs=schemas.CustomsCalculation.model_validate(customs_model),
-        wise_cost_ladder=_build_ladder_schema(ladder),
-        turnkey_cost_rub=lot.turnkey_cost_rub,
-        market_price_rf_rub=lot.market_price_rf_rub,
-        net_benefit_rub=lot.net_benefit_rub,
-        benefit_percentage=lot.benefit_percentage,
-        bid_slider_min_jpy=lot.bid_slider_min_jpy,
-        power_hp=lot.power_hp,
-        power_hp_source=lot.power_hp_source,
-        is_under_160_hp=lot.is_under_160_hp,
-        ocr_warnings=list(lot.ocr_warnings or []),
-        verdict=_build_verdict_schema(verdict),
         is_simulation_modified=is_simulation_modified(lot, customs_model, ladder),
         pdf_report_stale=pdf_report_stale,
+        recalculated_at=timezone.now(),
     )
 
 
 @transaction.atomic
-def recalculate_lot(
+def execute_recalculate(
     user: User,
     lot_id,
-    payload: schemas.RecalculateRequest,
-) -> schemas.RecalculateResponse:
+    *,
+    bid_jpy: int | None = None,
+    bid_rub: int | None = None,
+    is_commercial_util: bool | None = None,
+    include_repairs: bool | None = None,
+    custom_power_hp: int | None = None,
+    custom_freight_rub: int | None = None,
+) -> RecalcOutcome:
     lot = _get_ready_user_lot(user, lot_id)
-
     customs_model = CustomsCalculation.objects.filter(lot=lot).first()
     ladder_model = WiseCostLadder.objects.filter(lot=lot).first()
     if customs_model is not None and ladder_model is not None:
         ensure_lot_baseline(lot, customs_model, ladder_model)
 
-    # Bid currency resolution: JPY directly, or RUB converted back to JPY
-    # using the stored rates so the ladder keeps a single JPY base.
-    bid_jpy = payload.bid_jpy
-    if bid_jpy is None and payload.bid_rub is not None:
-        rates_data, _ = _extract_rates(lot, customs_model)
+    resolved_bid_jpy = bid_jpy
+    if resolved_bid_jpy is None and bid_rub is not None:
+        rates_data, _ = extract_rates(lot, customs_model)
         if rates_data is None:
             raise BadRequestProblemError(
                 "Для пересчёта по ставке в рублях требуется снимок курсов валют",
@@ -104,13 +115,13 @@ def recalculate_lot(
                 "Некорректный курс JPY/RUB в снимке курсов",
                 title="Курсы валют недоступны",
             )
-        bid_jpy = math.floor(payload.bid_rub / rates_data.jpy_rub_bank + 0.5)
-        if bid_jpy < 100_000:
+        resolved_bid_jpy = math.floor(bid_rub / rates_data.jpy_rub_bank + 0.5)
+        if resolved_bid_jpy < 100_000:
             raise BadRequestProblemError(
                 "Ставка в йенах не может быть меньше 100 000 ¥",
                 title="Некорректная ставка",
             )
-        if bid_jpy > MAX_DYNAMIC_BID_SLIDER_MAX_JPY:
+        if resolved_bid_jpy > MAX_DYNAMIC_BID_SLIDER_MAX_JPY:
             raise BadRequestProblemError(
                 f"Ставка в йенах не может превышать {MAX_DYNAMIC_BID_SLIDER_MAX_JPY:,} ¥".replace(
                     ",", " "
@@ -118,21 +129,14 @@ def recalculate_lot(
                 title="Некорректная ставка",
             )
 
-    # The schema field is a plain bool (default False), so distinguish "not
-    # sent" from "explicitly False" via model_fields_set: an omitted toggle
-    # keeps the previously applied utilization mode, an explicit False
-    # switches the lot back to the personal grid.
-    is_commercial_util: bool | None = (
-        payload.is_commercial_util if "is_commercial_util" in payload.model_fields_set else None
-    )
     try:
         recompute_lot_economics(
             lot,
-            bid_jpy=bid_jpy,
+            bid_jpy=resolved_bid_jpy,
             is_commercial_util=is_commercial_util,
-            include_repairs=payload.include_repairs,
-            custom_power_hp=payload.custom_power_hp,
-            custom_freight_rub=payload.custom_freight_rub,
+            include_repairs=include_repairs,
+            custom_power_hp=custom_power_hp,
+            custom_freight_rub=custom_freight_rub,
         )
     except ValueError as exc:
         raise BadRequestProblemError(
@@ -142,14 +146,11 @@ def recalculate_lot(
 
     lot.refresh_from_db()
     verdict = compute_verdict(lot)
-    return _build_recalc_response(lot, verdict=verdict, pdf_report_stale=True)
+    return _load_recalc_outcome(lot, verdict=verdict, pdf_report_stale=True)
 
 
 @transaction.atomic
-def reset_lot_simulation(
-    user: User,
-    lot_id,
-) -> schemas.RecalculateResponse:
+def execute_reset_simulation(user: User, lot_id) -> RecalcOutcome:
     """Restore the lot's persisted economics to its captured initial baseline."""
     lot = _get_ready_user_lot(user, lot_id)
     customs_model = CustomsCalculation.objects.filter(lot=lot).first()
@@ -184,41 +185,4 @@ def reset_lot_simulation(
 
     lot.refresh_from_db()
     verdict = compute_verdict(lot)
-    return _build_recalc_response(lot, verdict=verdict, pdf_report_stale=False)
-
-
-def _build_ladder_schema(ladder: WiseCostLadder) -> schemas.WiseCostLadder:
-    steps = [
-        schemas.WiseCostStep(
-            step_number=step.step_number,
-            name_ru=step.name_ru,
-            amount_rub=step.amount_rub,
-            original_currency=step.original_currency,
-            original_amount=step.original_amount,
-            is_optional=step.is_optional,
-        )
-        for step in ladder.steps.all().order_by("step_number")
-    ]
-    return schemas.WiseCostLadder(
-        car_bid_jpy=ladder.car_bid_jpy,
-        car_bid_rub=ladder.car_bid_rub,
-        turnkey_cost_rub=ladder.turnkey_cost_rub,
-        market_price_rf_rub=ladder.market_price_rf_rub,
-        net_benefit_rub=ladder.net_benefit_rub,
-        benefit_percentage=ladder.benefit_percentage,
-        steps=steps,
-    )
-
-
-def _build_verdict_schema(verdict) -> schemas.TrafficLightVerdict:
-    return schemas.TrafficLightVerdict(
-        verdict=TrafficLightColor(verdict.verdict),
-        headline=verdict.headline,
-        short_verdict_label=verdict.short_verdict_label,
-        badge_text=verdict.badge_text,
-        net_benefit_rub=verdict.net_benefit_rub,
-        benefit_percentage=verdict.benefit_percentage,
-        body_summary_ru=verdict.body_summary_ru,
-        interior_summary_ru=verdict.interior_summary_ru,
-        reasoning_bullets=list(verdict.reasoning_bullets),
-    )
+    return _load_recalc_outcome(lot, verdict=verdict, pdf_report_stale=False)

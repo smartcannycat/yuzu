@@ -1,3 +1,5 @@
+"""Django Ninja HTTP controller for the lots and batches endpoints."""
+
 from typing import Literal
 
 from django.http import HttpRequest
@@ -10,7 +12,7 @@ from apps.core.exceptions import UnauthorizedProblemError
 from apps.core.redis_utils import enforce_rate_limit
 from apps.core.schemas import ProblemDetail
 from apps.lots import services
-from apps.lots.schemas import (
+from apps.lots.api.schemas import (
     BatchCreateResponse,
     BatchProgressResponse,
     LotBulkDeleteRequest,

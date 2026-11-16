@@ -27,8 +27,8 @@ from apps.integrations.farpost.service import (
     search_cached,
 )
 from apps.lots import pipeline
+from apps.lots.api.queries import _build_farpost_out
 from apps.lots.models import Batch, BatchItem, Lot, LotDefect, ServiceWorkItem
-from apps.lots.queries import _build_farpost_out
 
 CRITERIA = PartCriteria(
     "Toyota", "Corolla", "NRE210", "front_left_door", "дверь", "левая", "передняя", "070"
@@ -327,7 +327,7 @@ def test_existing_detail_endpoint_exposes_saved_estimate(user_factory, api_clien
 
 @pytest.mark.django_db
 def test_existing_economics_includes_saved_repair_exactly_once(user_factory):
-    from apps.lots.economics import recompute_lot_economics
+    from apps.lots.calculator.economics import recompute_lot_economics
     from apps.lots.starter_lots import seed_starter_lots
 
     user = user_factory()
