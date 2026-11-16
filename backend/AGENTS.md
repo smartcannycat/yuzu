@@ -25,8 +25,8 @@ All project commands are defined in `Makefile` (`make help` lists every target):
 - API Framework: Django Ninja Extra with class-based controllers (`@api_controller`).
 - Schemas & Errors: Inherit API schemas from `apps.core.schemas.StrictBaseModel` (`extra="forbid"`, `use_enum_values=True`). Return all errors in RFC 7807 `ProblemDetail` format (`application/problem+json`).
 - User Model & Auth: Custom `apps.users.models.User` with UUID primary key (`id` exposed as `user_id`) and lowercase `email` as `USERNAME_FIELD`. Authenticate routes with `AppJWTAuth` and rotate/blacklist refresh tokens.
-- Configuration: Manage settings via Pydantic Settings in `config/settings/config.py`.
-- Database: PostgreSQL 16 with `psycopg` (v3) is the standard for development, testing, and production (`USE_SQLITE=False`).
+- Configuration: Manage settings via `backend/config.toml` and Pydantic Settings in `config/settings/config.py` (secrets and host overrides in root `.env`).
+- Database: PostgreSQL 16 with `psycopg` (v3) is the standard for development, testing, and production.
 - Typing: Use modern Python 3.12+ type annotations (`list[str]`, `dict[str, Any]`, `X | None`).
 
 ## 5. Verification Checklist

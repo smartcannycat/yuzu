@@ -1,11 +1,51 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+    TomlConfigSettingsSource,
+)
 
 _SERVICE_ROOT = Path(__file__).resolve().parent
 _RUNTIME_ROOT = Path.cwd() if "site-packages" in _SERVICE_ROOT.parts else _SERVICE_ROOT
+_REPO_ROOT = _RUNTIME_ROOT.parent
+
+_TOML_SECTION_PREFIXES: dict[str, str] = {
+    "service": "",
+    "gemini": "gemini_",
+    "batch": "batch_",
+    "crop": "crop_",
+}
+
+_TOML_KEY_OVERRIDES: dict[tuple[str, str], str] = {
+    ("gemini", "enable_gatekeeper"): "enable_gatekeeper",
+    ("gemini", "fallback_models"): "gemini_fallback_models_raw",
+}
+
+
+def _flatten_toml_sections(data: dict[str, Any]) -> dict[str, Any]:
+    """Flatten `[section]` tables from `config.toml` onto `Settings` fields."""
+    flattened: dict[str, Any] = {}
+    for key, value in data.items():
+        if isinstance(value, dict) and key in _TOML_SECTION_PREFIXES:
+            prefix = _TOML_SECTION_PREFIXES[key]
+            for sub_key, sub_value in value.items():
+                field_name = _TOML_KEY_OVERRIDES.get((key, sub_key), f"{prefix}{sub_key}")
+                flattened[field_name] = sub_value
+        else:
+            flattened[key] = value
+    return flattened
+
+
+class _SectionedTomlSettingsSource(TomlConfigSettingsSource):
+    """Load `ml_service/config.toml` and flatten known sections to `Settings` fields."""
+
+    def _read_file(self, file_path: Any) -> dict[str, Any]:
+        return _flatten_toml_sections(super()._read_file(file_path))
 
 
 def _parse_key_list(
@@ -30,14 +70,33 @@ def _parse_key_list(
 
 
 class Settings(BaseSettings):
-    """Application settings loaded from environment variables or .env file."""
+    """Application settings loaded from env vars, .env, and ml_service/config.toml."""
 
     model_config = SettingsConfigDict(
-        env_file=(_SERVICE_ROOT / ".env", ".env"),
+        env_file=(_REPO_ROOT / ".env", _RUNTIME_ROOT / ".env", _SERVICE_ROOT / ".env", ".env"),
         env_file_encoding="utf-8",
+        toml_file=(_SERVICE_ROOT / "config.toml", _RUNTIME_ROOT / "config.toml"),
         extra="ignore",
         populate_by_name=True,
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Priority: kwargs -> env vars -> .env -> ml_service/config.toml -> secrets -> defaults."""
+        return (
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            _SectionedTomlSettingsSource(settings_cls),
+            file_secret_settings,
+        )
 
     ml_service_api_keys_raw: str = Field(default="", validation_alias="ML_SERVICE_API_KEYS")
     ml_service_api_key_single: str = Field(default="", validation_alias="ML_SERVICE_API_KEY")
@@ -85,6 +144,13 @@ class Settings(BaseSettings):
     cache_dir: Path = Field(default=_RUNTIME_ROOT / ".cache" / "sheets")
     reference_year: int = Field(default=2026, ge=2020, le=2035)
     reference_month: int = Field(default=11, ge=1, le=12)
+
+    @field_validator("gemini_fallback_models_raw", mode="before")
+    @classmethod
+    def _coerce_fallback_models(cls, value: list[str] | str) -> str:
+        if isinstance(value, list):
+            return ",".join(str(item).strip() for item in value if str(item).strip())
+        return value
 
     @field_validator("cache_dir", mode="after")
     @classmethod

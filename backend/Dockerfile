@@ -74,11 +74,10 @@ COPY --from=prod-builder --chown=appuser:appgroup /app/.venv /app/.venv
 
 COPY --chown=appuser:appgroup config ./config
 COPY --chown=appuser:appgroup apps ./apps
-COPY --chown=appuser:appgroup manage.py ./manage.py
+COPY --chown=appuser:appgroup config.toml manage.py ./
 
 RUN SECRET_KEY=build-only-collectstatic-placeholder \
     ENVIRONMENT=local \
-    USE_SQLITE=True \
     python manage.py collectstatic --noinput && \
     mkdir -p /app/media /app/staticfiles && \
     chown -R appuser:appgroup /app/media /app/staticfiles

@@ -5,13 +5,14 @@ REST API backend for Yuzu (AuctionCalc) built with Django 6, Django Ninja Extra,
 ## Quick Start (Local with PostgreSQL in Docker)
 
 ```bash
-cp .env.example .env
+cp ../.env.example ../.env
 make install
 make up-db
 make migrate
 make dev
 ```
 
+Non-secret defaults live in `config.toml`; secrets and DB overrides live in the root `.env`.
 API docs will be available at `http://127.0.0.1:8000/api/v1/docs`.
 
 ## Full Docker Compose
@@ -19,7 +20,7 @@ API docs will be available at `http://127.0.0.1:8000/api/v1/docs`.
 Development:
 
 ```bash
-cp .env.example .env
+cp ../.env.example ../.env
 make up
 ```
 

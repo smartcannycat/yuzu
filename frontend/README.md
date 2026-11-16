@@ -9,7 +9,7 @@ Vue 3, TypeScript, Vite, Tailwind CSS v4, Vue Router, Pinia, Vue DevTools, Vites
 ## Quick Start (Local)
 
 ```bash
-cp .env.example .env
+cp ../.env.example ../.env
 make install
 make dev
 ```

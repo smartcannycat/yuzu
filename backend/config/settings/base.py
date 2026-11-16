@@ -90,12 +90,6 @@ ASGI_APPLICATION = "config.asgi.application"
 def _build_database_config(settings_obj: AppSettings) -> dict[str, Any]:
     if settings_obj.DATABASE_URL:
         parsed = urlparse(settings_obj.DATABASE_URL)
-        if parsed.scheme.startswith("sqlite"):
-            db_path = parsed.path.lstrip("/") or "db.sqlite3"
-            return {
-                "ENGINE": "django.db.backends.sqlite3",
-                "NAME": BASE_DIR / db_path if not Path(db_path).is_absolute() else Path(db_path),
-            }
         if parsed.scheme in {"postgres", "postgresql"}:
             return {
                 "ENGINE": "django.db.backends.postgresql",
@@ -108,12 +102,6 @@ def _build_database_config(settings_obj: AppSettings) -> dict[str, Any]:
                 "CONN_HEALTH_CHECKS": True,
             }
         raise ValueError(f"Unsupported DATABASE_URL scheme: {parsed.scheme}")
-
-    if settings_obj.USE_SQLITE:
-        return {
-            "ENGINE": "django.db.backends.sqlite3",
-            "NAME": BASE_DIR / "db.sqlite3",
-        }
 
     return {
         "ENGINE": "django.db.backends.postgresql",

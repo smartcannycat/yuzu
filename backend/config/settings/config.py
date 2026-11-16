@@ -1,20 +1,79 @@
 import json
 from functools import lru_cache
-from typing import Literal
+from pathlib import Path
+from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+    TomlConfigSettingsSource,
+)
 
 from apps.lots.integrations.currency.domain import parse_fallback_config
+
+_BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+_REPO_ROOT = _BACKEND_DIR.parent
+
+_TOML_SECTION_PREFIXES: dict[str, str] = {
+    "app": "",
+    "jwt": "JWT_",
+    "media": "MEDIA_",
+    "ml_service": "ML_SERVICE_",
+    "scraper": "SCRAPER_",
+    "farpost": "FARPOST_",
+    "aleado": "ALEADO_",
+    "currency": "CBRF_",
+}
+
+
+def _flatten_toml_sections(data: dict[str, Any]) -> dict[str, Any]:
+    """Flatten `[section]` tables from `config.toml` onto uppercase `AppSettings` keys."""
+    flattened: dict[str, Any] = {}
+    for key, value in data.items():
+        if isinstance(value, dict) and key in _TOML_SECTION_PREFIXES:
+            prefix = _TOML_SECTION_PREFIXES[key]
+            for sub_key, sub_value in value.items():
+                flattened[f"{prefix}{sub_key}".upper()] = sub_value
+        else:
+            flattened[key.upper()] = value
+    return flattened
+
+
+class _SectionedTomlSettingsSource(TomlConfigSettingsSource):
+    """Load `backend/config.toml` and flatten known sections to `AppSettings` fields."""
+
+    def _read_file(self, file_path: Any) -> dict[str, Any]:
+        return _flatten_toml_sections(super()._read_file(file_path))
 
 
 class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(_REPO_ROOT / ".env", _BACKEND_DIR / ".env", ".env"),
         env_file_encoding="utf-8",
+        toml_file=_BACKEND_DIR / "config.toml",
         extra="ignore",
         case_sensitive=False,
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Priority: kwargs -> env vars -> .env -> backend/config.toml -> secrets -> defaults."""
+        return (
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            _SectionedTomlSettingsSource(settings_cls),
+            file_secret_settings,
+        )
 
     # Core Application Settings
     ENVIRONMENT: Literal["local", "dev", "test", "production"] = "local"
@@ -32,8 +91,7 @@ class AppSettings(BaseSettings):
     CORS_ALLOW_ALL_ORIGINS: bool = False
     CSRF_TRUSTED_ORIGINS: list[str] | str = []
 
-    # Database Settings (PostgreSQL is the default for dev, test, and prod)
-    USE_SQLITE: bool = False
+    # Database Settings (PostgreSQL only)
     DATABASE_URL: str | None = None
     POSTGRES_DB: str = "yuzu_db"
     POSTGRES_USER: str = "postgres"

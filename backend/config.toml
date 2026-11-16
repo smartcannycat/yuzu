@@ -1,0 +1,51 @@
+# Default non-secret configuration for the Yuzu Django backend.
+# Precedence (highest -> lowest): OS/Docker env -> .env -> config.toml -> Pydantic class defaults.
+# Secrets, credentials, DB hosts, and deployment hostnames belong in root .env.
+
+[app]
+environment = "local"
+debug = true
+lot_parser_backend = ""
+rate_limit_enabled = true
+celery_task_always_eager = false
+
+[jwt]
+access_token_lifetime_minutes = 60
+refresh_token_lifetime_days = 7
+
+[media]
+url = "/media/"
+root = "media"
+purge_deleted_after_days = 7
+purge_batch_originals_after_hours = 24
+
+[ml_service]
+url = "http://127.0.0.1:8001"
+timeout_sec = 30.0
+
+[scraper]
+proxy_ban_sec = 120
+timeout_sec = 10.0
+request_interval_sec = 1.2
+request_jitter_sec = 0.4
+
+[farpost]
+budget_sec = 30.0
+cooldown_sec = 45
+cache_ttl_hours = 24
+captcha_max_attempts = 2
+captcha_solve_budget_sec = 20.0
+captcha_max_workers = 8
+captcha_ocr_enabled = false
+captcha_ocr_command = "tesseract"
+
+[aleado]
+base_url = "https://auc.aleado.com"
+timeout_sec = 20.0
+request_interval_sec = 1.0
+verify_candidates = 10
+
+[currency]
+api_url = "https://www.cbr-xml-daily.ru/daily_json.js"
+timeout_sec = 5.0
+jpy_spread = 0.03
