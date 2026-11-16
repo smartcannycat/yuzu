@@ -26,6 +26,10 @@ class FarpostFetchError(RuntimeError):
 class FarpostRateLimitedError(FarpostFetchError):
     """Source responded with HTTP 403/429 or an anti-bot verification redirect/page."""
 
+    def __init__(self, message: str, *, triggers_global_cooldown: bool = True) -> None:
+        super().__init__(message)
+        self.triggers_global_cooldown = triggers_global_cooldown
+
 
 @dataclass(frozen=True)
 class PartCriteria:

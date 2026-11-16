@@ -197,3 +197,14 @@ class LotLifecycleFilter(TextChoices):
 class LotArchiveReason(TextChoices):
     EXPIRED = "expired"
     MANUAL = "manual"
+
+
+class PartSourceKind(TextChoices):
+    FARPOST_COLOR_MATCH = "farpost_color_match"
+    FARPOST_PLAIN = "farpost_plain"
+    FARPOST_CACHE = "farpost_cache"
+    MISSING_IDENTITY = "missing_identity"
+    RATE_LIMITED = "rate_limited"
+    FETCH_ERROR = "fetch_error"
+    NOT_FOUND = "not_found"
+    MATRIX = "matrix"

@@ -69,6 +69,7 @@ _BRAND_ALIASES: dict[str, str] = {
     "vw": "volkswagen",
     "фольксваген": "volkswagen",
     "бмв": "bmw",
+    "bmv": "bmw",
     "мини": "mini",
 }
 

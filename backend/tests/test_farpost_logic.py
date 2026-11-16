@@ -221,8 +221,8 @@ def test_mock_spec_farpost_client_and_frontend_subtitles(monkeypatch):
     filter_mock = MagicMock()
     filter_mock.first.return_value = None
     monkeypatch.setattr(farpost_service.ExternalCache.objects, "filter", lambda **_kw: filter_mock)
-    update_mock = MagicMock()
-    monkeypatch.setattr(farpost_service.ExternalCache.objects, "update_or_create", update_mock)
+    upsert_mock = MagicMock()
+    monkeypatch.setattr(farpost_service, "upsert_external_cache", upsert_mock)
 
     mock_client = MagicMock(spec=FarpostClient)
     mock_client.search.return_value = [
@@ -247,18 +247,9 @@ def test_mock_spec_farpost_client_and_frontend_subtitles(monkeypatch):
     mock_client.search.assert_called_once()
     mock_client.search_with_metadata.assert_not_called()
 
-    vue_path = (
-        Path(__file__).resolve().parents[2]
-        / "frontend/src/components/lots/detail/print/LotPrintPageTechEconomics.vue"
-    )
-    vue_text = vue_path.read_text(encoding="utf-8")
-    assert "временно недоступен" in vue_text
     assert "временно недоступен" in _FALLBACK_SUBTITLES["fetch_error"]
-    assert "ограничил выдачу" in vue_text
     assert "ограничил выдачу" in _FALLBACK_SUBTITLES["rate_limited"]
-    assert "не определён код кузова" in vue_text
     assert "не определён код кузова" in _FALLBACK_SUBTITLES["missing_identity"]
-    assert "нет подходящих предложений" in vue_text
     assert "нет подходящих предложений" in _FALLBACK_SUBTITLES["not_found"]
 
 
@@ -613,3 +604,47 @@ def test_estimate_repair_forwards_captcha_and_ocr_settings(monkeypatch):
     assert solver.request_timeout_sec == 11.0
     assert isinstance(solver.image_solver, TesseractImageCaptchaSolver)
     assert solver.image_solver.command == "/opt/bin/tesseract"
+
+
+def test_farpost_image_captcha_failure_does_not_activate_global_cooldown(monkeypatch):
+    farpost_service.reset_farpost_cooldown()
+    monkeypatch.setattr(farpost_service, "get_redis_client", lambda: None)
+    filter_mock = MagicMock()
+    filter_mock.first.return_value = None
+    monkeypatch.setattr(farpost_service.ExternalCache.objects, "filter", lambda **_kw: filter_mock)
+
+    def image_challenge_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/vladivostok/zapchasti/":
+            return httpx.Response(302, headers={"Location": "https://www.farpost.ru/verify?u=test"})
+        return httpx.Response(
+            200,
+            text=(
+                '<html><div class="cap4"><img src="?i=tok">'
+                '<form action="/verify"><input name="s" value="tok"></form></div></html>'
+            ),
+        )
+
+    client = FarpostClient(transport=httpx.MockTransport(image_challenge_handler))
+    offers, stale, reason = farpost_service._search_cached_with_reason(
+        client,
+        PartCriteria(
+            "Toyota", "Corolla", "NRE210", "front_left_door", "дверь", "левая", "передняя", ""
+        ),
+        deadline=time.monotonic() + 20,
+    )
+    assert offers == []
+    assert stale is True
+    assert reason == "fetch_error"
+    assert farpost_service._is_rate_limit_cooldown_active() is False
+
+
+def test_part_source_kind_matches_frontend_labels():
+    from apps.core.enums import PartSourceKind
+
+    vue_path = (
+        Path(__file__).resolve().parents[2]
+        / "frontend/src/components/lots/detail/print/LotPrintPageTechEconomics.vue"
+    )
+    vue_text = vue_path.read_text(encoding="utf-8")
+    for kind in PartSourceKind:
+        assert kind.value in vue_text

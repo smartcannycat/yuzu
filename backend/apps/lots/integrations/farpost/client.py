@@ -104,6 +104,7 @@ class FarpostClient:
             timeout_sec=self.timeout_sec,
             impersonate="chrome",
             domain="www.farpost.ru",
+            allowed_hosts=frozenset({"farpost.ru"}),
             proxy_rotator=self._proxy_rotator,
             transport=self.transport,
         )
@@ -153,7 +154,8 @@ class FarpostClient:
                 response = self._captcha_solver.solve(session, response, deadline=deadline)
             except FarpostCaptchaError as exc:
                 raise FarpostRateLimitedError(
-                    "Farpost anti-bot verification could not be solved"
+                    "Farpost anti-bot verification could not be solved",
+                    triggers_global_cooldown=False,
                 ) from exc
         if response.status_code in {403, 429}:
             raise FarpostRateLimitedError("Farpost rate limited the request")

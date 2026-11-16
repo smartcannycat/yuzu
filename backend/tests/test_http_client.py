@@ -207,3 +207,69 @@ def test_resilient_http_session_post_proxy_pinning_and_curl_error_scrubbing(monk
             call()
         assert "topsecret" not in str(exc_info.value)
         assert exc_info.value.__cause__ is None
+
+
+def test_resilient_http_session_blocks_ssrf_and_unsafe_redirects():
+    def redirect_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/to-evil":
+            return httpx.Response(302, headers={"Location": "https://evil.com/steal"})
+        if request.url.path == "/to-internal":
+            return httpx.Response(302, headers={"Location": "http://169.254.169.254/latest"})
+        if request.url.path == "/post-redirect":
+            return httpx.Response(
+                302,
+                headers={
+                    "Location": "https://www.farpost.ru/done",
+                    "Set-Cookie": "sid=ok; Path=/",
+                },
+            )
+        if request.url.path == "/done":
+            return httpx.Response(200, text=f"{request.method}:{request.headers.get('cookie', '')}")
+        if request.url.path == "/cl-huge":
+            return httpx.Response(200, headers={"Content-Length": "999999"}, content=b"small")
+        return httpx.Response(200, text="ok")
+
+    session = ResilientHttpSession(
+        allowed_hosts=frozenset({"farpost.ru"}),
+        transport=httpx.MockTransport(redirect_handler),
+    )
+    for bad_url in (
+        "http://www.farpost.ru/",
+        "https://ml:8001/sheets/parse",
+        "https://127.0.0.1:8000/",
+        "https://www.farpost.ru/to-evil",
+        "https://www.farpost.ru/to-internal",
+    ):
+        with pytest.raises(HttpTransportError, match="Blocked unsafe URL"):
+            session.get(bad_url)
+
+    # Manual POST->302->GET preserves cookies outside context manager and drops Content-Type.
+    resp = session.post(
+        "https://www.farpost.ru/post-redirect",
+        data={"a": "1"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert resp.status_code == 200
+    assert resp.content.decode() == "GET:sid=ok"
+
+    with pytest.raises(HttpTransportError, match="exceeds limit"):
+        session.get("https://www.farpost.ru/cl-huge", max_bytes=100)
+
+
+def test_enable_throttle_runs_on_mock_transport_without_patching_curl(monkeypatch):
+    recorded_keys: list[str] = []
+
+    def _capture_slot(key: str, *_a, **_kw):
+        recorded_keys.append(key)
+        return None
+
+    monkeypatch.setattr(
+        "apps.lots.integrations.http_client.acquire_distributed_interval_slot", _capture_slot
+    )
+    session = ResilientHttpSession(
+        transport=httpx.MockTransport(lambda _r: httpx.Response(200, text="ok")),
+        enable_throttle=True,
+    )
+    resp = session.get("https://www.farpost.ru/", throttle_key="yuzu:mock", interval_sec=1.0)
+    assert resp.status_code == 200
+    assert recorded_keys == ["yuzu:mock:direct"]

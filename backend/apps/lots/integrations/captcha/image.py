@@ -18,6 +18,8 @@ from tempfile import NamedTemporaryFile
 from PIL import Image, ImageOps
 
 _DIGITS_RE = re.compile(r"\D+")
+_MAX_IMAGE_DIM = 2000
+_MAX_IMAGE_PIXELS = 1_000_000
 
 
 class TesseractImageCaptchaSolver:
@@ -41,12 +43,14 @@ class TesseractImageCaptchaSolver:
         return bool(shutil.which(self.command))
 
     def solve(self, image: bytes, *, deadline: float) -> str | None:
-        if not self.available or time.monotonic() >= deadline:
+        remaining = deadline - time.monotonic()
+        if not self.available or remaining <= 0:
             return None
         try:
             processed = self._preprocess(image)
-        except (OSError, ValueError):
+        except (OSError, ValueError, Image.DecompressionBombError):
             return None
+        subprocess_timeout = min(self.timeout_sec, max(0.1, deadline - time.monotonic()))
         try:
             with NamedTemporaryFile(suffix=".png") as tmp:
                 tmp.write(processed)
@@ -62,7 +66,7 @@ class TesseractImageCaptchaSolver:
                         "tessedit_char_whitelist=0123456789",
                     ],
                     capture_output=True,
-                    timeout=self.timeout_sec,
+                    timeout=subprocess_timeout,
                     check=False,
                 )
         except (OSError, subprocess.SubprocessError):
@@ -77,9 +81,17 @@ class TesseractImageCaptchaSolver:
     @staticmethod
     def _preprocess(image: bytes) -> bytes:
         with Image.open(io.BytesIO(image)) as source:
+            width, height = source.size
+            if (
+                width <= 0
+                or height <= 0
+                or width > _MAX_IMAGE_DIM
+                or height > _MAX_IMAGE_DIM
+                or width * height > _MAX_IMAGE_PIXELS
+            ):
+                raise ValueError("CAPTCHA image dimensions exceed safe limits")
             grayscale = source.convert("L")
         grayscale = ImageOps.autocontrast(grayscale)
-        width, height = grayscale.size
         scale = 4
         pixels = list(grayscale.get_flattened_data())
         dark = [1 if value < 165 else 0 for value in pixels]

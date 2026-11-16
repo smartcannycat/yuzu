@@ -39,9 +39,13 @@ def _get_ready_user_lot(user: User, lot_id) -> Lot:
     return lot
 
 
-def _build_recalc_response(lot: Lot, *, pdf_report_stale: bool) -> schemas.RecalculateResponse:
+def _build_recalc_response(
+    lot: Lot,
+    *,
+    verdict,
+    pdf_report_stale: bool,
+) -> schemas.RecalculateResponse:
     lot.refresh_from_db()
-    verdict = compute_verdict(lot)
 
     customs_model = CustomsCalculation.objects.select_related("rates_snapshot").get(lot=lot)
     ladder = WiseCostLadder.objects.select_related("lot").get(lot=lot)
@@ -96,6 +100,11 @@ def recalculate_lot(
                 title="Курсы валют недоступны",
             )
         bid_jpy = math.floor(payload.bid_rub / rates_data.jpy_rub_bank + 0.5)
+        if bid_jpy < 100_000:
+            raise BadRequestProblemError(
+                "Ставка в йенах не может быть меньше 100 000 ¥",
+                title="Некорректная ставка",
+            )
         if bid_jpy > MAX_DYNAMIC_BID_SLIDER_MAX_JPY:
             raise BadRequestProblemError(
                 f"Ставка в йенах не может превышать {MAX_DYNAMIC_BID_SLIDER_MAX_JPY:,} ¥".replace(
@@ -126,7 +135,8 @@ def recalculate_lot(
             title="Недостаточно данных для расчёта",
         ) from exc
 
-    return _build_recalc_response(lot, pdf_report_stale=True)
+    verdict = compute_verdict(lot)
+    return _build_recalc_response(lot, verdict=verdict, pdf_report_stale=True)
 
 
 @transaction.atomic
@@ -166,7 +176,8 @@ def reset_lot_simulation(
             title="Недостаточно данных для расчёта",
         ) from exc
 
-    return _build_recalc_response(lot, pdf_report_stale=False)
+    verdict = compute_verdict(lot)
+    return _build_recalc_response(lot, verdict=verdict, pdf_report_stale=False)
 
 
 def _build_ladder_schema(ladder: WiseCostLadder) -> schemas.WiseCostLadder:

@@ -31,10 +31,15 @@ except ImportError:  # pragma: no cover - optional at import time
     Argon2id = None  # type: ignore[assignment,misc]
 
 _DEFAULT_WORKERS = 8
-_ARGON2_DEFAULT_WORKERS = 4
+_ARGON2_MAX_WORKERS = 4
 _MAX_WORKERS = 16
 _MAX_MAXNUMBER = 50_000_000
 _DEFAULT_V2_MAXNUMBER = 10_000_000
+_MAX_ARGON2_MEMORY_COST = 131_072
+_MAX_ARGON2_PARALLELISM = 4
+_MAX_ARGON2_COST = 100
+_MAX_PBKDF2_COST = 200_000
+_MAX_SHA_COST = 1_000_000
 _SHA_ALGORITHMS = {
     "SHA-256": "sha256",
     "SHA-384": "sha384",
@@ -142,9 +147,22 @@ class AltchaChallenge:
         if not nonce:
             raise AltchaError("ALTCHA v2 nonce is empty")
         key_length = _clamp_int(parameters.get("keyLength", 32), 1, 128, 32)
-        cost = _clamp_int(parameters.get("cost", 1), 1, 1_000_000, 1)
-        memory_cost = _clamp_int(parameters.get("memoryCost", 16_384), 8, 1_048_576, 16_384)
-        parallelism = _clamp_int(parameters.get("parallelism", 1), 1, 64, 1)
+        if algorithm == "argon2id":
+            cost = _clamp_int(parameters.get("cost", 1), 1, _MAX_ARGON2_COST, 1)
+            memory_cost = _clamp_int(
+                parameters.get("memoryCost", 16_384), 8, _MAX_ARGON2_MEMORY_COST, 16_384
+            )
+            parallelism = _clamp_int(
+                parameters.get("parallelism", 1), 1, _MAX_ARGON2_PARALLELISM, 1
+            )
+        elif algorithm in _PBKDF2_ALGORITHMS:
+            cost = _clamp_int(parameters.get("cost", 1), 1, _MAX_PBKDF2_COST, 1)
+            memory_cost = 16_384
+            parallelism = 1
+        else:
+            cost = _clamp_int(parameters.get("cost", 1), 1, _MAX_SHA_COST, 1)
+            memory_cost = 16_384
+            parallelism = 1
         return cls(
             algorithm=algorithm,
             key_prefix=_hex_prefix(prefix_hex),
@@ -219,10 +237,20 @@ def solve_altcha(
         return None
 
     result: AltchaSolution | None = None
-    with ThreadPoolExecutor(max_workers=workers) as executor:
+    executor = ThreadPoolExecutor(max_workers=workers)
+    try:
         futures = [executor.submit(attempt, offset, workers) for offset in range(workers)]
         while futures and result is None:
-            done, _ = wait(futures, return_when=FIRST_COMPLETED)
+            timeout: float | None = None
+            if deadline is not None:
+                timeout = deadline - time.monotonic()
+                if timeout <= 0:
+                    stop.set()
+                    break
+            done, _ = wait(futures, timeout=timeout, return_when=FIRST_COMPLETED)
+            if not done:
+                stop.set()
+                break
             futures = [future for future in futures if not future.done()]
             for future in done:
                 candidate = future.result()
@@ -230,6 +258,9 @@ def solve_altcha(
                     result = candidate
                     stop.set()
                     break
+    finally:
+        stop.set()
+        executor.shutdown(wait=False, cancel_futures=True)
 
     if result is None:
         if deadline is not None and time.monotonic() >= deadline:
@@ -284,20 +315,17 @@ def _resolve_workers(
     challenge: AltchaChallenge | None = None,
 ) -> int:
     cpu_count = os.cpu_count() or 4
-    if max_workers is None:
-        if (
-            challenge is not None
-            and challenge.algorithm == "argon2id"
-            and challenge.memory_cost >= 8192
-        ):
-            requested = _ARGON2_DEFAULT_WORKERS
-        else:
-            requested = _DEFAULT_WORKERS
-    else:
-        requested = max_workers
+    requested = _DEFAULT_WORKERS if max_workers is None else max_workers
     if requested <= 0:
         requested = cpu_count
-    return max(1, min(requested, cpu_count, _MAX_WORKERS))
+    capped = max(1, min(requested, cpu_count, _MAX_WORKERS))
+    if (
+        challenge is not None
+        and challenge.algorithm == "argon2id"
+        and challenge.memory_cost >= 8192
+    ):
+        return min(capped, _ARGON2_MAX_WORKERS)
+    return capped
 
 
 def _derive_key(challenge: AltchaChallenge, counter: int) -> bytes:

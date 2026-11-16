@@ -744,9 +744,16 @@ def derive_start_bid_from_market(params: StartBidInput) -> StartBidResult:
             clamped=clamped,
         )
 
-    # Slider grid candidates, from the highest position down to the minimum.
+    # Slider grid candidates, from the highest affordable position down to the minimum.
+    # Because turnkey_for(bid_jpy) >= car_bid_rub = floor(bid_jpy * jpy_rub + 0.5),
+    # any bid above (target_turnkey_rub + 1) / jpy_rub can never satisfy the margin target.
     step_count = (params.max_bid_jpy - params.min_bid_jpy) // params.step_jpy
-    for index in range(step_count, -1, -1):
+    max_affordable_bid_jpy = int((target_turnkey_rub + 1) / rates.jpy_rub)
+    start_index = min(
+        step_count,
+        max(0, (max_affordable_bid_jpy - params.min_bid_jpy) // params.step_jpy),
+    )
+    for index in range(start_index, -1, -1):
         candidate = params.min_bid_jpy + index * params.step_jpy
         if turnkey_for(candidate) <= target_turnkey_rub:
             return result_for(candidate, clamped=False)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import time
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -20,9 +21,12 @@ from apps.lots.integrations.http_client import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     import httpx
 
 _DROM_THROTTLE_KEY = "yuzu:drom:throttle"
+_MAX_RESPONSE_BYTES = 5_000_000
 _DEFAULT_HEADERS: dict[str, str] = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
@@ -60,6 +64,20 @@ class DromHttpClient:
             else None
         )
         self._session: ResilientHttpSession | None = None
+        self._budget_deadline: float | None = None
+
+    @contextlib.contextmanager
+    def budget(self, budget_sec: float) -> Iterator[None]:
+        """Bound a sequence of Drom calls inside one evaluate() run by a shared deadline."""
+        previous = self._budget_deadline
+        new_deadline = time.monotonic() + max(0.1, budget_sec)
+        self._budget_deadline = (
+            min(previous, new_deadline) if previous is not None else new_deadline
+        )
+        try:
+            yield
+        finally:
+            self._budget_deadline = previous
 
     def _build_session(self, headers: dict[str, str] | None = None) -> ResilientHttpSession:
         return ResilientHttpSession(
@@ -67,6 +85,7 @@ class DromHttpClient:
             timeout_sec=self._timeout_sec,
             impersonate="chrome",
             domain="drom.ru",
+            allowed_hosts=frozenset({"drom.ru"}),
             proxy_rotator=self._proxy_rotator,
             transport=self._transport,
         )
@@ -130,6 +149,7 @@ class DromHttpClient:
                     url,
                     headers=headers,
                     timeout=min(self._timeout_sec, remaining),
+                    max_bytes=_MAX_RESPONSE_BYTES,
                     throttle_key=_DROM_THROTTLE_KEY,
                     interval_sec=self._request_interval_sec,
                     jitter_sec=self._request_jitter_sec,
@@ -191,7 +211,12 @@ class DromHttpClient:
     ) -> HttpFetchResponse:
         max_proxy_attempts = min(len(self._proxy_rotator), 3) if self._proxy_rotator else 1
         total_attempts = max(self._max_retries + 1, max_proxy_attempts)
-        deadline = time.monotonic() + max(self._timeout_sec * total_attempts + 5.0, 15.0)
+        per_call_deadline = time.monotonic() + max(self._timeout_sec * total_attempts + 5.0, 15.0)
+        deadline = (
+            min(per_call_deadline, self._budget_deadline)
+            if self._budget_deadline is not None
+            else per_call_deadline
+        )
         if self._session is not None:
             return self._execute_request(
                 self._session,

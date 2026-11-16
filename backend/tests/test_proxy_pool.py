@@ -15,6 +15,7 @@ from apps.lots.integrations.proxy import (
     proxy_fingerprint,
     redact_proxy_url,
     reset_shared_proxy_pools,
+    scrub_proxy_credentials,
 )
 
 
@@ -139,3 +140,13 @@ def test_shared_proxy_pool_is_shared_between_farpost_and_drom_and_normalizes_dom
     assert pool_a.proxy_for_key(p1_key) == "http://p1:8080"
     assert pool_a.proxy_for_key("missing") is None
     assert pool_a.proxy_for_key("") is None
+
+
+def test_scrub_proxy_credentials_handles_percent_encoded_and_token_userinfo():
+    proxy = "http://user1:p%40ssSecret@proxy.local:8080"
+    msg, scrubbed = scrub_proxy_credentials(
+        "Auth error with p@ssSecret and http://tok@p2:80", proxy
+    )
+    assert scrubbed is True
+    assert "p@ssSecret" not in msg
+    assert "tok@" not in msg

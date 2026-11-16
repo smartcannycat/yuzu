@@ -768,3 +768,74 @@ def test_farpost_captcha_post_derives_origin_from_page_url():
     offers = client.search(CRITERIA, deadline=time.monotonic() + 20)
     assert len(offers) == 1
     assert seen_origins == ["https://mirror.farpost.ru"]
+
+
+def test_parse_farpost_challenge_blocks_unsafe_external_urls():
+    with pytest.raises(FarpostCaptchaError, match="Unsafe Farpost"):
+        parse_farpost_challenge(
+            '<html><form id="grecap-form" action="https://evil.com/steal">'
+            '<input name="s" value="1"><altcha-widget challenge="{}"></altcha-widget>'
+            "</form></html>",
+            page_url=VERIFY_URL,
+        )
+    with pytest.raises(FarpostCaptchaError, match="Unsafe Farpost"):
+        parse_farpost_challenge(
+            '<html><div class="cap4"><img src="http://127.0.0.1:8000/img">'
+            '<form action="/verify"><input name="s" value="1"></form></div></html>',
+            page_url=VERIFY_URL,
+        )
+
+
+def test_altcha_argon2_caps_explicit_workers_and_clamps_heavy_params(monkeypatch):
+    from apps.lots.integrations.captcha.altcha import _resolve_workers
+
+    heavy = AltchaChallenge.from_payload(
+        {
+            "parameters": {
+                "algorithm": "argon2id",
+                "cost": 999999,
+                "memoryCost": 1_048_576,
+                "parallelism": 64,
+                "keyLength": 32,
+                "keyPrefix": "0000",
+                "nonce": "0011223344556677",
+                "salt": "ffeeddccbbaa9988",
+            }
+        }
+    )
+    assert heavy.memory_cost <= 131_072
+    assert heavy.parallelism <= 4
+    assert heavy.cost <= 100
+    assert _resolve_workers(8, challenge=heavy) <= 4
+
+    # solve_altcha exits promptly on deadline even when _derive_key blocks longer.
+    def slow_derive(_challenge, _counter):
+        time.sleep(0.5)
+        return b"\x00" * 32
+
+    monkeypatch.setattr("apps.lots.integrations.captcha.altcha._derive_key", slow_derive)
+    started = time.monotonic()
+    with pytest.raises(AltchaSolveTimeoutError, match="deadline"):
+        solve_altcha(
+            AltchaChallenge.from_payload(_sha_challenge(counter=2)),
+            deadline=started + 0.05,
+            max_workers=2,
+        )
+    assert time.monotonic() - started < 0.35
+
+
+def test_tesseract_solver_rejects_oversized_and_decompression_bomb_images(monkeypatch):
+    monkeypatch.setattr(
+        "apps.lots.integrations.captcha.image.shutil.which", lambda _cmd: "/usr/bin/tesseract"
+    )
+    solver = TesseractImageCaptchaSolver(command="tesseract")
+    huge = Image.new("L", (2500, 2500), color=255)
+    buf = io.BytesIO()
+    huge.save(buf, format="PNG")
+    assert solver.solve(buf.getvalue(), deadline=time.monotonic() + 5) is None
+
+    def raise_bomb(*_a, **_kw):
+        raise Image.DecompressionBombError("too many pixels")
+
+    monkeypatch.setattr("apps.lots.integrations.captcha.image.Image.open", raise_bomb)
+    assert solver.solve(b"fake", deadline=time.monotonic() + 5) is None

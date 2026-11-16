@@ -31,6 +31,16 @@ from apps.lots.integrations.http_client import (
     ResilientHttpSession,
     decode_html_bytes,
 )
+from apps.lots.integrations.url_guard import UnsafeExternalUrlError, validate_external_url
+
+_FARPOST_ALLOWED_HOSTS = frozenset({"farpost.ru"})
+
+
+def _validate_farpost_url(url: str) -> str:
+    try:
+        return validate_external_url(url, allowed_hosts=_FARPOST_ALLOWED_HOSTS, check_dns=False)
+    except UnsafeExternalUrlError as exc:
+        raise FarpostCaptchaError(f"Unsafe Farpost verification URL: {exc}") from exc
 
 
 class FarpostCaptchaError(RuntimeError):
@@ -75,7 +85,7 @@ def parse_farpost_challenge(html: str, *, page_url: str) -> FarpostChallengePage
         raise FarpostCaptchaError("Farpost verification page has no challenge form")
 
     action = str(form.get("action") or page_url)
-    form_action = urljoin(page_url, action)
+    form_action = _validate_farpost_url(urljoin(page_url, action))
     form_fields: dict[str, str] = {}
     for field in form.find_all("input"):
         name = str(field.get("name") or "")
@@ -101,8 +111,8 @@ def parse_farpost_challenge(html: str, *, page_url: str) -> FarpostChallengePage
         )
     if image is not None:
         src = str(image.get("src") or "").strip()
-        if "i=" in src or not challenge_source:
-            image_url = src or None
+        if src and ("i=" in src or not challenge_source):
+            image_url = _validate_farpost_url(urljoin(page_url, src))
 
     if challenge_source is None and image_url is None:
         raise FarpostCaptchaError("Farpost verification page has no recognized challenge")
@@ -221,7 +231,7 @@ class FarpostCaptchaSolver:
             raise FarpostCaptchaError(
                 "Farpost requested an image CAPTCHA but no image solver is configured"
             )
-        image_url = urljoin(page.url, page.image_url or "")
+        image_url = _validate_farpost_url(urljoin(page.url, page.image_url or ""))
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise FarpostCaptchaError("Farpost verification deadline reached")
@@ -265,7 +275,7 @@ class FarpostCaptchaSolver:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise FarpostCaptchaError("Farpost verification deadline reached")
-            challenge_url = urljoin(page.url, source)
+            challenge_url = _validate_farpost_url(urljoin(page.url, source))
             challenge_response = session.get(
                 challenge_url,
                 headers={"Accept": "application/json", "Referer": page.url},

@@ -171,3 +171,38 @@ def test_redis_rate_limiter_and_distributed_aleado_slot(settings) -> None:
         )
         client._throttle()
         mock_slot.assert_not_called()
+
+
+def test_get_client_ip_rejects_spoofed_headers_and_parses_xff_right_to_left() -> None:
+    from django.test import RequestFactory
+
+    from apps.core.redis_utils import get_client_ip
+
+    rf = RequestFactory()
+
+    # Public client cannot spoof X-Real-IP or X-Forwarded-For directly.
+    direct = rf.get(
+        "/",
+        REMOTE_ADDR="198.51.100.10",
+        HTTP_X_REAL_IP="203.0.113.99",
+        HTTP_X_FORWARDED_FOR="203.0.113.77",
+    )
+    assert get_client_ip(direct) == "198.51.100.10"
+
+    # Trusted proxy (private/loopback) walks XFF right-to-left skipping trusted hops.
+    proxied = rf.get(
+        "/",
+        REMOTE_ADDR="172.18.0.5",
+        HTTP_X_REAL_IP="evil-spoofed-value",
+        HTTP_X_FORWARDED_FOR="203.0.113.1, 198.51.100.25, 10.0.0.2",
+    )
+    assert get_client_ip(proxied) == "198.51.100.25"
+
+    # Non-IP garbage in headers falls back safely to REMOTE_ADDR.
+    garbage = rf.get(
+        "/",
+        REMOTE_ADDR="127.0.0.1",
+        HTTP_X_REAL_IP="not-an-ip",
+        HTTP_X_FORWARDED_FOR="still-not-an-ip",
+    )
+    assert get_client_ip(garbage) == "127.0.0.1"

@@ -400,7 +400,7 @@ def _resolve_start_bid_jpy(lot: Lot) -> int | None:
         StartBidInput(
             market_price_rf_rub=lot.market_price_rf_rub,
             rates=rates,
-            on_date=timezone.localdate(),
+            on_date=_resolve_calculation_date(lot, None),
             customs_params=CustomsInput(
                 engine_cc=0 if lot.fuel_type == FuelType.EV else lot.engine_cc,
                 fuel_type=lot.fuel_type,

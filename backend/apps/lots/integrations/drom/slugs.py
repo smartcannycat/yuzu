@@ -372,7 +372,6 @@ def _pick_best_brand_slug(
     candidate_names: list[str],
     slug_map: dict[str, str],
 ) -> str | None:
-    target_norm = _transliterate_cyrillic(make.strip())
     target_alnum = _alnum_key(make)
     if not target_alnum:
         return None
@@ -384,8 +383,6 @@ def _pick_best_brand_slug(
     variants = [target_alnum]
     if "kh" in target_alnum:
         variants.append(target_alnum.replace("kh", "h"))
-    if target_norm.startswith("bmv"):
-        variants.append("bmw")
 
     matched_name = _fuzzy_match_alnum(variants, candidate_names)
     if matched_name is None:

@@ -1,10 +1,11 @@
+import contextlib
 import hashlib
 import logging
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from typing import Any
 
-from apps.lots.integrations.drom.cache import fetch_with_drom_cache
+from apps.lots.integrations.drom.cache import fetch_with_drom_cache, write_drom_cache
 from apps.lots.integrations.drom.client import DromHttpClient
 from apps.lots.integrations.drom.filtering import (
     FilteredMarketStats,
@@ -13,10 +14,7 @@ from apps.lots.integrations.drom.filtering import (
     filter_and_aggregate,
     is_manual_transmission,
 )
-from apps.lots.integrations.drom.parser import (
-    is_antibot_challenge_html,
-    parse_listings,
-)
+from apps.lots.integrations.drom.parser import parse_listings
 from apps.lots.integrations.drom.power import DromPowerResolver
 from apps.lots.integrations.drom.schemas import (
     DromBlockedError,
@@ -132,10 +130,15 @@ class DromMarketService:
 
     def evaluate(self, criteria: DromSearchCriteria) -> DromMarketResult:
         """Fetch Drom market analogs and engine power_hp for a parsed auction lot."""
-        if self._managed_client and hasattr(type(self._client), "__enter__"):
-            with self._client:
-                return self._evaluate_with_client(criteria)
-        return self._evaluate_with_client(criteria)
+        budget_sec = max(self._client._timeout_sec * 6.0, 45.0)
+        budget_ctx = (
+            self._client.budget(budget_sec) if hasattr(self._client, "budget") else _null_context()
+        )
+        with budget_ctx:
+            if self._managed_client and hasattr(type(self._client), "__enter__"):
+                with self._client:
+                    return self._evaluate_with_client(criteria)
+            return self._evaluate_with_client(criteria)
 
     def _evaluate_with_client(self, criteria: DromSearchCriteria) -> DromMarketResult:
         power = self._power_resolver.resolve(
@@ -148,8 +151,9 @@ class DromMarketService:
             year=criteria.year,
         )
 
-        current_slug = self._slug_resolver.resolve(criteria.make, criteria.model)
-        cache_key = _build_market_cache_key(criteria, current_slug)
+        initial_slug = self._slug_resolver.resolve(criteria.make, criteria.model)
+        current_slug = initial_slug
+        cache_key = _build_market_cache_key(criteria, initial_slug)
 
         def _fetch_live() -> DromMarketResult | None:
             nonlocal current_slug
@@ -167,6 +171,12 @@ class DromMarketService:
                 "Drom live lookup failed for %s %s: %s", criteria.make, criteria.model, exc
             ),
         )
+        if result is not None and not is_stale and not _same_slug(current_slug, initial_slug):
+            resolved_key = _build_market_cache_key(criteria, current_slug)
+            if resolved_key != cache_key:
+                write_drom_cache(
+                    resolved_key, _serialize_market_result(result), ttl=_MARKET_CACHE_TTL
+                )
         if result is not None:
             if is_stale:
                 result = _mark_stale_fallback(result)
@@ -340,19 +350,14 @@ class DromMarketService:
             html, url = html_retry, url_retry
 
         listings = parse_listings(html)
-        if not listings:
-            if is_antibot_challenge_html(html):
-                raise DromBlockedError(f"Drom вернул anti-bot/CAPTCHA страницу для {url}")
-            if slug.is_fallback_guess:
-                html_retry, url_retry, api_slug = self._retry_with_api_slug(criteria, slug, step)
-                slug = api_slug if api_slug is not None else replace(slug, is_fallback_guess=False)
-                if html_retry is not None and url_retry is not None:
-                    html, url = html_retry, url_retry
-                    listings = parse_listings(html)
-                    if not listings and is_antibot_challenge_html(html):
-                        raise DromBlockedError(f"Drom вернул anti-bot/CAPTCHA страницу для {url}")
-                else:
-                    return None, None, self._build_step_url(criteria, slug, step), slug
+        if not listings and slug.is_fallback_guess:
+            html_retry, url_retry, api_slug = self._retry_with_api_slug(criteria, slug, step)
+            slug = api_slug if api_slug is not None else replace(slug, is_fallback_guess=False)
+            if html_retry is not None and url_retry is not None:
+                html, url = html_retry, url_retry
+                listings = parse_listings(html)
+            else:
+                return None, None, self._build_step_url(criteria, slug, step), slug
 
         if step.region_scope == "dfo":
             strict_stats = filter_and_aggregate(listings, exclude_nearby_cities=True)
@@ -450,3 +455,7 @@ def _mark_stale_fallback(result: DromMarketResult) -> DromMarketResult:
             or "Drom.ru временно недоступен — показаны последние кэшированные данные"
         ),
     )
+
+
+def _null_context():
+    return contextlib.nullcontext()

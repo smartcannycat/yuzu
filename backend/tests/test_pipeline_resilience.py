@@ -501,3 +501,15 @@ def test_cascade_preserves_api_slug_after_step_404_and_reraises_blocked() -> Non
             ttl=timedelta(hours=1),
             reraise=(DromBlockedError,),
         )
+
+
+def test_parse_catalog_generations_drops_off_domain_and_insecure_links() -> None:
+    from apps.lots.integrations.drom.catalog_parser import parse_catalog_generations
+
+    html = """<html><body>
+      <a href="/catalog/toyota/corolla/g_2019_1234/">2019</a>
+      <a href="//evil.example.com/catalog/g_999/">evil</a>
+      <a href="http://ml:8001/g_internal/">internal</a>
+    </body></html>"""
+    urls = parse_catalog_generations(html)
+    assert urls == ["https://www.drom.ru/catalog/toyota/corolla/g_2019_1234/"]
