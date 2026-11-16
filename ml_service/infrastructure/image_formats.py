@@ -34,6 +34,10 @@ def detect_mime_from_magic_bytes(data: bytes) -> str:
         return "image/jpeg"
     if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return "image/webp"
-    if len(data) >= 12 and data[4:8] == b"ftyp" and data[8:12] in {b"heic", b"heix", b"hevc", b"mif1"}:
+    if (
+        len(data) >= 12
+        and data[4:8] == b"ftyp"
+        and data[8:12] in {b"heic", b"heix", b"hevc", b"mif1"}
+    ):
         return "image/heic"
     return "image/png"

@@ -55,21 +55,26 @@
 
 ---
 
-## Быстрый старт (локально)
+## Быстрый старт (локально с `uv`)
 
-Все команды выполняются из каталога `project/ml_service`:
+Все команды выполняются из каталога `ml_service`:
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\pip.exe install -e ".[dev]"
-Copy-Item .env.example .env
+```bash
+uv sync
+cp .env.example .env
+```
+
+Или через `Makefile` (также ставит git-хуки `lefthook` в корне репозитория):
+
+```bash
+make install
 ```
 
 Укажите сервисный ключ `ML_SERVICE_API_KEY` (все эндпоинты, включая `/health`, защищены заголовком `X-API-Key` в режиме fail-closed) и рабочий ключ Google AI Studio в `GEMINI_API_KEYS` внутри `.env`, затем запустите сервер на порту **8001** (ожидаемый порт для `backend` `ML_SERVICE_URL=http://127.0.0.1:8001`):
 
-```powershell
-.\.venv\Scripts\uvicorn.exe ml_service.main:app --host 0.0.0.0 --port 8001 --reload
+```bash
+uv run uvicorn ml_service.main:app --host 127.0.0.1 --port 8001 --reload
+# или: make dev
 ```
 
 Интерактивная документация OpenAPI: `http://localhost:8001/docs`.
@@ -78,15 +83,21 @@ Copy-Item .env.example .env
 
 ## Запуск в Docker
 
-Из каталога `project/ml_service`:
+Из каталога `ml_service` (prod-таргет по умолчанию):
 
-```powershell
+```bash
 docker compose up --build -d
 ```
 
-Или сборка и запуск вручную:
+Сборка dev-образа с hot-reload и dev-зависимостями:
 
-```powershell
+```bash
+docker build --target dev -t yuzu-ml-service:dev .
+```
+
+Или сборка и запуск prod-образа вручную:
+
+```bash
 docker build -t yuzu-ml-service .
 docker run --rm -p 8001:8001 --env-file .env -v "${PWD}/.cache:/app/ml_service/.cache" yuzu-ml-service
 ```
@@ -100,20 +111,25 @@ docker run --rm -p 8001:8001 --env-file .env -v "${PWD}/.cache:/app/ml_service/.
 Все ручки ниже (включая `/health`) требуют заголовок `X-API-Key` (`401 Unauthorized` при отсутствии/неверном ключе, `503 Service Unavailable` если ключ сервиса не настроен).
 
 - `GET /health` — статус сервиса, количество ключей Gemini и опорный год.
+- `POST /api/v1/chassis/read` — OCR номера шасси/фрейма с небольшого изображения (`multipart/form-data`, поле `file`, `image/jpeg` или `image/png`).
 - `POST /api/v1/sheets/parse` — загрузка изображения (`multipart/form-data`, поле `file`, query `?force_refresh=true`).
 - `POST /api/v1/sheets/parse-url` — скачивание и парсинг снимка по URL (`{"url": "...", "force_refresh": false}`).
 - `POST /api/v1/lots/batches` — пакетный разбор `1..10` файлов (`202 Accepted`, `total_items`, `batch_id: UUID`).
 - `GET /api/v1/lots/batches/{batch_id}` — статус (`total_count`, `mascot`, `items[].preview_title`) и результаты по мере готовности.
 - `POST /api/v1/lots/batches/{batch_id}/items` — догрузка файлов в активную пачку (`202 Accepted`, `BatchProgressResponse`, или `409 Conflict` для завершённой пачки).
 
-```cmd
-curl.exe -H "X-API-Key: <ML_SERVICE_API_KEY>" http://localhost:8001/health
-curl.exe -H "X-API-Key: <ML_SERVICE_API_KEY>" -X POST "http://localhost:8001/api/v1/sheets/parse" -F "file=@tests/fixtures/real_sheets/taa_corolla_touring_3142.png"
+```bash
+curl -H "X-API-Key: <ML_SERVICE_API_KEY>" http://localhost:8001/health
+curl -H "X-API-Key: <ML_SERVICE_API_KEY>" -X POST "http://localhost:8001/api/v1/sheets/parse" -F "file=@/path/to/sheet.png"
 ```
 
 ## Запуск тестов и линтера
 
-```powershell
-.\.venv\Scripts\ruff.exe check .
-.\.venv\Scripts\pytest.exe tests -m "not live" -v
+```bash
+make check
+# или по отдельности:
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
+uv run pytest --cov=ml_service --cov-report=term-missing
 ```

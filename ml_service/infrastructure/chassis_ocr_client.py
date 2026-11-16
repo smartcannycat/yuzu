@@ -10,8 +10,11 @@ image hash so repeated audits of the same lot do not re-spend quota.
 import asyncio
 import hashlib
 import logging
+import os
 import re
+import tempfile
 import time
+from pathlib import Path
 
 import httpx
 from google.genai import types
@@ -98,31 +101,45 @@ class ChassisOcrClient:
 
         def _write() -> None:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            data_text = json.dumps(payload, ensure_ascii=False)
+            fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=".tmp_chassis_", suffix=".json")
+            tmp_path = Path(tmp_name)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    fh.write(data_text)
+                tmp_path.replace(path)
+            except BaseException:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+                raise
 
         try:
             await asyncio.to_thread(_write)
         except OSError as exc:
             logger.warning("Chassis OCR cache write failed: %s", exc)
 
-    async def read_chassis_number(self, image_bytes: bytes, mime_type: str = "image/jpeg") -> ChassisOcrEntity:
+    async def read_chassis_number(
+        self, image_bytes: bytes, mime_type: str = "image/jpeg"
+    ) -> ChassisOcrEntity:
         """Read the chassis number printed in the image (with disk cache).
 
         Never raises for transient Gemini failures: an unreadable entity
         with ``frame_id=None`` is returned instead so the caller keeps the
-        candidate unverified.
+        candidate unverified. Transient outages are not written to cache.
         """
         cache_path = self._cache_path(image_bytes)
         cached = await self._read_cached(cache_path)
         if cached is not None:
             return cached
 
-        t0 = time.perf_counter()
-        entity = await self._read_via_gemini(image_bytes, mime_type)
-        await self._write_cached(cache_path, entity)
+        entity, should_cache = await self._read_via_gemini(image_bytes, mime_type)
+        if should_cache:
+            await self._write_cached(cache_path, entity)
         return entity
 
-    async def _read_via_gemini(self, image_bytes: bytes, mime_type: str) -> ChassisOcrEntity:
+    async def _read_via_gemini(
+        self, image_bytes: bytes, mime_type: str
+    ) -> tuple[ChassisOcrEntity, bool]:
         candidates = self._vision._ordered_candidate_models()
         t0 = time.perf_counter()
         last_exc: Exception | None = None
@@ -168,8 +185,16 @@ class ChassisOcrClient:
                         self._vision.key_pool.mark_key_rate_limited(
                             api_key, self._vision.key_cooldown_seconds
                         )
-                    logger.warning("Chassis OCR via %s failed (%s); trying next model.", model_name, exc)
-                    self._vision._mark_model_cooldown(model_name, self._vision.model_cooldown_seconds)
+                        logger.warning(
+                            "Chassis OCR via %s rate-limited (429); trying next model.", model_name
+                        )
+                        continue
+                    logger.warning(
+                        "Chassis OCR via %s failed (%s); trying next model.", model_name, exc
+                    )
+                    self._vision._mark_model_cooldown(
+                        model_name, self._vision.model_cooldown_seconds
+                    )
                     continue
 
                 if not response.text:
@@ -180,23 +205,32 @@ class ChassisOcrClient:
                     parsed = ChassisRead.model_validate_json(response.text)
                 except ValueError as exc:
                     last_exc = exc
-                    logger.warning("Chassis OCR via %s returned invalid JSON (%s).", model_name, exc)
+                    logger.warning(
+                        "Chassis OCR via %s returned invalid JSON (%s).", model_name, exc
+                    )
                     continue
 
                 frame_id, raw = sanitize_chassis_read(parsed.frame_id)
-                return ChassisOcrEntity(
-                    frame_id=frame_id,
-                    raw=raw or parsed.frame_id,
-                    confidence=parsed.confidence,
-                    cached=False,
-                    duration_ms=int((time.perf_counter() - t0) * 1000),
+                fallback_raw = parsed.frame_id.strip() or None if parsed.frame_id else None
+                return (
+                    ChassisOcrEntity(
+                        frame_id=frame_id,
+                        raw=raw or fallback_raw,
+                        confidence=parsed.confidence,
+                        cached=False,
+                        duration_ms=int((time.perf_counter() - t0) * 1000),
+                    ),
+                    True,
                 )
 
         logger.warning("Chassis OCR failed on all models; last error: %s", last_exc)
-        return ChassisOcrEntity(
-            frame_id=None,
-            raw=None,
-            confidence="low",
-            cached=False,
-            duration_ms=int((time.perf_counter() - t0) * 1000),
+        return (
+            ChassisOcrEntity(
+                frame_id=None,
+                raw=None,
+                confidence="low",
+                cached=False,
+                duration_ms=int((time.perf_counter() - t0) * 1000),
+            ),
+            False,
         )

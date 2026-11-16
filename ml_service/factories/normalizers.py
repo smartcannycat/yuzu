@@ -106,7 +106,11 @@ _ERA_OFFSETS: dict[str, int] = {
     "昭和": 1925,
 }
 _KANJI_NUM_RE = re.compile(r"[〇零一二三四五六七八九十]+")
-_ERA_DATE_RE = re.compile(r"(?<![A-Za-z])(R|令和|H|平成|S|昭和)\s*(\d{1,2})(?:\D+(\d{1,2}))?", re.IGNORECASE)
+_ERA_DATE_RE = re.compile(
+    r"(?<![A-Za-z])(R|令和|H|平成|S|昭和)\s*(\d{1,2})"
+    r"(?:\s*[./年-]\s*(\d{1,2})(?!\d)|\s+(\d{1,2})(?=\s*(?:月|$)))?",
+    re.IGNORECASE,
+)
 _MM_YYYY_RE = re.compile(r"\b(\d{1,2})[./](19\d{2}|20\d{2})\b")
 _GREGORIAN_DATE_RE = re.compile(r"(19\d{2}|20\d{2})(?:\D+(\d{1,2}))?")
 _BARE_DATE_RE = re.compile(r"^(\d{1,2})(?:\D+(\d{1,2}))?")
@@ -137,7 +141,9 @@ def normalize_auction_house(
     upper_spaced = re.sub(r"\s+", " ", upper_clean)
     for phrase, house in _AUCTION_PHRASE_ALIASES:
         phrase_upper = phrase.upper()
-        if phrase_upper in compact_jp.upper() or re.search(rf"(?<![A-Z0-9]){re.escape(phrase_upper)}(?![A-Z0-9])", upper_spaced):
+        if phrase_upper in compact_jp.upper() or re.search(
+            rf"(?<![A-Z0-9]){re.escape(phrase_upper)}(?![A-Z0-9])", upper_spaced
+        ):
             return house.value, AUCTION_STRICTNESS[house]
 
     tokens = re.findall(r"[A-Z0-9]+", upper_spaced)
@@ -278,14 +284,18 @@ def parse_japanese_date(
     cur_year = current_year or datetime.date.today().year
     cur_reiwa = cur_year - 2018
 
-    normalized = unicodedata.normalize("NFKC", raw).strip().replace("元年", "1年")
+    normalized = re.sub(
+        r"(R|令和|H|平成|S|昭和)元",
+        r"\g<1>1",
+        unicodedata.normalize("NFKC", raw).strip(),
+    )
     normalized = _replace_kanji_numbers(normalized)
 
     era_match = _ERA_DATE_RE.search(normalized)
     if era_match:
         era = era_match.group(1).upper()
         year = _ERA_OFFSETS[era] + int(era_match.group(2))
-        month = _extract_month(normalized, era_match.group(3))
+        month = _extract_month(normalized, era_match.group(3) or era_match.group(4))
         return _format_parsed_date(year, month)
 
     mm_yyyy_match = _MM_YYYY_RE.search(normalized)
@@ -381,8 +391,12 @@ _PANEL_ZONE_KEYWORDS: tuple[tuple[str, BodyPanel, str], ...] = (
     ("フロントガラス", BodyPanel.WINDSHIELD, "Лобовое стекло"),
 )
 
-_REPAIR_ACTION_RE = re.compile(r"(XX|\bX\b|\bR\b|W\d?|交換|修理|鈑金|歪|曲|凹|修復|замен|ремонт|деформац)", re.IGNORECASE)
-_PILLAR_OR_FRAME_RE = re.compile(r"(ピラー|サイドメンバー|フレーム|修復歴|骨格|стойк|лонжерон)", re.IGNORECASE)
+_REPAIR_ACTION_RE = re.compile(
+    r"(XX|\bX\b|\bR\b|W\d?|交換|修理|鈑金|歪|曲|凹|修復|замен|ремонт|деформац)", re.IGNORECASE
+)
+_PILLAR_OR_FRAME_RE = re.compile(
+    r"(ピラー|サイドメンバー|フレーム|修復歴|骨格|стойк|лонжерон)", re.IGNORECASE
+)
 _INSIDE_PANEL_ONLY_RE = re.compile(r"(インパネ|インサイドパネル)", re.IGNORECASE)
 _CORE_SUPPORT_RE = re.compile(r"(コアサポート|рамк[аи]\s+радиатора|телевизор)", re.IGNORECASE)
 _NO_ANOMALY_RE = re.compile(r"(異常なし|問題なし|исправн|в\s+норме)", re.IGNORECASE)
@@ -393,7 +407,7 @@ def normalize_body_panel(
     panel_ru: str,
     visual_location: str = "",
 ) -> tuple[BodyPanel, str]:
-    """Ensure body panel maps cleanly into canonical 16 panels or BodyPanel.OTHER with Russian name."""
+    """Map body panel into canonical 16 panels or BodyPanel.OTHER with Russian name."""
     combined = f"{visual_location} {panel_ru}"
     for keyword, mapped_panel, default_ru in _PANEL_ZONE_KEYWORDS:
         if keyword in combined:
@@ -438,6 +452,11 @@ def clean_color_ru(color_ru: str | None, paint_code: str | None) -> str | None:
     return cleaned or None
 
 
+_STANDALONE_NO_ANOMALY_RE = re.compile(
+    r"^(?:特に)?(?:異常なし|問題なし|исправно|в\s+норме)$", re.IGNORECASE
+)
+
+
 def derive_structural_risk_flags(
     *,
     llm_pillar_or_frame: bool,
@@ -449,22 +468,37 @@ def derive_structural_risk_flags(
     """Deterministically refine structural risk flags based on Japanese notes and repair codes."""
     all_lines = [*inspector_notes_raw, *inspector_notes_ru, *defect_texts]
     all_raw = " | ".join(inspector_notes_raw)
+    clauses = [
+        clause.strip()
+        for line in all_lines
+        for clause in re.split(r"[、,。;/\n]+", line)
+        if clause.strip()
+    ]
+    raw_clauses = [
+        clause.strip()
+        for line in inspector_notes_raw
+        for clause in re.split(r"[、,。;/\n]+", line)
+        if clause.strip()
+    ]
+    has_standalone_no_anomaly = any(_STANDALONE_NO_ANOMALY_RE.match(c) for c in raw_clauses)
 
-    pillar_lines = [line for line in all_lines if _PILLAR_OR_FRAME_RE.search(line)]
-    has_active_pillar = any(not _NO_ANOMALY_RE.search(line) for line in pillar_lines)
-    has_inside_panel_only = bool(_INSIDE_PANEL_ONLY_RE.search(all_raw)) and not pillar_lines
+    pillar_clauses = [c for c in clauses if _PILLAR_OR_FRAME_RE.search(c)]
+    has_active_pillar = any(not _NO_ANOMALY_RE.search(c) for c in pillar_clauses)
+    has_inside_panel_only = bool(_INSIDE_PANEL_ONLY_RE.search(all_raw)) and not pillar_clauses
 
     if has_active_pillar:
         pillar_or_frame = True
-    elif has_inside_panel_only:
+    elif pillar_clauses or has_inside_panel_only or has_standalone_no_anomaly:
         pillar_or_frame = False
     else:
-        pillar_or_frame = llm_pillar_or_frame and not _NO_ANOMALY_RE.search(all_raw)
+        pillar_or_frame = llm_pillar_or_frame
 
-    core_lines = [line for line in all_lines if _CORE_SUPPORT_RE.search(line)]
-    if core_lines:
-        core_support = any(_REPAIR_ACTION_RE.search(line) and not _NO_ANOMALY_RE.search(line) for line in core_lines)
+    core_clauses = [c for c in clauses if _CORE_SUPPORT_RE.search(c)]
+    if core_clauses:
+        core_support = any(
+            _REPAIR_ACTION_RE.search(c) and not _NO_ANOMALY_RE.search(c) for c in core_clauses
+        )
     else:
-        core_support = False if _NO_ANOMALY_RE.search(all_raw) else llm_core_support
+        core_support = False if has_standalone_no_anomaly else llm_core_support
 
     return pillar_or_frame, core_support
