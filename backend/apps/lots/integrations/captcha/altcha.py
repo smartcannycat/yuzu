@@ -31,8 +31,10 @@ except ImportError:  # pragma: no cover - optional at import time
     Argon2id = None  # type: ignore[assignment,misc]
 
 _DEFAULT_WORKERS = 8
+_ARGON2_DEFAULT_WORKERS = 4
 _MAX_WORKERS = 16
 _MAX_MAXNUMBER = 50_000_000
+_DEFAULT_V2_MAXNUMBER = 10_000_000
 _SHA_ALGORITHMS = {
     "SHA-256": "sha256",
     "SHA-384": "sha384",
@@ -193,7 +195,12 @@ def solve_altcha(
 ) -> AltchaSolution:
     """Find a counter whose derived key satisfies the challenge."""
     started = time.monotonic()
-    workers = _resolve_workers(max_workers)
+    workers = _resolve_workers(max_workers, challenge=challenge)
+    max_counter = (
+        challenge.max_number
+        if challenge.max_number is not None
+        else (_DEFAULT_V2_MAXNUMBER if deadline is None else None)
+    )
     stop = threading.Event()
 
     def attempt(offset: int, step: int) -> AltchaSolution | None:
@@ -201,7 +208,7 @@ def solve_altcha(
         while not stop.is_set():
             if deadline is not None and time.monotonic() >= deadline:
                 return None
-            if challenge.max_number is not None and counter > challenge.max_number:
+            if max_counter is not None and counter > max_counter:
                 return None
             derived = _derive_key(challenge, counter)
             if _matches(challenge, derived):
@@ -271,9 +278,23 @@ def solve_altcha_payload(
     )
 
 
-def _resolve_workers(max_workers: int | None) -> int:
+def _resolve_workers(
+    max_workers: int | None,
+    *,
+    challenge: AltchaChallenge | None = None,
+) -> int:
     cpu_count = os.cpu_count() or 4
-    requested = _DEFAULT_WORKERS if max_workers is None else max_workers
+    if max_workers is None:
+        if (
+            challenge is not None
+            and challenge.algorithm == "argon2id"
+            and challenge.memory_cost >= 8192
+        ):
+            requested = _ARGON2_DEFAULT_WORKERS
+        else:
+            requested = _DEFAULT_WORKERS
+    else:
+        requested = max_workers
     if requested <= 0:
         requested = cpu_count
     return max(1, min(requested, cpu_count, _MAX_WORKERS))

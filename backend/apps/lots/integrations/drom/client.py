@@ -4,7 +4,7 @@ import time
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
-from apps.lots.integrations.drom.listings_parser import is_antibot_challenge_html
+from apps.lots.integrations.drom.parser import is_antibot_challenge_html
 from apps.lots.integrations.drom.schemas import (
     DromBlockedError,
     DromFetchError,

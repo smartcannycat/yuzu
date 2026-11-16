@@ -250,48 +250,20 @@ class ResilientHttpSession:
         jitter_sec: float = 0.0,
         deadline: float | None = None,
     ) -> HttpFetchResponse:
-        effective_timeout = timeout if timeout is not None else self._timeout_sec
-        effective_domain = self._effective_domain(url, domain)
-        selected_proxy, proxy_key = self._select_proxy(
-            proxy=proxy, proxy_key=proxy_key, domain=effective_domain
-        )
-        self._last_proxy_key = proxy_key
-        if proxy_key and effective_domain:
-            self._proxy_domains[proxy_key] = effective_domain
-        if self._transport is None and throttle_key and (interval_sec > 0 or jitter_sec > 0):
-            scoped_key = f"{throttle_key}:{proxy_key or 'direct'}"
-            wait_for_request_slot(scoped_key, interval_sec, jitter_sec, deadline=deadline)
-
-        if self._transport is not None:
-            response = self._get_httpx(
-                url,
-                params=params,
-                headers=headers,
-                timeout=effective_timeout,
-                proxy=selected_proxy,
-                proxy_key=proxy_key,
-            )
-        else:
-            response = self._get_curl(
-                url,
-                params=params,
-                headers=headers,
-                timeout=effective_timeout,
-                proxy=selected_proxy,
-                proxy_key=proxy_key,
-            )
-
-        if max_bytes is not None and len(response.content) > max_bytes:
-            raise HttpTransportError(
-                f"Response size {len(response.content)} exceeds limit {max_bytes}",
-            )
-        return HttpFetchResponse(
-            status_code=response.status_code,
-            url=str(response.url),
-            headers={k.lower(): v for k, v in response.headers.items()},
-            content=response.content,
-            used_proxy=redact_proxy_url(selected_proxy),
+        return self._request(
+            "GET",
+            url,
+            params=params,
+            headers=headers,
+            timeout=timeout,
+            proxy=proxy,
             proxy_key=proxy_key,
+            domain=domain,
+            max_bytes=max_bytes,
+            throttle_key=throttle_key,
+            interval_sec=interval_sec,
+            jitter_sec=jitter_sec,
+            deadline=deadline,
         )
 
     def post(
@@ -308,34 +280,77 @@ class ResilientHttpSession:
         deadline: float | None = None,
     ) -> HttpFetchResponse:
         """POST form data while preserving the current proxy's cookie jar."""
+        return self._request(
+            "POST",
+            url,
+            data=data,
+            headers=headers,
+            timeout=timeout,
+            proxy=proxy,
+            proxy_key=proxy_key,
+            domain=domain,
+            max_bytes=max_bytes,
+            deadline=deadline,
+        )
+
+    def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: dict[str, Any] | None = None,
+        data: dict[str, Any] | bytes | None = None,
+        headers: dict[str, str] | None = None,
+        timeout: float | None = None,
+        proxy: str | None = None,
+        proxy_key: str | None = None,
+        domain: str | None = None,
+        max_bytes: int | None = None,
+        throttle_key: str = "",
+        interval_sec: float = 0.0,
+        jitter_sec: float = 0.0,
+        deadline: float | None = None,
+    ) -> HttpFetchResponse:
         if deadline is not None and time.monotonic() >= deadline:
             raise HttpBudgetExhaustedError("Request budget exhausted")
         effective_timeout = timeout if timeout is not None else self._timeout_sec
         effective_domain = self._effective_domain(url, domain)
-        selected_proxy, proxy_key = self._select_proxy(
+        selected_proxy, resolved_proxy_key = self._select_proxy(
             proxy=proxy, proxy_key=proxy_key, domain=effective_domain
         )
-        self._last_proxy_key = proxy_key
-        if proxy_key and effective_domain:
-            self._proxy_domains[proxy_key] = effective_domain
+        self._last_proxy_key = resolved_proxy_key
+        if resolved_proxy_key and effective_domain:
+            self._proxy_domains[resolved_proxy_key] = effective_domain
+        if (
+            method == "GET"
+            and self._transport is None
+            and throttle_key
+            and (interval_sec > 0 or jitter_sec > 0)
+        ):
+            scoped_key = f"{throttle_key}:{resolved_proxy_key or 'direct'}"
+            wait_for_request_slot(scoped_key, interval_sec, jitter_sec, deadline=deadline)
 
         if self._transport is not None:
-            response = self._post_httpx(
+            response = self._send_httpx(
+                method,
                 url,
+                params=params,
                 data=data,
                 headers=headers,
                 timeout=effective_timeout,
                 proxy=selected_proxy,
-                proxy_key=proxy_key,
+                proxy_key=resolved_proxy_key,
             )
         else:
-            response = self._post_curl(
+            response = self._send_curl(
+                method,
                 url,
+                params=params,
                 data=data,
                 headers=headers,
                 timeout=effective_timeout,
                 proxy=selected_proxy,
-                proxy_key=proxy_key,
+                proxy_key=resolved_proxy_key,
             )
 
         if max_bytes is not None and len(response.content) > max_bytes:
@@ -348,70 +363,42 @@ class ResilientHttpSession:
             headers={k.lower(): v for k, v in response.headers.items()},
             content=response.content,
             used_proxy=redact_proxy_url(selected_proxy),
-            proxy_key=proxy_key,
+            proxy_key=resolved_proxy_key,
         )
 
-    def _get_httpx(
+    def _get_httpx_client(self) -> httpx.Client:
+        return httpx.Client(
+            transport=self._transport,
+            headers=self._headers,
+            follow_redirects=True,
+        )
+
+    def _send_httpx(
         self,
+        method: str,
         url: str,
         *,
         params: dict[str, Any] | None,
-        headers: dict[str, str] | None,
-        timeout: float,
-        proxy: str | None,
-        proxy_key: str,
-    ) -> httpx.Response:
-        try:
-            if self._in_context:
-                client = self._httpx_clients.get(proxy_key)
-                if client is None:
-                    client = httpx.Client(
-                        transport=self._transport,
-                        headers=self._headers,
-                        follow_redirects=True,
-                    )
-                    self._httpx_clients[proxy_key] = client
-                return client.get(url, params=params, headers=headers, timeout=timeout)
-            with httpx.Client(
-                transport=self._transport,
-                headers=self._headers,
-                follow_redirects=True,
-            ) as client:
-                return client.get(url, params=params, headers=headers, timeout=timeout)
-        except httpx.HTTPError as exc:
-            msg, scrubbed = scrub_proxy_credentials(str(exc), proxy)
-            err = HttpTransportError(f"Request failed for {url}: {msg}", proxy_key=proxy_key)
-            if scrubbed:
-                raise err from None
-            raise err from exc
-
-    def _post_httpx(
-        self,
-        url: str,
-        *,
         data: dict[str, Any] | bytes | None,
         headers: dict[str, str] | None,
         timeout: float,
         proxy: str | None,
         proxy_key: str,
     ) -> httpx.Response:
+        kwargs: dict[str, Any] = {"headers": headers, "timeout": timeout}
+        if params is not None:
+            kwargs["params"] = params
+        if data is not None:
+            kwargs["data"] = data
         try:
             if self._in_context:
                 client = self._httpx_clients.get(proxy_key)
                 if client is None:
-                    client = httpx.Client(
-                        transport=self._transport,
-                        headers=self._headers,
-                        follow_redirects=True,
-                    )
+                    client = self._get_httpx_client()
                     self._httpx_clients[proxy_key] = client
-                return client.post(url, data=data, headers=headers, timeout=timeout)
-            with httpx.Client(
-                transport=self._transport,
-                headers=self._headers,
-                follow_redirects=True,
-            ) as client:
-                return client.post(url, data=data, headers=headers, timeout=timeout)
+                return client.request(method, url, **kwargs)
+            with self._get_httpx_client() as client:
+                return client.request(method, url, **kwargs)
         except httpx.HTTPError as exc:
             msg, scrubbed = scrub_proxy_credentials(str(exc), proxy)
             err = HttpTransportError(f"Request failed for {url}: {msg}", proxy_key=proxy_key)
@@ -419,22 +406,27 @@ class ResilientHttpSession:
                 raise err from None
             raise err from exc
 
-    def _get_curl(
+    def _send_curl(
         self,
+        method: str,
         url: str,
         *,
         params: dict[str, Any] | None,
+        data: dict[str, Any] | bytes | None,
         headers: dict[str, str] | None,
         timeout: float,
         proxy: str | None,
         proxy_key: str,
     ) -> curl_requests.Response:
         kwargs: dict[str, Any] = {
-            "params": params,
             "headers": headers,
             "timeout": timeout,
             "allow_redirects": True,
         }
+        if params is not None:
+            kwargs["params"] = params
+        if data is not None:
+            kwargs["data"] = data
         if proxy:
             kwargs["proxy"] = proxy
         try:
@@ -447,55 +439,13 @@ class ResilientHttpSession:
                         default_headers=True,
                     )
                     self._curl_sessions[proxy_key] = session
-                return session.get(url, **kwargs)
+                return session.request(method, url, **kwargs)
             with curl_requests.Session(
                 impersonate=self._impersonate,
                 headers=self._headers,
                 default_headers=True,
             ) as session:
-                return session.get(url, **kwargs)
-        except CurlRequestsError as exc:
-            msg, scrubbed = scrub_proxy_credentials(str(exc), proxy)
-            err = HttpTransportError(f"Request failed for {url}: {msg}", proxy_key=proxy_key)
-            if scrubbed:
-                raise err from None
-            raise err from exc
-
-    def _post_curl(
-        self,
-        url: str,
-        *,
-        data: dict[str, Any] | bytes | None,
-        headers: dict[str, str] | None,
-        timeout: float,
-        proxy: str | None,
-        proxy_key: str,
-    ) -> curl_requests.Response:
-        kwargs: dict[str, Any] = {
-            "data": data,
-            "headers": headers,
-            "timeout": timeout,
-            "allow_redirects": True,
-        }
-        if proxy:
-            kwargs["proxy"] = proxy
-        try:
-            if self._in_context:
-                session = self._curl_sessions.get(proxy_key)
-                if session is None:
-                    session = curl_requests.Session(
-                        impersonate=self._impersonate,
-                        headers=self._headers,
-                        default_headers=True,
-                    )
-                    self._curl_sessions[proxy_key] = session
-                return session.post(url, **kwargs)
-            with curl_requests.Session(
-                impersonate=self._impersonate,
-                headers=self._headers,
-                default_headers=True,
-            ) as session:
-                return session.post(url, **kwargs)
+                return session.request(method, url, **kwargs)
         except CurlRequestsError as exc:
             msg, scrubbed = scrub_proxy_credentials(str(exc), proxy)
             err = HttpTransportError(f"Request failed for {url}: {msg}", proxy_key=proxy_key)

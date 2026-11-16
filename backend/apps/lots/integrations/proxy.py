@@ -274,14 +274,15 @@ def get_shared_proxy_pool(
 ) -> ProxyPool:
     """Return a process-wide ProxyPool keyed by normalized configuration."""
     normalized = normalize_proxy_urls(proxy_urls)
+    normalized_domain = _normalize_domain(domain) if domain else None
     cooldown = max(0.0, float(ban_cooldown_sec))
-    key = (normalized, domain, cooldown, use_redis)
+    key = (normalized, normalized_domain, cooldown, use_redis)
     with _shared_pools_lock:
         pool = _shared_pools.get(key)
         if pool is None:
             pool = ProxyPool(
                 normalized,
-                domain=domain,
+                domain=normalized_domain,
                 ban_cooldown_sec=cooldown,
                 use_redis=use_redis,
             )

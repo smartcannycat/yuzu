@@ -707,3 +707,64 @@ def test_tesseract_solver_real_binary_on_synthetic_image():
     solver = TesseractImageCaptchaSolver(command="tesseract", timeout_sec=5.0)
     recognized = solver.solve(png_bytes, deadline=time.monotonic() + 10)
     assert recognized == "4820"
+
+
+def test_altcha_v2_without_deadline_caps_search_and_clamps_argon2_workers(monkeypatch):
+    from apps.lots.integrations.captcha.altcha import _resolve_workers
+
+    monkeypatch.setattr("apps.lots.integrations.captcha.altcha._DEFAULT_V2_MAXNUMBER", 5)
+    unsolvable = AltchaChallenge.from_payload(
+        {
+            "parameters": {
+                "algorithm": "SHA-256",
+                "cost": 1,
+                "keyLength": 32,
+                "keyPrefix": "ffffffffffffffff",
+                "nonce": "0011223344556677",
+                "salt": "ffeeddccbbaa9988",
+            }
+        }
+    )
+    with pytest.raises(AltchaSolveTimeoutError, match="search range"):
+        solve_altcha(unsolvable, max_workers=2)
+
+    heavy_argon = AltchaChallenge.from_payload(
+        {
+            "parameters": {
+                "algorithm": "argon2id",
+                "cost": 1,
+                "memoryCost": 16_384,
+                "parallelism": 1,
+                "keyLength": 32,
+                "keyPrefix": "0000",
+                "nonce": "0011223344556677",
+                "salt": "ffeeddccbbaa9988",
+            }
+        }
+    )
+    assert _resolve_workers(None, challenge=heavy_argon) <= 4
+
+
+def test_farpost_captcha_post_derives_origin_from_page_url():
+    payload = _sha_challenge(counter=2)
+    seen_origins: list[str] = []
+    challenged = False
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal challenged
+        if request.method == "POST":
+            seen_origins.append(request.headers.get("origin", ""))
+            return httpx.Response(302, headers={"Location": TARGET_URL})
+        if request.url.path == "/verify":
+            return httpx.Response(200, text=_altcha_page(payload))
+        if not challenged:
+            challenged = True
+            return httpx.Response(
+                302, headers={"Location": "https://mirror.farpost.ru/verify?u=test"}
+            )
+        return httpx.Response(200, text=_listing_html())
+
+    client = FarpostClient(transport=httpx.MockTransport(handler))
+    offers = client.search(CRITERIA, deadline=time.monotonic() + 20)
+    assert len(offers) == 1
+    assert seen_origins == ["https://mirror.farpost.ru"]

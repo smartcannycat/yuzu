@@ -298,13 +298,19 @@ class FarpostCaptchaSolver:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise FarpostCaptchaError("Farpost verification deadline reached")
+        parsed = urlparse(page.url)
+        origin = (
+            f"{parsed.scheme}://{parsed.netloc}"
+            if parsed.scheme and parsed.netloc
+            else "https://www.farpost.ru"
+        )
         return session.post(
             page.form_action,
             data=fields,
             headers={
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Content-Type": "application/x-www-form-urlencoded",
-                "Origin": "https://www.farpost.ru",
+                "Origin": origin,
                 "Referer": page.url,
             },
             timeout=min(self.request_timeout_sec, remaining),
