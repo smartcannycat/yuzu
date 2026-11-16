@@ -24,6 +24,10 @@ from apps.core.exceptions import (
     NotFoundProblemError,
 )
 from apps.core.redis_utils import get_redis_client
+from apps.integrations.aleado.service import AleadoCrossAuditService
+from apps.integrations.currency.service import build_currency_service, to_customs_rates_input
+from apps.integrations.drom.schemas import DromFetchError, DromMarketResult, DromSearchCriteria
+from apps.integrations.farpost.service import save_repair_estimate
 from apps.lots.economics import (
     EV_MISSING_POWER_WARNING,
     _missing_customs_inputs,
@@ -32,10 +36,6 @@ from apps.lots.economics import (
     ensure_lot_baseline,
     recompute_lot_economics,
 )
-from apps.lots.integrations.aleado.service import AleadoCrossAuditService
-from apps.lots.integrations.currency.service import build_currency_service, to_customs_rates_input
-from apps.lots.integrations.drom.schemas import DromFetchError, DromMarketResult, DromSearchCriteria
-from apps.lots.integrations.farpost.service import save_repair_estimate
 from apps.lots.lifecycle import compute_lot_expires_at
 from apps.lots.media import attach_uploaded_sheet_media_from_item
 from apps.lots.models import (

@@ -6,12 +6,12 @@ import pytest
 from django.core.files.base import ContentFile
 
 from apps.core.enums import AuctionHouse, BodyPanel, ItemProcessingStatus, TaskStep
-from apps.lots.integrations.ml.client import (
+from apps.integrations.ml.client import (
     MlServiceClient,
     MlServiceError,
     MlServiceUnavailableError,
 )
-from apps.lots.integrations.ml.parser import MlServiceParser
+from apps.integrations.ml.parser import MlServiceParser
 from apps.lots.models import Batch, BatchItem, Lot, LotDefect, LotRiskFlags
 
 
@@ -523,7 +523,7 @@ def test_parser_reads_settings_when_no_overrides(batch_item, settings) -> None:
         captured.update(kwargs)
         return real_client(transport=_transport(handler), **kwargs)  # type: ignore[arg-type]
 
-    with patch("apps.lots.integrations.ml.parser.MlServiceClient", side_effect=spy_client):
+    with patch("apps.integrations.ml.parser.MlServiceClient", side_effect=spy_client):
         parser = MlServiceParser()
         assert parser.gatekeeper(batch_item) is None
 

@@ -25,29 +25,29 @@ from apps.core.enums import (
     TrafficLightColor,
 )
 from apps.core.models import ExternalCache
-from apps.lots import schemas
-from apps.lots.integrations.drom.cache import read_drom_cache, write_drom_cache
-from apps.lots.integrations.drom.client import DromHttpClient
-from apps.lots.integrations.drom.filtering import (
+from apps.integrations.drom.cache import read_drom_cache, write_drom_cache
+from apps.integrations.drom.client import DromHttpClient
+from apps.integrations.drom.filtering import (
     _remove_price_outliers,
     build_drom_search_url,
     filter_and_aggregate,
     is_under_order_or_unavailable,
 )
-from apps.lots.integrations.drom.parser import (
+from apps.integrations.drom.parser import (
     parse_catalog_generations,
     parse_catalog_power_specs,
     parse_listings,
 )
-from apps.lots.integrations.drom.power import DromPowerResolver, normalize_katashiki_candidates
-from apps.lots.integrations.drom.schemas import (
+from apps.integrations.drom.power import DromPowerResolver, normalize_katashiki_candidates
+from apps.integrations.drom.schemas import (
     DromBlockedError,
     DromFetchError,
     DromListing,
     DromSearchCriteria,
 )
-from apps.lots.integrations.drom.service import DromMarketService, _build_market_cache_key
-from apps.lots.integrations.drom.slugs import DromSlugResolver, normalize_slug
+from apps.integrations.drom.service import DromMarketService, _build_market_cache_key
+from apps.integrations.drom.slugs import DromSlugResolver, normalize_slug
+from apps.lots import schemas
 from apps.lots.models import (
     Batch,
     BatchItem,
@@ -1124,7 +1124,7 @@ def test_slug_resolver_falls_back_to_brand_and_catalog_directory() -> None:
 
     client = DromHttpClient(transport=httpx.MockTransport(handler))
     service = DromMarketService(client=client)
-    with patch("apps.lots.integrations.drom.slugs._load_drom_schema", return_value={}):
+    with patch("apps.integrations.drom.slugs.resolver._load_drom_schema", return_value={}):
         result = service.evaluate(
             DromSearchCriteria(
                 make="Suzuki",
@@ -1248,7 +1248,7 @@ def test_dom_fallback_extracts_href_outside_title_element() -> None:
 
 
 def test_directory_parser_filters_seo_garbage_and_respects_ssr_whitelist() -> None:
-    from apps.lots.integrations.drom.directory_parser import (
+    from apps.integrations.drom.directory_parser import (
         parse_brand_models_from_html,
         parse_catalog_models_from_html,
     )
@@ -1331,7 +1331,7 @@ def test_power_resolver_uses_catalog_slug_directly_and_handles_fallback_404() ->
     }
     client = DromHttpClient(transport=httpx.MockTransport(handler))
     resolver = DromPowerResolver(client, DromSlugResolver(client))
-    with patch("apps.lots.integrations.drom.slugs._load_drom_schema", return_value=mock_schema):
+    with patch("apps.integrations.drom.slugs.resolver._load_drom_schema", return_value=mock_schema):
         res = resolver.resolve(
             make="Suzuki",
             model="Every Van",
@@ -1349,7 +1349,7 @@ def test_power_resolver_uses_catalog_slug_directly_and_handles_fallback_404() ->
 
 
 def test_slug_matching_rejects_conflicting_submodel_collapses() -> None:
-    from apps.lots.integrations.drom.slugs import _pick_best_model_slug
+    from apps.integrations.drom.slugs import _pick_best_model_slug
 
     assert _pick_best_model_slug("Civic Type R", ["Civic", "Accord"], {"civic": "civic"}) is None
     assert _pick_best_model_slug("Yaris Cross", ["Yaris", "Corolla"], {"yaris": "yaris"}) is None
@@ -1365,7 +1365,7 @@ def test_slug_matching_rejects_conflicting_submodel_collapses() -> None:
 
 
 def test_real_auction_sheet_edge_cases_slugs_and_power() -> None:
-    from apps.lots.integrations.drom.power import _select_best_power_hp
+    from apps.integrations.drom.power import _select_best_power_hp
 
     resolver = DromSlugResolver(DromHttpClient())
 

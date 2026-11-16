@@ -9,13 +9,13 @@ from django.utils import timezone
 
 from apps.core.enums import ExternalCacheSource
 from apps.core.models import ExternalCache
-from apps.lots.integrations.currency.cache import CACHE_KEY, LOCK_KEY, PAUSE_KEY, CurrencyCache
-from apps.lots.integrations.currency.client import CbrfClient
-from apps.lots.integrations.currency.domain import (
+from apps.integrations.currency.cache import CACHE_KEY, LOCK_KEY, PAUSE_KEY, CurrencyCache
+from apps.integrations.currency.client import CbrfClient
+from apps.integrations.currency.domain import (
     BaseRates,
     RatesOrigin,
 )
-from apps.lots.integrations.currency.service import (
+from apps.integrations.currency.service import (
     CurrencyRatesService,
 )
 

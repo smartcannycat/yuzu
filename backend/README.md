@@ -70,13 +70,13 @@ cached in PostgreSQL for 24 hours; valid empty searches for 10 minutes. Source
 failures use successful results up to one day old, then the statistical matrix. Stale
 results do not confirm current stock or a color match.
 
-The versioned matrix in `apps/lots/integrations/farpost/data/repair_matrix.json`
+The versioned matrix in `apps/integrations/farpost/data/repair_matrix.json`
 contains planning estimates from the project research, not current STO quotes.
 A part without a documented price uses the generic RUB 29,000 reserve. Work prices
 include material costs where applicable. Duplicate defects do not duplicate work.
 
 Farpost may return an anti-bot `/verify` page with HTTP 200. The shared
-`apps/lots/integrations/captcha` package detects the Bottopotamus challenge,
+`apps/integrations/captcha` package detects the Bottopotamus challenge,
 fetches the ALTCHA proof-of-work JSON and solves it locally (legacy v1 and modern
 v2, including SHA, PBKDF2 and argon2id). The solved payload is submitted with the
 signed `s` token and the request continues on the same proxy and cookie jar, so a

@@ -5,9 +5,9 @@ from __future__ import annotations
 import pytest
 from redis.exceptions import RedisError
 
-from apps.lots.integrations.drom.client import DromHttpClient
-from apps.lots.integrations.farpost.client import FarpostClient
-from apps.lots.integrations.proxy import (
+from apps.integrations.drom.client import DromHttpClient
+from apps.integrations.farpost.client import FarpostClient
+from apps.integrations.shared.proxy import (
     ProxyPool,
     ProxyRotator,
     get_shared_proxy_pool,
@@ -82,7 +82,7 @@ def test_proxy_pool_redis_quarantine_uses_hashed_keys_without_credentials(monkey
         def delete(self, key):
             stored.pop(key, None)
 
-    monkeypatch.setattr("apps.lots.integrations.proxy.get_redis_client", lambda: FakeRedis())
+    monkeypatch.setattr("apps.integrations.shared.proxy.get_redis_client", lambda: FakeRedis())
 
     pool_worker_a = ProxyPool(["http://user:topsecret@p1:8080", "http://user:topsecret@p2:8080"])
     pool_worker_b = ProxyPool(["http://user:topsecret@p1:8080", "http://user:topsecret@p2:8080"])
@@ -120,7 +120,7 @@ def test_proxy_pool_redis_quarantine_uses_hashed_keys_without_credentials(monkey
         def delete(self, key):
             raise RedisError("redis down")
 
-    monkeypatch.setattr("apps.lots.integrations.proxy.get_redis_client", lambda: BrokenRedis())
+    monkeypatch.setattr("apps.integrations.shared.proxy.get_redis_client", lambda: BrokenRedis())
     pool_worker_b.mark_blocked("http://user:topsecret@p2:8080", domain="drom.ru", cooldown_sec=30.0)
     assert pool_worker_b.is_quarantined("http://user:topsecret@p2:8080", domain="drom.ru")
 

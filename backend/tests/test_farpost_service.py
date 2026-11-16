@@ -11,15 +11,14 @@ from django.utils import timezone
 
 from apps.core.enums import ExternalCacheSource, FuelType, ItemProcessingStatus, WorkType
 from apps.core.models import ExternalCache
-from apps.lots import pipeline
-from apps.lots.integrations.farpost import service as farpost_service
-from apps.lots.integrations.farpost.client import (
+from apps.integrations.farpost import cache as farpost_cache
+from apps.integrations.farpost.client import (
     FarpostFetchError,
     FarpostRateLimitedError,
     PartCriteria,
     PartOffer,
 )
-from apps.lots.integrations.farpost.service import (
+from apps.integrations.farpost.service import (
     _body_code,
     _cache_key,
     _search_model,
@@ -27,6 +26,7 @@ from apps.lots.integrations.farpost.service import (
     save_repair_estimate,
     search_cached,
 )
+from apps.lots import pipeline
 from apps.lots.models import Batch, BatchItem, Lot, LotDefect, ServiceWorkItem
 from apps.lots.queries import _build_farpost_out
 
@@ -40,8 +40,8 @@ OFFER = PartOffer(
 
 @pytest.fixture(autouse=True)
 def _isolate_farpost_cooldown(monkeypatch):
-    monkeypatch.setattr(farpost_service, "_local_cooldown_until", 0.0)
-    monkeypatch.setattr(farpost_service, "get_redis_client", lambda: None)
+    monkeypatch.setattr(farpost_cache, "_local_cooldown_until", 0.0)
+    monkeypatch.setattr(farpost_cache, "get_redis_client", lambda: None)
 
 
 @pytest.fixture
@@ -270,7 +270,7 @@ def test_pipeline_persists_fallback_without_failing_batch(lot, monkeypatch):
         batch=batch, lot=lot, file_index=0, original_filename="sheet.jpg"
     )
     monkeypatch.setattr(
-        "apps.lots.integrations.farpost.service.FarpostClient", lambda **_kw: source(error=True)
+        "apps.integrations.farpost.service.FarpostClient", lambda **_kw: source(error=True)
     )
     assert pipeline._step_farpost_parts(item)
     assert lot.farpost_repair.parts.get().is_statistical_fallback
@@ -397,8 +397,8 @@ def test_validated_per_panel_fallback_prices(lot):
 
 @pytest.mark.django_db
 def test_rate_limit_cooldown_stops_remaining_panel_requests(lot, monkeypatch):
-    monkeypatch.setattr(farpost_service, "_local_cooldown_until", 0.0)
-    monkeypatch.setattr(farpost_service, "get_redis_client", lambda: None)
+    monkeypatch.setattr(farpost_cache, "_local_cooldown_until", 0.0)
+    monkeypatch.setattr(farpost_cache, "get_redis_client", lambda: None)
     defect(lot, "X", "front_left_door")
     defect(lot, "X", "front_right_door")
     client = Mock()
@@ -413,7 +413,7 @@ def test_rate_limit_cooldown_stops_remaining_panel_requests(lot, monkeypatch):
 def test_upsert_external_cache_survives_integrity_error_race(monkeypatch):
     from django.db import IntegrityError
 
-    from apps.lots.integrations.cache import upsert_external_cache
+    from apps.integrations.shared.cache import upsert_external_cache
 
     upsert_external_cache(
         "farpost:race:key",

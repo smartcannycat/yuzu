@@ -1,11 +1,11 @@
 """Public facade for the lots domain services."""
 
+from apps.integrations.drom import DromMarketService
 from apps.lots.economics import (
     _missing_customs_inputs,
     _resolve_start_bid_jpy,
     recompute_lot_economics,
 )
-from apps.lots.integrations.drom import DromMarketService
 from apps.lots.lifecycle import (
     archive_expired_lots_for_user,
     bulk_delete_lots,

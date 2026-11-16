@@ -80,17 +80,6 @@ max-complexity = 12
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["ARG001", "ARG002"]
-# Scheduled for PR 3 cleanup/splitting:
-"apps/lots/integrations/cache.py" = ["C901"]
-"apps/lots/integrations/captcha/altcha.py" = ["C901"]
-"apps/lots/integrations/drom/catalog_parser.py" = ["PERF401"]
-"apps/lots/integrations/drom/client.py" = ["C901"]
-"apps/lots/integrations/drom/listings_parser.py" = ["PERF401"]
-"apps/lots/integrations/drom/service.py" = ["C901"]
-"apps/lots/integrations/farpost/client.py" = ["C901"]
-"apps/lots/integrations/farpost/parser.py" = ["C901"]
-"apps/lots/integrations/http_client.py" = ["C901"]
-"apps/lots/integrations/url_guard.py" = ["C901"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["config", "apps"]
@@ -103,7 +92,7 @@ include_external_packages = false
 name = "Core is independent of domain apps"
 type = "forbidden"
 source_modules = ["apps.core"]
-forbidden_modules = ["apps.lots", "apps.users"]
+forbidden_modules = ["apps.lots", "apps.users", "apps.integrations"]
 
 [[tool.importlinter.contracts]]
 name = "Lots models do not import API, pipeline, calculator, or integrations"
@@ -118,7 +107,25 @@ forbidden_modules = [
     "apps.lots.safety",
     "apps.lots.customs",
     "apps.lots.queries",
-    "apps.lots.integrations",
+    "apps.integrations",
+]
+
+[[tool.importlinter.contracts]]
+name = "Integrations do not import lots pipeline, calculator, or API"
+type = "forbidden"
+source_modules = ["apps.integrations"]
+forbidden_modules = [
+    "apps.lots.api",
+    "apps.lots.pipeline",
+    "apps.lots.recalc",
+    "apps.lots.economics",
+    "apps.lots.scoring",
+    "apps.lots.safety",
+    "apps.lots.customs",
+    "apps.lots.queries",
+    "apps.lots.lifecycle",
+    "apps.lots.media",
+    "apps.lots.starter_lots",
 ]
 
 [tool.pytest.ini_options]

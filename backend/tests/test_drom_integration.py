@@ -13,23 +13,23 @@ from apps.core.enums import (
     TaskStep,
 )
 from apps.core.models import ExternalCache
-from apps.lots.integrations.drom.client import DromHttpClient
-from apps.lots.integrations.drom.filtering import (
+from apps.integrations.drom.client import DromHttpClient
+from apps.integrations.drom.filtering import (
     build_drom_search_url,
     filter_and_aggregate,
 )
-from apps.lots.integrations.drom.parser import (
+from apps.integrations.drom.parser import (
     parse_catalog_generations,
     parse_catalog_power_specs,
     parse_listings,
 )
-from apps.lots.integrations.drom.schemas import (
+from apps.integrations.drom.schemas import (
     DromFetchError,
     DromListing,
     DromSearchCriteria,
 )
-from apps.lots.integrations.drom.service import DromMarketService, _build_market_cache_key
-from apps.lots.integrations.drom.slugs import DromSlugResolver
+from apps.integrations.drom.service import DromMarketService, _build_market_cache_key
+from apps.integrations.drom.slugs import DromSlugResolver
 from apps.lots.models import Batch, BatchItem, Lot, MarketComparisonInfo
 from apps.lots.services import _step_drom_market
 
@@ -277,7 +277,7 @@ def test_drom_slug_api_fallback_on_404() -> None:
         return httpx.Response(404)
 
     service = DromMarketService(client=DromHttpClient(transport=httpx.MockTransport(handler)))
-    with patch("apps.lots.integrations.drom.slugs._load_drom_schema", return_value={}):
+    with patch("apps.integrations.drom.slugs.resolver._load_drom_schema", return_value={}):
         result = service.evaluate(
             DromSearchCriteria(make="Toyota", model="Corolla Rumion X", year=2015, engine_cc=1496)
         )

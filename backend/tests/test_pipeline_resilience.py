@@ -14,6 +14,24 @@ import httpx
 import pytest
 
 from apps.core.enums import AuctionHouse, FuelType
+from apps.integrations.drom.cache import fetch_with_drom_cache
+from apps.integrations.drom.client import DromHttpClient
+from apps.integrations.drom.filtering import (
+    _truncate_drom_url,
+    build_drom_search_url,
+    filter_and_aggregate,
+    is_under_order_or_unavailable,
+)
+from apps.integrations.drom.parser import is_antibot_challenge_html, parse_listings
+from apps.integrations.drom.schemas import DromBlockedError, DromListing, DromSearchCriteria
+from apps.integrations.drom.service import DromMarketService
+from apps.integrations.drom.slugs import DromSlugResolver, ResolvedDromSlug
+from apps.integrations.ml.parser import (
+    _DEFAULT_AUCTION_STRICTNESS,
+    _MISSING_AUCTION_HOUSE_WARNING,
+    _sheet_to_lot_fields,
+)
+from apps.integrations.ml.schemas import NormalizedSheet, ParserResponse
 from apps.lots.customs import CurrencyRatesInput, CustomsInput, calculate_customs
 from apps.lots.economics import (
     DEFAULT_BID_SLIDER_MAX_JPY,
@@ -23,24 +41,6 @@ from apps.lots.economics import (
     compute_bid_slider_max_jpy,
     ensure_dynamic_bid_slider_max,
 )
-from apps.lots.integrations.drom.cache import fetch_with_drom_cache
-from apps.lots.integrations.drom.client import DromHttpClient
-from apps.lots.integrations.drom.filtering import (
-    _truncate_drom_url,
-    build_drom_search_url,
-    filter_and_aggregate,
-    is_under_order_or_unavailable,
-)
-from apps.lots.integrations.drom.parser import is_antibot_challenge_html, parse_listings
-from apps.lots.integrations.drom.schemas import DromBlockedError, DromListing, DromSearchCriteria
-from apps.lots.integrations.drom.service import DromMarketService
-from apps.lots.integrations.drom.slugs import DromSlugResolver, ResolvedDromSlug
-from apps.lots.integrations.ml.parser import (
-    _DEFAULT_AUCTION_STRICTNESS,
-    _MISSING_AUCTION_HOUSE_WARNING,
-    _sheet_to_lot_fields,
-)
-from apps.lots.integrations.ml.schemas import NormalizedSheet, ParserResponse
 from apps.lots.queries import _sanitize_strictness_index
 
 
@@ -490,7 +490,7 @@ def test_cascade_preserves_api_slug_after_step_404_and_reraises_blocked() -> Non
     assert any("/c-class/" in u and "minyear=2019&maxyear=2021" in u for u in calls)
 
     with (
-        patch("apps.lots.integrations.drom.cache.read_drom_cache", return_value=None),
+        patch("apps.integrations.drom.cache.read_drom_cache", return_value=None),
         pytest.raises(DromBlockedError),
     ):
         fetch_with_drom_cache(
@@ -504,7 +504,7 @@ def test_cascade_preserves_api_slug_after_step_404_and_reraises_blocked() -> Non
 
 
 def test_parse_catalog_generations_drops_off_domain_and_insecure_links() -> None:
-    from apps.lots.integrations.drom.catalog_parser import parse_catalog_generations
+    from apps.integrations.drom.catalog_parser import parse_catalog_generations
 
     html = """<html><body>
       <a href="/catalog/toyota/corolla/g_2019_1234/">2019</a>

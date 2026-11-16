@@ -22,21 +22,21 @@ from apps.core.enums import (
     RiskLevel,
     TaskStep,
 )
-from apps.lots.integrations.aleado import (
+from apps.integrations.aleado import (
     AleadoAuthError,
     AleadoClient,
     AleadoLotRow,
     AleadoParseError,
     AleadoUnavailableError,
 )
-from apps.lots.integrations.aleado.parser import parse_lot_detail, parse_search_results
-from apps.lots.integrations.aleado.service import (
+from apps.integrations.aleado.parser import parse_lot_detail, parse_search_results
+from apps.integrations.aleado.service import (
     AleadoCrossAuditService,
     _build_outcome,
     _evaluate_rules,
     clean_model_code,
 )
-from apps.lots.integrations.ml.client import MlServiceClient
+from apps.integrations.ml.client import MlServiceClient
 from apps.lots.models import Batch, BatchItem, CrossAuditReport, Lot
 from apps.lots.pipeline import _step_cross_audit
 from config.settings.config import AppSettings
@@ -48,7 +48,7 @@ _FROZEN_NOW = datetime(2026, 11, 13, 12, 0, tzinfo=UTC)
 @pytest.fixture(autouse=True)
 def _freeze_aleado_now(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep fixture trading dates (2026-11-14..18) deterministically in the future."""
-    monkeypatch.setattr("apps.lots.integrations.aleado.service.timezone.now", lambda: _FROZEN_NOW)
+    monkeypatch.setattr("apps.integrations.aleado.service.timezone.now", lambda: _FROZEN_NOW)
 
 
 def _fixture(name: str) -> str:
@@ -80,7 +80,7 @@ def _lot_row(**overrides: object) -> AleadoLotRow:
 
 
 def _verified_row(**overrides: object):
-    from apps.lots.integrations.aleado.service import _VerifiedRow
+    from apps.integrations.aleado.service import _VerifiedRow
 
     return _VerifiedRow(row=_lot_row(**overrides))
 
@@ -276,9 +276,7 @@ def test_client_throttles_requests() -> None:
         request_interval_sec=1.5,
         sleep_fn=sleeps.append,
     )
-    with patch(
-        "apps.lots.integrations.aleado.client.time.monotonic", lambda: next(monotonic_values)
-    ):
+    with patch("apps.integrations.aleado.client.time.monotonic", lambda: next(monotonic_values)):
         client.search_lots("GB5", 2017)
         client.search_lots("GB5", 2017)
 
@@ -863,7 +861,7 @@ def test_app_settings_aleado_rejects_invalid_numbers() -> None:
 @pytest.mark.django_db
 def test_chassis_image_url_outside_allowlist_is_blocked(_make_batch_item=None) -> None:
     """SSRF guard: chassis URLs from parsed HTML must be allowlisted."""
-    from apps.lots.integrations.aleado.client import (
+    from apps.integrations.aleado.client import (
         AleadoClient,
         AleadoParseError,
     )
@@ -900,7 +898,7 @@ def test_chassis_image_url_outside_allowlist_is_blocked(_make_batch_item=None) -
 @pytest.mark.django_db
 def test_oversized_html_response_is_rejected() -> None:
     """DoS guard: responses beyond the size cap must not reach the parser."""
-    from apps.lots.integrations.aleado.client import AleadoUnavailableError
+    from apps.integrations.aleado.client import AleadoUnavailableError
 
     def handler(_request: httpx.Request) -> httpx.Response:
         # Content-Length above the 3 MB HTML cap.
@@ -926,8 +924,8 @@ def test_photo_url_from_untrusted_host_is_dropped() -> None:
     """Stored-XSS guard: non-allowlisted photo URLs must not reach the DB."""
     from datetime import datetime
 
-    from apps.lots.integrations.aleado.parser import AleadoLotRow
-    from apps.lots.integrations.aleado.service import _build_outcome, _VerifiedRow
+    from apps.integrations.aleado.parser import AleadoLotRow
+    from apps.integrations.aleado.service import _build_outcome, _VerifiedRow
 
     past_row = AleadoLotRow(
         trading_date=datetime(2026, 10, 1, 12, 0, tzinfo=UTC),

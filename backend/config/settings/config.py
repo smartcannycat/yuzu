@@ -11,7 +11,7 @@ from pydantic_settings import (
     TomlConfigSettingsSource,
 )
 
-from apps.lots.integrations.currency.domain import parse_fallback_config
+from apps.integrations.currency.domain import parse_fallback_config
 
 _BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
 _REPO_ROOT = _BACKEND_DIR.parent

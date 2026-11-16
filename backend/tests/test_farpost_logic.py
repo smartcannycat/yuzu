@@ -11,19 +11,20 @@ import httpx
 import pytest
 
 from apps.core.enums import WorkType
-from apps.lots.integrations.drom import schema_sync
-from apps.lots.integrations.drom.client import DromHttpClient
-from apps.lots.integrations.drom.schemas import DromBlockedError
-from apps.lots.integrations.drom.service import DromMarketService
-from apps.lots.integrations.farpost import service as farpost_service
-from apps.lots.integrations.farpost.client import (
+from apps.integrations.drom import schema_sync
+from apps.integrations.drom.client import DromHttpClient
+from apps.integrations.drom.schemas import DromBlockedError
+from apps.integrations.drom.service import DromMarketService
+from apps.integrations.farpost import cache as farpost_cache
+from apps.integrations.farpost import service as farpost_service
+from apps.integrations.farpost.client import (
     FarpostClient,
     FarpostRateLimitedError,
     ParseResult,
     PartCriteria,
     PartOffer,
 )
-from apps.lots.integrations.farpost.service import (
+from apps.integrations.farpost.service import (
     _FALLBACK_SUBTITLES,
     _body_code,
     _search_model,
@@ -31,7 +32,7 @@ from apps.lots.integrations.farpost.service import (
     _work_label,
     estimate_repair,
 )
-from apps.lots.integrations.http_client import clear_local_throttle_state, reset_shared_proxy_pools
+from apps.integrations.shared.http import clear_local_throttle_state, reset_shared_proxy_pools
 from config.settings.config import AppSettings
 
 
@@ -146,14 +147,14 @@ def test_work_label_distinguishes_sto_norm_from_matrix_bodywork():
 
 
 def test_search_cached_skips_negative_cache_when_exact_feed_exists(monkeypatch):
-    monkeypatch.setattr(farpost_service, "_local_cooldown_until", 0.0)
-    monkeypatch.setattr(farpost_service, "get_redis_client", lambda: None)
+    monkeypatch.setattr(farpost_cache, "_local_cooldown_until", 0.0)
+    monkeypatch.setattr(farpost_cache, "get_redis_client", lambda: None)
 
     filter_mock = MagicMock()
     filter_mock.first.return_value = None
-    monkeypatch.setattr(farpost_service.ExternalCache.objects, "filter", lambda **_kw: filter_mock)
+    monkeypatch.setattr(farpost_cache.ExternalCache.objects, "filter", lambda **_kw: filter_mock)
     update_mock = MagicMock()
-    monkeypatch.setattr(farpost_service.ExternalCache.objects, "update_or_create", update_mock)
+    monkeypatch.setattr(farpost_cache.ExternalCache.objects, "update_or_create", update_mock)
 
     client = FarpostClient(transport=httpx.MockTransport(lambda _r: httpx.Response(200, text="")))
     monkeypatch.setattr(
@@ -162,7 +163,7 @@ def test_search_cached_skips_negative_cache_when_exact_feed_exists(monkeypatch):
         lambda *_a, **_kw: ParseResult(offers=[], exact_feed_count=116),
     )
 
-    offers, stale, reason = farpost_service._search_cached_with_reason(
+    offers, stale, reason = farpost_cache._search_cached_with_reason(
         client,
         PartCriteria(
             "Subaru", "Impreza", "GP2", "front_left_fender", "крыло", "левое", "переднее", ""
@@ -216,13 +217,13 @@ def test_estimate_repair_reports_specific_fallback_subtitles(monkeypatch):
 
 
 def test_mock_spec_farpost_client_and_frontend_subtitles(monkeypatch):
-    monkeypatch.setattr(farpost_service, "_local_cooldown_until", 0.0)
-    monkeypatch.setattr(farpost_service, "get_redis_client", lambda: None)
+    monkeypatch.setattr(farpost_cache, "_local_cooldown_until", 0.0)
+    monkeypatch.setattr(farpost_cache, "get_redis_client", lambda: None)
     filter_mock = MagicMock()
     filter_mock.first.return_value = None
-    monkeypatch.setattr(farpost_service.ExternalCache.objects, "filter", lambda **_kw: filter_mock)
+    monkeypatch.setattr(farpost_cache.ExternalCache.objects, "filter", lambda **_kw: filter_mock)
     upsert_mock = MagicMock()
-    monkeypatch.setattr(farpost_service, "upsert_external_cache", upsert_mock)
+    monkeypatch.setattr(farpost_cache, "upsert_external_cache", upsert_mock)
 
     mock_client = MagicMock(spec=FarpostClient)
     mock_client.search.return_value = [
@@ -234,7 +235,7 @@ def test_mock_spec_farpost_client_and_frontend_subtitles(monkeypatch):
             False,
         )
     ]
-    offers, stale, reason = farpost_service._search_cached_with_reason(
+    offers, stale, reason = farpost_cache._search_cached_with_reason(
         mock_client,
         PartCriteria(
             "Toyota", "Corolla", "NRE210", "front_left_door", "дверь", "левая", "передняя", ""
@@ -331,7 +332,7 @@ def test_app_settings_shared_scraper_configuration():
 
 
 def test_farpost_and_drom_rotate_and_quarantine_proxies_on_blocks_and_transport_errors(monkeypatch):
-    monkeypatch.setattr("apps.lots.integrations.proxy.get_redis_client", lambda: None)
+    monkeypatch.setattr("apps.integrations.shared.proxy.get_redis_client", lambda: None)
     fp_attempts = 0
 
     def fp_handler(_request: httpx.Request) -> httpx.Response:
@@ -390,7 +391,7 @@ def test_farpost_and_drom_rotate_and_quarantine_proxies_on_blocks_and_transport_
 
 
 def test_shared_proxy_pool_and_http_200_captcha_5xx_rotation(monkeypatch):
-    monkeypatch.setattr("apps.lots.integrations.proxy.get_redis_client", lambda: None)
+    monkeypatch.setattr("apps.integrations.shared.proxy.get_redis_client", lambda: None)
 
     valid_farpost_html = """<html><title>Запчасти</title>
     <input name="goodPresentState" value="present" checked>
@@ -477,7 +478,7 @@ def test_shared_proxy_pool_and_http_200_captcha_5xx_rotation(monkeypatch):
 
 
 def test_farpost_client_marks_blocked_proxy_once_per_429_failure(monkeypatch):
-    monkeypatch.setattr("apps.lots.integrations.proxy.get_redis_client", lambda: None)
+    monkeypatch.setattr("apps.integrations.shared.proxy.get_redis_client", lambda: None)
     client = FarpostClient(
         proxy_urls=["http://p1:8080"],
         proxy_ban_sec=60.0,
@@ -509,10 +510,8 @@ def test_services_read_shared_scraper_settings(monkeypatch):
         SCRAPER_REQUEST_INTERVAL_SEC=1.8,
         SCRAPER_REQUEST_JITTER_SEC=0.3,
     )
-    monkeypatch.setattr("apps.lots.integrations.drom.service.get_settings", lambda: fake_settings)
-    monkeypatch.setattr(
-        "apps.lots.integrations.farpost.service.get_settings", lambda: fake_settings
-    )
+    monkeypatch.setattr("apps.integrations.drom.service.get_settings", lambda: fake_settings)
+    monkeypatch.setattr("apps.integrations.farpost.service.get_settings", lambda: fake_settings)
 
     drom_svc = DromMarketService()
     assert drom_svc._client._timeout_sec == 13.5
@@ -534,7 +533,7 @@ def test_services_read_shared_scraper_settings(monkeypatch):
         def __exit__(self, *_a):
             return None
 
-    monkeypatch.setattr("apps.lots.integrations.farpost.service.FarpostClient", DummyFarpostClient)
+    monkeypatch.setattr("apps.integrations.farpost.service.FarpostClient", DummyFarpostClient)
     dummy_lot = SimpleNamespace(
         make="Toyota",
         model="Corolla",
@@ -556,7 +555,7 @@ def test_services_read_shared_scraper_settings(monkeypatch):
 
 
 def test_estimate_repair_forwards_captcha_and_ocr_settings(monkeypatch):
-    from apps.lots.integrations.captcha import FarpostCaptchaSolver, TesseractImageCaptchaSolver
+    from apps.integrations.captcha import FarpostCaptchaSolver, TesseractImageCaptchaSolver
 
     fake_settings = AppSettings(
         _env_file=None,
@@ -567,9 +566,7 @@ def test_estimate_repair_forwards_captcha_and_ocr_settings(monkeypatch):
         FARPOST_CAPTCHA_OCR_COMMAND="/opt/bin/tesseract",
         SCRAPER_TIMEOUT_SEC=11.0,
     )
-    monkeypatch.setattr(
-        "apps.lots.integrations.farpost.service.get_settings", lambda: fake_settings
-    )
+    monkeypatch.setattr("apps.integrations.farpost.service.get_settings", lambda: fake_settings)
     captured_kwargs: dict[str, object] = {}
 
     class CapturingFarpostClient:
@@ -582,9 +579,7 @@ def test_estimate_repair_forwards_captcha_and_ocr_settings(monkeypatch):
         def __exit__(self, *_a):
             return None
 
-    monkeypatch.setattr(
-        "apps.lots.integrations.farpost.service.FarpostClient", CapturingFarpostClient
-    )
+    monkeypatch.setattr("apps.integrations.farpost.service.FarpostClient", CapturingFarpostClient)
     dummy_lot = SimpleNamespace(
         make="Toyota",
         model="Corolla",
@@ -607,11 +602,11 @@ def test_estimate_repair_forwards_captcha_and_ocr_settings(monkeypatch):
 
 
 def test_farpost_image_captcha_failure_does_not_activate_global_cooldown(monkeypatch):
-    farpost_service.reset_farpost_cooldown()
-    monkeypatch.setattr(farpost_service, "get_redis_client", lambda: None)
+    farpost_cache.reset_farpost_cooldown()
+    monkeypatch.setattr(farpost_cache, "get_redis_client", lambda: None)
     filter_mock = MagicMock()
     filter_mock.first.return_value = None
-    monkeypatch.setattr(farpost_service.ExternalCache.objects, "filter", lambda **_kw: filter_mock)
+    monkeypatch.setattr(farpost_cache.ExternalCache.objects, "filter", lambda **_kw: filter_mock)
 
     def image_challenge_handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/vladivostok/zapchasti/":
@@ -625,7 +620,7 @@ def test_farpost_image_captcha_failure_does_not_activate_global_cooldown(monkeyp
         )
 
     client = FarpostClient(transport=httpx.MockTransport(image_challenge_handler))
-    offers, stale, reason = farpost_service._search_cached_with_reason(
+    offers, stale, reason = farpost_cache._search_cached_with_reason(
         client,
         PartCriteria(
             "Toyota", "Corolla", "NRE210", "front_left_door", "дверь", "левая", "передняя", ""
@@ -635,7 +630,7 @@ def test_farpost_image_captcha_failure_does_not_activate_global_cooldown(monkeyp
     assert offers == []
     assert stale is True
     assert reason == "fetch_error"
-    assert farpost_service._is_rate_limit_cooldown_active() is False
+    assert farpost_cache._is_rate_limit_cooldown_active() is False
 
 
 def test_part_source_kind_matches_frontend_labels():

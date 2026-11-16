@@ -19,30 +19,30 @@ from apps.core.enums import (
     TrafficLightColor,
     WorkType,
 )
-from apps.lots.customs import meti_sanction_risk
-from apps.lots.economics import _resolve_start_bid_jpy
-from apps.lots.integrations.aleado.parser import AleadoLotRow
-from apps.lots.integrations.aleado.service import (
+from apps.integrations.aleado.parser import AleadoLotRow
+from apps.integrations.aleado.service import (
     AleadoCrossAuditService,
     _candidate_is_own_lot,
     _evaluate_rules,
     _VerifiedRow,
     clean_model_code,
 )
-from apps.lots.integrations.currency.client import CbrfClient
-from apps.lots.integrations.currency.domain import BaseRates
-from apps.lots.integrations.currency.service import CurrencyRatesService
-from apps.lots.integrations.drom.client import DromHttpClient
-from apps.lots.integrations.drom.filtering import _truncate_drom_url
-from apps.lots.integrations.drom.power import DromPowerResolver
-from apps.lots.integrations.drom.schemas import DromBlockedError, DromSearchCriteria
-from apps.lots.integrations.drom.service import DromMarketService, _SearchStep
-from apps.lots.integrations.drom.slugs import DromSlugResolver, ResolvedDromSlug
-from apps.lots.integrations.farpost.matrix import _operations, _work_label, repair_matrix
-from apps.lots.integrations.farpost.parser import _contains_code
-from apps.lots.integrations.farpost.service import estimate_repair
-from apps.lots.integrations.ml.parser import _sheet_to_lot_fields
-from apps.lots.integrations.ml.schemas import NormalizedSheet, ParserResponse
+from apps.integrations.currency.client import CbrfClient
+from apps.integrations.currency.domain import BaseRates
+from apps.integrations.currency.service import CurrencyRatesService
+from apps.integrations.drom.client import DromHttpClient
+from apps.integrations.drom.filtering import _truncate_drom_url
+from apps.integrations.drom.power import DromPowerResolver
+from apps.integrations.drom.schemas import DromBlockedError, DromSearchCriteria
+from apps.integrations.drom.service import DromMarketService, _SearchStep
+from apps.integrations.drom.slugs import DromSlugResolver, ResolvedDromSlug
+from apps.integrations.farpost.matrix import _operations, _work_label, repair_matrix
+from apps.integrations.farpost.parser import _contains_code
+from apps.integrations.farpost.service import estimate_repair
+from apps.integrations.ml.parser import _sheet_to_lot_fields
+from apps.integrations.ml.schemas import NormalizedSheet, ParserResponse
+from apps.lots.customs import meti_sanction_risk
+from apps.lots.economics import _resolve_start_bid_jpy
 from apps.lots.models import (
     CurrencyRatesSnapshot,
     CustomsCalculation,

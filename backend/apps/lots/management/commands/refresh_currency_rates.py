@@ -2,7 +2,7 @@
 
 from django.core.management.base import BaseCommand
 
-from apps.lots.integrations.currency.service import build_currency_service
+from apps.integrations.currency.service import build_currency_service
 
 
 class Command(BaseCommand):
