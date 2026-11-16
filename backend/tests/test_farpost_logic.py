@@ -645,6 +645,8 @@ def test_part_source_kind_matches_frontend_labels():
         Path(__file__).resolve().parents[2]
         / "frontend/src/components/lots/detail/print/LotPrintPageTechEconomics.vue"
     )
+    if not vue_path.is_file():
+        pytest.skip("Frontend sources are not mounted inside standalone backend container")
     vue_text = vue_path.read_text(encoding="utf-8")
     for kind in PartSourceKind:
         assert kind.value in vue_text
