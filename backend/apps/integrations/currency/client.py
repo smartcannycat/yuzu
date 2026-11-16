@@ -9,6 +9,7 @@ import httpx
 from apps.integrations.currency.domain import BaseRates, normalize_unit_rate
 
 _REQUIRED_CURRENCIES = ("EUR", "USD", "JPY")
+DEFAULT_CBRF_API_URL = "https://www.cbr-xml-daily.ru/daily_json.js"
 
 
 class CbrfFetchError(RuntimeError):
@@ -26,7 +27,7 @@ class CbrfClient:
     def __init__(
         self,
         *,
-        api_url: str,
+        api_url: str = DEFAULT_CBRF_API_URL,
         timeout_sec: float = 5.0,
         transport: httpx.BaseTransport | None = None,
     ) -> None:

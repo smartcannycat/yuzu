@@ -174,7 +174,6 @@ def build_currency_service(
         fallback = BaseRates(95.0, 85.0, 0.5825, "01.01.2026")
     return CurrencyRatesService(
         client=CbrfClient(
-            api_url=settings.CBRF_API_URL,
             timeout_sec=settings.CBRF_TIMEOUT_SEC,
             transport=transport,
         ),

@@ -16,6 +16,10 @@ from apps.integrations.currency.domain import parse_fallback_config
 _BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
 _REPO_ROOT = _BACKEND_DIR.parent
 
+_LOT_PARSER_BACKEND_ALIASES: dict[str, str] = {
+    "ml": "apps.integrations.ml.parser.MlServiceParser",
+}
+
 _TOML_SECTION_PREFIXES: dict[str, str] = {
     "app": "",
     "jwt": "JWT_",
@@ -104,16 +108,15 @@ class AppSettings(BaseSettings):
     JWT_REFRESH_TOKEN_LIFETIME_DAYS: int = 7
     JWT_SIGNING_KEY: str | None = None
 
-    # Media Files
+    # Media & Parser
     MEDIA_URL: str = "/media/"
-    LOT_PARSER_BACKEND: str = ""
+    LOT_PARSER_BACKEND: str = "ml"
     MEDIA_ROOT: str = "media"
 
-    # External Services
+    # External Services (internal ML service URL; public source URLs live in adapters)
     ML_SERVICE_URL: str = "http://127.0.0.1:8001"
     ML_SERVICE_TIMEOUT_SEC: float = 30.0
     ML_SERVICE_API_KEY: str = ""
-    CBRF_API_URL: str = "https://www.cbr-xml-daily.ru/daily_json.js"
 
     # Shared scraper transport & rate-limit settings (used by Drom and Farpost)
     SCRAPER_PROXY_URLS: list[str] | str = []
@@ -138,7 +141,6 @@ class AppSettings(BaseSettings):
     CBRF_FALLBACK_RATES: dict[str, str | float] | None = None
 
     # Aleado cross-audit gateway (BE-08)
-    ALEADO_BASE_URL: str = "https://auc.aleado.com"
     ALEADO_USERNAME: str = ""
     ALEADO_PASSWORD: str = ""
     ALEADO_TIMEOUT_SEC: float = Field(default=20.0, gt=0, allow_inf_nan=False)
@@ -152,6 +154,21 @@ class AppSettings(BaseSettings):
     RATE_LIMIT_ENABLED: bool = True
     MEDIA_PURGE_DELETED_AFTER_DAYS: int = Field(default=7, ge=0)
     MEDIA_PURGE_BATCH_ORIGINALS_AFTER_HOURS: int = Field(default=24, ge=0)
+
+    @field_validator("LOT_PARSER_BACKEND")
+    @classmethod
+    def resolve_lot_parser_backend(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            return ""
+        alias = _LOT_PARSER_BACKEND_ALIASES.get(cleaned.lower())
+        if alias is not None:
+            return alias
+        if "." not in cleaned:
+            raise ValueError(
+                "LOT_PARSER_BACKEND must be 'ml', '' (disabled), or a dotted class path"
+            )
+        return cleaned
 
     @field_validator(
         "ALLOWED_HOSTS",

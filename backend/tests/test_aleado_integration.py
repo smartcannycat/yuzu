@@ -29,6 +29,7 @@ from apps.integrations.aleado import (
     AleadoParseError,
     AleadoUnavailableError,
 )
+from apps.integrations.aleado.client import DEFAULT_ALEADO_BASE_URL
 from apps.integrations.aleado.parser import parse_lot_detail, parse_search_results
 from apps.integrations.aleado.service import (
     AleadoCrossAuditService,
@@ -835,7 +836,7 @@ def test_settings_export_aleado_options() -> None:
 
     assert hasattr(django_settings, "ALEADO_USERNAME")
     assert hasattr(django_settings, "ALEADO_PASSWORD")
-    assert hasattr(django_settings, "ALEADO_BASE_URL")
+    assert not hasattr(django_settings, "ALEADO_BASE_URL")
     assert hasattr(django_settings, "ALEADO_TIMEOUT_SEC")
     assert hasattr(django_settings, "ALEADO_REQUEST_INTERVAL_SEC")
     assert hasattr(django_settings, "ALEADO_VERIFY_CANDIDATES")
@@ -843,7 +844,8 @@ def test_settings_export_aleado_options() -> None:
 
 def test_app_settings_aleado_defaults() -> None:
     settings_obj = AppSettings(_env_file=None)
-    assert settings_obj.ALEADO_BASE_URL == "https://auc.aleado.com"
+    assert not hasattr(settings_obj, "ALEADO_BASE_URL")
+    assert AleadoClient().base_url == DEFAULT_ALEADO_BASE_URL
     assert settings_obj.ALEADO_REQUEST_INTERVAL_SEC > 0
     assert settings_obj.ALEADO_TIMEOUT_SEC > 0
     assert settings_obj.ALEADO_VERIFY_CANDIDATES == 10

@@ -137,7 +137,6 @@ class AleadoCrossAuditService:
             from django.conf import settings
 
             client = AleadoClient(
-                base_url=settings.ALEADO_BASE_URL,
                 username=settings.ALEADO_USERNAME,
                 password=settings.ALEADO_PASSWORD,
                 timeout_sec=settings.ALEADO_TIMEOUT_SEC,

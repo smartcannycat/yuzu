@@ -1,11 +1,12 @@
 # Default non-secret configuration for the Yuzu Django backend.
 # Precedence (highest -> lowest): OS/Docker env -> .env -> config.toml -> Pydantic class defaults.
 # Secrets, credentials, DB hosts, and deployment hostnames belong in root .env.
+# Public source URLs (Aleado, CBRF, Drom, Farpost) live inside apps/integrations/* adapters.
 
 [app]
-environment = "local"
+environment = "local"       # Allowed: "local" | "dev" | "test" | "production"
 debug = true
-lot_parser_backend = ""
+lot_parser_backend = "ml"   # Allowed: "ml" | "" (disabled) | "dotted.module.ClassName"
 rate_limit_enabled = true
 celery_task_always_eager = false
 
@@ -20,7 +21,7 @@ purge_deleted_after_days = 7
 purge_batch_originals_after_hours = 24
 
 [ml_service]
-url = "http://127.0.0.1:8001"
+url = "http://127.0.0.1:8001"  # Env-dependent ML service origin (Docker: http://ml:8001)
 timeout_sec = 30.0
 
 [scraper]
@@ -40,12 +41,10 @@ captcha_ocr_enabled = false
 captcha_ocr_command = "tesseract"
 
 [aleado]
-base_url = "https://auc.aleado.com"
 timeout_sec = 20.0
 request_interval_sec = 1.0
 verify_candidates = 10
 
 [currency]
-api_url = "https://www.cbr-xml-daily.ru/daily_json.js"
 timeout_sec = 5.0
 jpy_spread = 0.03

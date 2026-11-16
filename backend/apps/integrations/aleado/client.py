@@ -28,6 +28,8 @@ from apps.integrations.aleado.parser import (
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_ALEADO_BASE_URL = "https://auc.aleado.com"
+
 _SEARCH_PARAMS: dict[str, str] = {
     "p": "project/findlots",
     "ld": "",
@@ -86,7 +88,7 @@ class AleadoClient:
     def __init__(
         self,
         *,
-        base_url: str = "https://auc.aleado.com",
+        base_url: str = DEFAULT_ALEADO_BASE_URL,
         username: str = "",
         password: str = "",
         timeout_sec: float = 20.0,

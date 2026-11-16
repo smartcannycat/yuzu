@@ -122,3 +122,19 @@ def test_backend_config_toml_loaded_with_env_override(monkeypatch) -> None:
     monkeypatch.setenv("FARPOST_BUDGET_SEC", "45.5")
     overridden = AppSettings(_env_file=None)
     assert overridden.FARPOST_BUDGET_SEC == 45.5
+
+
+def test_lot_parser_backend_aliases_and_removed_source_urls() -> None:
+    default_settings = AppSettings(_env_file=None)
+    assert default_settings.LOT_PARSER_BACKEND == "apps.integrations.ml.parser.MlServiceParser"
+    assert not hasattr(default_settings, "ALEADO_BASE_URL")
+    assert not hasattr(default_settings, "CBRF_API_URL")
+
+    disabled = AppSettings(_env_file=None, LOT_PARSER_BACKEND="  ")
+    assert disabled.LOT_PARSER_BACKEND == ""
+
+    custom = AppSettings(_env_file=None, LOT_PARSER_BACKEND="custom.module.Parser")
+    assert custom.LOT_PARSER_BACKEND == "custom.module.Parser"
+
+    with pytest.raises(ValidationError, match="LOT_PARSER_BACKEND"):
+        AppSettings(_env_file=None, LOT_PARSER_BACKEND="unknown_backend")
