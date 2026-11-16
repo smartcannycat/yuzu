@@ -1,7 +1,11 @@
+"""Lot lifecycle transitions (auto-archive, manual archive/restore, soft delete)."""
+
+from __future__ import annotations
+
 import re
-import uuid
 from datetime import UTC, datetime, timedelta
 from datetime import timezone as dt_timezone
+from typing import TYPE_CHECKING
 
 from django.db import transaction
 from django.db.models import F
@@ -9,9 +13,12 @@ from django.utils import timezone
 
 from apps.core.enums import LotArchiveReason
 from apps.core.exceptions import NotFoundProblemError
-from apps.lots import schemas
 from apps.lots.models import Lot
-from apps.users.models import User
+
+if TYPE_CHECKING:
+    import uuid
+
+    from apps.users.models import User
 
 _JST = dt_timezone(timedelta(hours=9))
 _FALLBACK_TTL = timedelta(days=3)
@@ -69,15 +76,13 @@ def _get_ready_user_lot(user: User, lot_id: uuid.UUID) -> Lot:
 
 
 @transaction.atomic
-def update_lot_lifecycle(
+def update_lot_archive_state(
     user: User,
     lot_id: uuid.UUID,
     *,
     is_archived: bool,
-) -> schemas.LotSummary:
+) -> Lot:
     """Manually archive a lot or restore it to active without future auto-archiving."""
-    from apps.lots.queries import _build_lot_summary
-
     now = timezone.now()
     archive_expired_lots_for_user(user, now=now)
     lot = _get_ready_user_lot(user, lot_id)
@@ -103,7 +108,7 @@ def update_lot_lifecycle(
             "updated_at",
         ]
     )
-    return _build_lot_summary(lot)
+    return lot
 
 
 @transaction.atomic
@@ -115,8 +120,10 @@ def delete_lot(user: User, lot_id: uuid.UUID) -> None:
 
 
 @transaction.atomic
-def bulk_delete_lots(user: User, lot_ids: list[uuid.UUID]) -> schemas.LotBulkDeleteResponse:
-    """Idempotently soft-delete user's completed lots and report missing/inaccessible IDs."""
+def bulk_delete_lot_ids(
+    user: User, lot_ids: list[uuid.UUID]
+) -> tuple[list[uuid.UUID], list[uuid.UUID]]:
+    """Idempotently soft-delete completed lots and return ``(deleted_ids, not_found_ids)``."""
     unique_ids = list(dict.fromkeys(lot_ids))
     deletable_ids = set(
         Lot.objects.select_for_update()
@@ -137,8 +144,4 @@ def bulk_delete_lots(user: User, lot_ids: list[uuid.UUID]) -> schemas.LotBulkDel
 
     deleted_ids = [lot_id for lot_id in unique_ids if lot_id in deletable_ids]
     not_found_ids = [lot_id for lot_id in unique_ids if lot_id not in deletable_ids]
-    return schemas.LotBulkDeleteResponse(
-        deleted_ids=deleted_ids,
-        not_found_ids=not_found_ids,
-        deleted_count=len(deleted_ids),
-    )
+    return deleted_ids, not_found_ids

@@ -17,7 +17,7 @@ from PIL import Image
 from apps.core.enums import BatchStatus, ItemProcessingStatus, TaskStep
 from apps.core.exceptions import TooManyRequestsProblemError
 from apps.core.redis_utils import acquire_distributed_interval_slot, enforce_rate_limit
-from apps.lots.integrations.aleado.client import AleadoClient
+from apps.integrations.aleado.client import AleadoClient
 from apps.lots.media_purge import purge_stale_media
 from apps.lots.models import Batch, BatchItem, Lot
 from apps.lots.pipeline import recover_batches_on_startup
@@ -161,9 +161,7 @@ def test_redis_rate_limiter_and_distributed_aleado_slot(settings) -> None:
     # MockTransport isolates unit tests from Redis even if configured
     slept: list[float] = []
     transport = httpx.MockTransport(lambda _req: httpx.Response(200, text="Sign out"))
-    with patch(
-        "apps.lots.integrations.aleado.client.acquire_distributed_interval_slot"
-    ) as mock_slot:
+    with patch("apps.integrations.aleado.client.acquire_distributed_interval_slot") as mock_slot:
         client = AleadoClient(
             transport=transport,
             request_interval_sec=0.5,

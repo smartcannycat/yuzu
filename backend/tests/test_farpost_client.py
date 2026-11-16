@@ -8,7 +8,7 @@ import httpx
 import pytest
 from bs4 import BeautifulSoup
 
-from apps.lots.integrations.farpost.client import (
+from apps.integrations.farpost.client import (
     FarpostClient,
     FarpostFetchError,
     FarpostRateLimitedError,
@@ -448,7 +448,7 @@ def test_conflicting_make_ignores_substrings_and_catches_short_brands():
 
 
 def test_paint_code_rejects_negations_and_handles_split_spans():
-    from apps.lots.integrations.farpost.client import matches_paint_code
+    from apps.integrations.farpost.client import matches_paint_code
 
     assert not matches_paint_code("Цвет другой (не 070)", "070")
     assert not matches_paint_code("Цвет красный, пробег 070 тыс", "070")

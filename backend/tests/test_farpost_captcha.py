@@ -17,7 +17,7 @@ import httpx
 import pytest
 from PIL import Image, ImageDraw
 
-from apps.lots.integrations.captcha.altcha import (
+from apps.integrations.captcha.altcha import (
     AltchaChallenge,
     AltchaError,
     AltchaSolveTimeoutError,
@@ -26,19 +26,19 @@ from apps.lots.integrations.captcha.altcha import (
     solve_altcha,
     solve_altcha_payload,
 )
-from apps.lots.integrations.captcha.farpost import (
+from apps.integrations.captcha.farpost import (
     FarpostCaptchaError,
     FarpostCaptchaSolver,
     is_farpost_challenge_response,
     parse_farpost_challenge,
 )
-from apps.lots.integrations.captcha.image import TesseractImageCaptchaSolver
-from apps.lots.integrations.farpost.client import (
+from apps.integrations.captcha.image import TesseractImageCaptchaSolver
+from apps.integrations.farpost.client import (
     FarpostClient,
     FarpostRateLimitedError,
     PartCriteria,
 )
-from apps.lots.integrations.http_client import (
+from apps.integrations.shared.http import (
     HttpFetchResponse,
     proxy_fingerprint,
     reset_shared_proxy_pools,
@@ -535,7 +535,7 @@ def test_farpost_client_escalates_from_altcha_to_image_captcha():
 
 
 def test_farpost_captcha_exhaustion_and_endpoint_errors_quarantine_proxy(monkeypatch):
-    monkeypatch.setattr("apps.lots.integrations.proxy.get_redis_client", lambda: None)
+    monkeypatch.setattr("apps.integrations.shared.proxy.get_redis_client", lambda: None)
     reset_shared_proxy_pools()
     payload = _sha_challenge(counter=2)
     listing = _listing_html()
@@ -588,7 +588,7 @@ def test_farpost_captcha_exhaustion_and_endpoint_errors_quarantine_proxy(monkeyp
 
 
 def test_farpost_client_pins_same_proxy_and_cookies_during_captcha_solve(monkeypatch):
-    monkeypatch.setattr("apps.lots.integrations.proxy.get_redis_client", lambda: None)
+    monkeypatch.setattr("apps.integrations.shared.proxy.get_redis_client", lambda: None)
     reset_shared_proxy_pools()
     payload = _sha_challenge(counter=2)
     listing = _listing_html()
@@ -664,12 +664,12 @@ def test_tesseract_solver_preprocess_and_error_handling(monkeypatch):
         assert cleaned.getpixel((4, 8 * 4)) == 255
 
     # Missing binary or expired deadline or corrupt bytes -> None.
-    monkeypatch.setattr("apps.lots.integrations.captcha.image.shutil.which", lambda _cmd: None)
+    monkeypatch.setattr("apps.integrations.captcha.image.shutil.which", lambda _cmd: None)
     assert solver.available is False
     assert solver.solve(png_bytes, deadline=time.monotonic() + 5) is None
 
     monkeypatch.setattr(
-        "apps.lots.integrations.captcha.image.shutil.which", lambda _cmd: "/usr/bin/tesseract"
+        "apps.integrations.captcha.image.shutil.which", lambda _cmd: "/usr/bin/tesseract"
     )
     assert solver.available is True
     assert solver.solve(png_bytes, deadline=time.monotonic() - 1) is None
@@ -677,19 +677,19 @@ def test_tesseract_solver_preprocess_and_error_handling(monkeypatch):
 
     # Mocked subprocess output strips non-digits and checks min/max length bounds.
     monkeypatch.setattr(
-        "apps.lots.integrations.captcha.image.subprocess.run",
+        "apps.integrations.captcha.image.subprocess.run",
         lambda *_a, **_kw: SimpleNamespace(returncode=0, stdout=b" 48-29\n"),
     )
     assert solver.solve(png_bytes, deadline=time.monotonic() + 5) == "4829"
 
     monkeypatch.setattr(
-        "apps.lots.integrations.captcha.image.subprocess.run",
+        "apps.integrations.captcha.image.subprocess.run",
         lambda *_a, **_kw: SimpleNamespace(returncode=0, stdout=b"12\n"),
     )
     assert solver.solve(png_bytes, deadline=time.monotonic() + 5) is None
 
     monkeypatch.setattr(
-        "apps.lots.integrations.captcha.image.subprocess.run",
+        "apps.integrations.captcha.image.subprocess.run",
         lambda *_a, **_kw: SimpleNamespace(returncode=1, stdout=b""),
     )
     assert solver.solve(png_bytes, deadline=time.monotonic() + 5) is None
@@ -697,7 +697,7 @@ def test_tesseract_solver_preprocess_and_error_handling(monkeypatch):
     def raise_timeout(*_a, **_kw):
         raise subprocess.TimeoutExpired(cmd="tesseract", timeout=5)
 
-    monkeypatch.setattr("apps.lots.integrations.captcha.image.subprocess.run", raise_timeout)
+    monkeypatch.setattr("apps.integrations.captcha.image.subprocess.run", raise_timeout)
     assert solver.solve(png_bytes, deadline=time.monotonic() + 5) is None
 
 
@@ -710,9 +710,9 @@ def test_tesseract_solver_real_binary_on_synthetic_image():
 
 
 def test_altcha_v2_without_deadline_caps_search_and_clamps_argon2_workers(monkeypatch):
-    from apps.lots.integrations.captcha.altcha import _resolve_workers
+    from apps.integrations.captcha.altcha import _resolve_workers
 
-    monkeypatch.setattr("apps.lots.integrations.captcha.altcha._DEFAULT_V2_MAXNUMBER", 5)
+    monkeypatch.setattr("apps.integrations.captcha.altcha._DEFAULT_V2_MAXNUMBER", 5)
     unsolvable = AltchaChallenge.from_payload(
         {
             "parameters": {
@@ -787,7 +787,7 @@ def test_parse_farpost_challenge_blocks_unsafe_external_urls():
 
 
 def test_altcha_argon2_caps_explicit_workers_and_clamps_heavy_params(monkeypatch):
-    from apps.lots.integrations.captcha.altcha import _resolve_workers
+    from apps.integrations.captcha.altcha import _resolve_workers
 
     heavy = AltchaChallenge.from_payload(
         {
@@ -813,7 +813,7 @@ def test_altcha_argon2_caps_explicit_workers_and_clamps_heavy_params(monkeypatch
         time.sleep(0.5)
         return b"\x00" * 32
 
-    monkeypatch.setattr("apps.lots.integrations.captcha.altcha._derive_key", slow_derive)
+    monkeypatch.setattr("apps.integrations.captcha.altcha._derive_key", slow_derive)
     started = time.monotonic()
     with pytest.raises(AltchaSolveTimeoutError, match="deadline"):
         solve_altcha(
@@ -826,7 +826,7 @@ def test_altcha_argon2_caps_explicit_workers_and_clamps_heavy_params(monkeypatch
 
 def test_tesseract_solver_rejects_oversized_and_decompression_bomb_images(monkeypatch):
     monkeypatch.setattr(
-        "apps.lots.integrations.captcha.image.shutil.which", lambda _cmd: "/usr/bin/tesseract"
+        "apps.integrations.captcha.image.shutil.which", lambda _cmd: "/usr/bin/tesseract"
     )
     solver = TesseractImageCaptchaSolver(command="tesseract")
     huge = Image.new("L", (2500, 2500), color=255)
@@ -837,5 +837,5 @@ def test_tesseract_solver_rejects_oversized_and_decompression_bomb_images(monkey
     def raise_bomb(*_a, **_kw):
         raise Image.DecompressionBombError("too many pixels")
 
-    monkeypatch.setattr("apps.lots.integrations.captcha.image.Image.open", raise_bomb)
+    monkeypatch.setattr("apps.integrations.captcha.image.Image.open", raise_bomb)
     assert solver.solve(b"fake", deadline=time.monotonic() + 5) is None

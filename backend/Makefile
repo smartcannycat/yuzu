@@ -36,28 +36,29 @@ format: ## Format code with Ruff
 	uv run ruff format .
 	uv run ruff check --fix .
 
-check: ## Run lint, format check and tests
+check: ## Run lint, format check, import-linter, and tests
 	uv run ruff check .
 	uv run ruff format --check .
+	uv run lint-imports
 	uv run pytest
 
-up: ## Start development Docker Compose (target: dev)
-	docker compose -f docker-compose.dev.yml up --build -d
+up: ## Start development Docker Compose stack
+	docker compose -f ../docker-compose.yml up --build -d
 
 up-db: ## Start only PostgreSQL container for local dev and tests
-	docker compose -f docker-compose.dev.yml up -d db
+	docker compose -f ../docker-compose.yml up -d db
 
-down: ## Stop development Docker Compose
-	docker compose -f docker-compose.dev.yml down
+down: ## Stop development Docker Compose stack
+	docker compose -f ../docker-compose.yml down
 
-prod-up: ## Start production Docker Compose (target: prod)
-	docker compose -f docker-compose.prod.yml up --build -d
+prod-up: ## Start production Docker Compose stack
+	docker compose -f ../docker-compose.prod.yml up --build -d
 
-prod-down: ## Stop production Docker Compose
-	docker compose -f docker-compose.prod.yml down
+prod-down: ## Stop production Docker Compose stack
+	docker compose -f ../docker-compose.prod.yml down
 
 logs: ## View API container logs
-	docker compose -f docker-compose.dev.yml logs -f api
+	docker compose -f ../docker-compose.yml logs -f api
 
 clean: ## Clean cache and temporary files
 	find . -type d -name "__pycache__" -exec rm -rf {} +

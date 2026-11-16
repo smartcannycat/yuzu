@@ -1,6 +1,6 @@
 from django.core.management.base import BaseCommand
 
-from apps.lots.integrations.drom.schema_sync import DEFAULT_SCHEMA_PATH, sync_drom_schema
+from apps.integrations.drom.schema_sync import DEFAULT_SCHEMA_PATH, sync_drom_schema
 
 
 class Command(BaseCommand):

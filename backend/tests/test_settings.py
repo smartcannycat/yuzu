@@ -105,3 +105,36 @@ def test_currency_reserves_are_validated_at_startup(overrides) -> None:
 def test_incomplete_currency_reserves_are_rejected(reserves) -> None:
     with pytest.raises(ValidationError, match="CBRF_FALLBACK_RATES"):
         AppSettings(_env_file=None, CBRF_FALLBACK_RATES=reserves)
+
+
+def test_sqlite_is_removed_from_settings_and_database_config() -> None:
+    assert not hasattr(AppSettings, "USE_SQLITE")
+    with pytest.raises(ValueError, match="Unsupported DATABASE_URL scheme: sqlite"):
+        _build_database_config(AppSettings(_env_file=None, DATABASE_URL="sqlite:///db.sqlite3"))
+
+
+def test_backend_config_toml_loaded_with_env_override(monkeypatch) -> None:
+    from_toml = AppSettings(_env_file=None)
+    assert from_toml.FARPOST_BUDGET_SEC == 30.0
+    assert from_toml.CBRF_JPY_SPREAD == 0.03
+    assert from_toml.ALEADO_VERIFY_CANDIDATES == 10
+
+    monkeypatch.setenv("FARPOST_BUDGET_SEC", "45.5")
+    overridden = AppSettings(_env_file=None)
+    assert overridden.FARPOST_BUDGET_SEC == 45.5
+
+
+def test_lot_parser_backend_aliases_and_removed_source_urls() -> None:
+    default_settings = AppSettings(_env_file=None)
+    assert default_settings.LOT_PARSER_BACKEND == "apps.integrations.ml.parser.MlServiceParser"
+    assert not hasattr(default_settings, "ALEADO_BASE_URL")
+    assert not hasattr(default_settings, "CBRF_API_URL")
+
+    disabled = AppSettings(_env_file=None, LOT_PARSER_BACKEND="  ")
+    assert disabled.LOT_PARSER_BACKEND == ""
+
+    custom = AppSettings(_env_file=None, LOT_PARSER_BACKEND="custom.module.Parser")
+    assert custom.LOT_PARSER_BACKEND == "custom.module.Parser"
+
+    with pytest.raises(ValidationError, match="LOT_PARSER_BACKEND"):
+        AppSettings(_env_file=None, LOT_PARSER_BACKEND="unknown_backend")

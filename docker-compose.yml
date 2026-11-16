@@ -38,6 +38,8 @@ services:
     container_name: yuzu_ml_dev
     restart: unless-stopped
     env_file:
+      - path: ./.env
+        required: false
       - path: ./ml_service/.env
         required: false
     environment:
@@ -58,9 +60,10 @@ services:
     restart: unless-stopped
     command: ["granian", "--interface", "asginl", "config.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-paths", "/app/apps", "--reload-paths", "/app/config"]
     env_file:
-      - path: ./backend/.env
+      - path: ./.env
         required: false
     volumes:
+      - ./backend/config.toml:/app/config.toml:ro
       - ./backend/config:/app/config
       - ./backend/apps:/app/apps
       - ./backend/tests:/app/tests
@@ -73,7 +76,6 @@ services:
       SECRET_KEY: ${SECRET_KEY:-django-insecure-yuzu-dev-secret-key-123456}
       ALLOWED_HOSTS: localhost,127.0.0.1,0.0.0.0,api,frontend
       CORS_ALLOWED_ORIGINS: http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000
-      USE_SQLITE: "False"
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
       POSTGRES_DB: ${POSTGRES_DB:-yuzu_db}
@@ -83,7 +85,7 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/0
       ML_SERVICE_URL: http://ml:8001
       ML_SERVICE_API_KEY: ${ML_SERVICE_API_KEY:-dev-ml-service-key}
-      LOT_PARSER_BACKEND: ${LOT_PARSER_BACKEND:-apps.lots.integrations.ml.parser.MlServiceParser}
+      LOT_PARSER_BACKEND: ${LOT_PARSER_BACKEND:-ml}
       FARPOST_CAPTCHA_OCR_ENABLED: ${FARPOST_CAPTCHA_OCR_ENABLED:-false}
       RUN_MIGRATIONS: "true"
     depends_on:
@@ -111,9 +113,10 @@ services:
     restart: unless-stopped
     command: ["celery", "-A", "config", "worker", "--loglevel=info", "--concurrency=4"]
     env_file:
-      - path: ./backend/.env
+      - path: ./.env
         required: false
     volumes:
+      - ./backend/config.toml:/app/config.toml:ro
       - ./backend/config:/app/config
       - ./backend/apps:/app/apps
       - media_data_dev:/app/media
@@ -121,7 +124,6 @@ services:
       ENVIRONMENT: local
       DEBUG: "True"
       SECRET_KEY: ${SECRET_KEY:-django-insecure-yuzu-dev-secret-key-123456}
-      USE_SQLITE: "False"
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
       POSTGRES_DB: ${POSTGRES_DB:-yuzu_db}
@@ -131,7 +133,7 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/0
       ML_SERVICE_URL: http://ml:8001
       ML_SERVICE_API_KEY: ${ML_SERVICE_API_KEY:-dev-ml-service-key}
-      LOT_PARSER_BACKEND: ${LOT_PARSER_BACKEND:-apps.lots.integrations.ml.parser.MlServiceParser}
+      LOT_PARSER_BACKEND: ${LOT_PARSER_BACKEND:-ml}
       FARPOST_CAPTCHA_OCR_ENABLED: ${FARPOST_CAPTCHA_OCR_ENABLED:-false}
       RUN_MIGRATIONS: "false"
     depends_on:
@@ -159,16 +161,16 @@ services:
     restart: unless-stopped
     command: ["celery", "-A", "config", "beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"]
     env_file:
-      - path: ./backend/.env
+      - path: ./.env
         required: false
     volumes:
+      - ./backend/config.toml:/app/config.toml:ro
       - ./backend/config:/app/config
       - ./backend/apps:/app/apps
     environment:
       ENVIRONMENT: local
       DEBUG: "True"
       SECRET_KEY: ${SECRET_KEY:-django-insecure-yuzu-dev-secret-key-123456}
-      USE_SQLITE: "False"
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
       POSTGRES_DB: ${POSTGRES_DB:-yuzu_db}

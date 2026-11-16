@@ -12,7 +12,6 @@ LOT_PARSER_BACKEND = app_settings.LOT_PARSER_BACKEND
 ML_SERVICE_URL = app_settings.ML_SERVICE_URL
 ML_SERVICE_TIMEOUT_SEC = app_settings.ML_SERVICE_TIMEOUT_SEC
 ML_SERVICE_API_KEY = app_settings.ML_SERVICE_API_KEY
-ALEADO_BASE_URL = app_settings.ALEADO_BASE_URL
 ALEADO_USERNAME = app_settings.ALEADO_USERNAME
 ALEADO_PASSWORD = app_settings.ALEADO_PASSWORD
 ALEADO_TIMEOUT_SEC = app_settings.ALEADO_TIMEOUT_SEC
@@ -45,6 +44,7 @@ THIRD_PARTY_APPS = [
 LOCAL_APPS = [
     "apps.core",
     "apps.users",
+    "apps.integrations",
     "apps.lots",
 ]
 
@@ -90,12 +90,6 @@ ASGI_APPLICATION = "config.asgi.application"
 def _build_database_config(settings_obj: AppSettings) -> dict[str, Any]:
     if settings_obj.DATABASE_URL:
         parsed = urlparse(settings_obj.DATABASE_URL)
-        if parsed.scheme.startswith("sqlite"):
-            db_path = parsed.path.lstrip("/") or "db.sqlite3"
-            return {
-                "ENGINE": "django.db.backends.sqlite3",
-                "NAME": BASE_DIR / db_path if not Path(db_path).is_absolute() else Path(db_path),
-            }
         if parsed.scheme in {"postgres", "postgresql"}:
             return {
                 "ENGINE": "django.db.backends.postgresql",
@@ -108,12 +102,6 @@ def _build_database_config(settings_obj: AppSettings) -> dict[str, Any]:
                 "CONN_HEALTH_CHECKS": True,
             }
         raise ValueError(f"Unsupported DATABASE_URL scheme: {parsed.scheme}")
-
-    if settings_obj.USE_SQLITE:
-        return {
-            "ENGINE": "django.db.backends.sqlite3",
-            "NAME": BASE_DIR / "db.sqlite3",
-        }
 
     return {
         "ENGINE": "django.db.backends.postgresql",

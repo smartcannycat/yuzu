@@ -9,8 +9,8 @@ import httpx
 import pytest
 from curl_cffi.requests.errors import RequestsError as CurlRequestsError
 
-from apps.lots.integrations.farpost.client import FarpostClient, FarpostFetchError, PartCriteria
-from apps.lots.integrations.http_client import (
+from apps.integrations.farpost.client import FarpostClient, FarpostFetchError, PartCriteria
+from apps.integrations.shared.http import (
     HttpBudgetExhaustedError,
     HttpFetchResponse,
     HttpTransportError,
@@ -48,7 +48,7 @@ def test_http_fetch_response_json_supports_bom_and_cp1251():
 
 def test_wait_for_request_slot_raises_on_budget_exhausted(monkeypatch):
     monkeypatch.setattr(
-        "apps.lots.integrations.http_client.acquire_distributed_interval_slot",
+        "apps.integrations.shared.http.throttle.acquire_distributed_interval_slot",
         lambda *_a, **_kw: -1.0,
     )
     with pytest.raises(HttpBudgetExhaustedError):
@@ -67,7 +67,7 @@ def test_wait_for_request_slot_raises_on_budget_exhausted(monkeypatch):
 
 def test_wait_for_request_slot_local_fallback_does_not_leak_slot_and_scopes_per_proxy(monkeypatch):
     monkeypatch.setattr(
-        "apps.lots.integrations.http_client.acquire_distributed_interval_slot",
+        "apps.integrations.shared.http.throttle.acquire_distributed_interval_slot",
         lambda *_a, **_kw: None,
     )
     key = "yuzu:test:no-leak"
@@ -77,13 +77,13 @@ def test_wait_for_request_slot_local_fallback_does_not_leak_slot_and_scopes_per_
         wait_for_request_slot(key, 2.0, deadline=time.monotonic() + 0.2)
 
     # Rejected call must not push _local_next_request_at forward (slot stays at +2s, not +4s).
-    monkeypatch.setattr("apps.lots.integrations.http_client.time.sleep", lambda _sec: None)
+    monkeypatch.setattr("apps.integrations.shared.http.throttle.time.sleep", lambda _sec: None)
     # Only one 2s wait remains before budget 3.0s expires; if leaked twice, this would raise.
     wait_for_request_slot(key, 2.0, deadline=time.monotonic() + 3.0)
 
 
 def test_oversized_response_does_not_quarantine_healthy_proxy(monkeypatch):
-    monkeypatch.setattr("apps.lots.integrations.proxy.get_redis_client", lambda: None)
+    monkeypatch.setattr("apps.integrations.shared.proxy.get_redis_client", lambda: None)
     pool = ProxyPool(
         ["http://p1:8080"], domain="farpost.ru", ban_cooldown_sec=60.0, use_redis=False
     )
@@ -111,7 +111,7 @@ def test_resilient_http_session_get_enforces_deadline_and_throttles_per_proxy(mo
         return None
 
     monkeypatch.setattr(
-        "apps.lots.integrations.http_client.acquire_distributed_interval_slot", _capture_slot
+        "apps.integrations.shared.http.throttle.acquire_distributed_interval_slot", _capture_slot
     )
     pool = ProxyPool(["http://p1:8080", "http://p2:8080"], domain="farpost.ru", use_redis=False)
     curl_session = ResilientHttpSession(proxy_rotator=pool)
@@ -128,7 +128,7 @@ def test_resilient_http_session_get_enforces_deadline_and_throttles_per_proxy(mo
 
 
 def test_resilient_http_session_post_proxy_pinning_and_curl_error_scrubbing(monkeypatch):
-    monkeypatch.setattr("apps.lots.integrations.proxy.get_redis_client", lambda: None)
+    monkeypatch.setattr("apps.integrations.shared.proxy.get_redis_client", lambda: None)
     pool = ProxyPool(
         ["http://u:secret@p1:8080", "http://u:secret@p2:8080"],
         domain="farpost.ru",
@@ -194,7 +194,7 @@ def test_resilient_http_session_post_proxy_pinning_and_curl_error_scrubbing(monk
             return None
 
     monkeypatch.setattr(
-        "apps.lots.integrations.http_client.curl_requests.Session", FailingCurlSession
+        "apps.integrations.shared.http.pool.curl_requests.Session", FailingCurlSession
     )
     curl_session = ResilientHttpSession(
         proxy_rotator=ProxyRotator(["http://myuser:topsecret@127.0.0.1:8080"], use_redis=False)
@@ -264,7 +264,7 @@ def test_enable_throttle_runs_on_mock_transport_without_patching_curl(monkeypatc
         return None
 
     monkeypatch.setattr(
-        "apps.lots.integrations.http_client.acquire_distributed_interval_slot", _capture_slot
+        "apps.integrations.shared.http.throttle.acquire_distributed_interval_slot", _capture_slot
     )
     session = ResilientHttpSession(
         transport=httpx.MockTransport(lambda _r: httpx.Response(200, text="ok")),

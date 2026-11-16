@@ -35,9 +35,9 @@ services:
     container_name: yuzu_ml_prod
     restart: always
     env_file:
-      - path: ./ml_service/.env
-        required: false
       - path: ./.env
+        required: false
+      - path: ./ml_service/.env
         required: false
     environment:
       ML_SERVICE_API_KEY: ${ML_SERVICE_API_KEY:?ML_SERVICE_API_KEY must be set}
@@ -54,8 +54,6 @@ services:
     container_name: yuzu_api_prod
     restart: always
     env_file:
-      - path: ./backend/.env
-        required: false
       - path: ./.env
         required: false
     expose:
@@ -69,7 +67,6 @@ services:
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:?ALLOWED_HOSTS must be set}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://${TRAEFIK_HOST}}
       CORS_ALLOW_ALL_ORIGINS: "False"
-      USE_SQLITE: "False"
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
       POSTGRES_DB: ${POSTGRES_DB:-yuzu_db}
@@ -79,7 +76,7 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/0
       ML_SERVICE_URL: http://ml:8001
       ML_SERVICE_API_KEY: ${ML_SERVICE_API_KEY:?ML_SERVICE_API_KEY must be set}
-      LOT_PARSER_BACKEND: ${LOT_PARSER_BACKEND:-apps.lots.integrations.ml.parser.MlServiceParser}
+      LOT_PARSER_BACKEND: ${LOT_PARSER_BACKEND:-ml}
       FARPOST_CAPTCHA_OCR_ENABLED: ${FARPOST_CAPTCHA_OCR_ENABLED:-true}
       CBRF_FALLBACK_RATES: ${CBRF_FALLBACK_RATES:-{"eur_rub":95.0,"usd_rub":85.0,"jpy_rub":0.5825,"cbrf_date":"12.11.2026"}}
       RUN_MIGRATIONS: "true"
@@ -106,8 +103,6 @@ services:
     restart: always
     command: ["celery", "-A", "config", "worker", "--loglevel=info", "--concurrency=4"]
     env_file:
-      - path: ./backend/.env
-        required: false
       - path: ./.env
         required: false
     volumes:
@@ -119,7 +114,6 @@ services:
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:?ALLOWED_HOSTS must be set}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://${TRAEFIK_HOST}}
       CORS_ALLOW_ALL_ORIGINS: "False"
-      USE_SQLITE: "False"
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
       POSTGRES_DB: ${POSTGRES_DB:-yuzu_db}
@@ -129,7 +123,7 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/0
       ML_SERVICE_URL: http://ml:8001
       ML_SERVICE_API_KEY: ${ML_SERVICE_API_KEY:?ML_SERVICE_API_KEY must be set}
-      LOT_PARSER_BACKEND: ${LOT_PARSER_BACKEND:-apps.lots.integrations.ml.parser.MlServiceParser}
+      LOT_PARSER_BACKEND: ${LOT_PARSER_BACKEND:-ml}
       FARPOST_CAPTCHA_OCR_ENABLED: ${FARPOST_CAPTCHA_OCR_ENABLED:-true}
       CBRF_FALLBACK_RATES: ${CBRF_FALLBACK_RATES:-{"eur_rub":95.0,"usd_rub":85.0,"jpy_rub":0.5825,"cbrf_date":"12.11.2026"}}
       RUN_MIGRATIONS: "false"
@@ -158,8 +152,6 @@ services:
     restart: always
     command: ["celery", "-A", "config", "beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"]
     env_file:
-      - path: ./backend/.env
-        required: false
       - path: ./.env
         required: false
     environment:
@@ -169,7 +161,6 @@ services:
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:?ALLOWED_HOSTS must be set}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://${TRAEFIK_HOST}}
       CORS_ALLOW_ALL_ORIGINS: "False"
-      USE_SQLITE: "False"
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
       POSTGRES_DB: ${POSTGRES_DB:-yuzu_db}

@@ -5,8 +5,8 @@ from decimal import Decimal
 import httpx
 import pytest
 
-from apps.lots.integrations.currency.client import CbrfClient, CbrfFetchError
-from apps.lots.integrations.currency.domain import (
+from apps.integrations.currency.client import CbrfClient, CbrfFetchError
+from apps.integrations.currency.domain import (
     compute_commercial_jpy,
     normalize_unit_rate,
 )

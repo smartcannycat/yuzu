@@ -8,14 +8,14 @@ import httpx
 import pytest
 from django.core.management import call_command
 
-from apps.lots.integrations.currency.cache import CurrencyCache
-from apps.lots.integrations.currency.client import CbrfClient
-from apps.lots.integrations.currency.domain import (
+from apps.integrations.currency.cache import CurrencyCache
+from apps.integrations.currency.client import CbrfClient
+from apps.integrations.currency.domain import (
     BaseRates,
     CurrencyRatesResult,
     RatesOrigin,
 )
-from apps.lots.integrations.currency.service import (
+from apps.integrations.currency.service import (
     build_currency_service,
     to_currency_rates_schema,
     to_customs_rates_input,
@@ -54,7 +54,7 @@ class TestAdapters:
     def test_schema_is_strict(self) -> None:
         from pydantic import ValidationError
 
-        from apps.lots.schemas import CurrencyRates
+        from apps.lots.api.schemas import CurrencyRates
 
         with pytest.raises(ValidationError):
             CurrencyRates.model_validate({"jpy_rub_bank": 0.6})
@@ -135,7 +135,7 @@ class TestAdvisoryLockContention:
     def test_lock_holder_updates_and_others_fall_back(self, monkeypatch) -> None:
         """Simulate two processes: the first holds the advisory lock, the second
         must not issue an HTTP request and must use the stale/config path."""
-        from apps.lots.integrations.currency.service import CurrencyRatesService
+        from apps.integrations.currency.service import CurrencyRatesService
 
         cache = CurrencyCache()
         # Pre-seed a stale-but-valid set.

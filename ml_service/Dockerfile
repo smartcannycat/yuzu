@@ -73,7 +73,7 @@ RUN groupadd --system appuser \
     && chown -R appuser:appuser /app/ml_service
 
 COPY --from=prod-builder --chown=appuser:appuser /app/ml_service/.venv /app/ml_service/.venv
-COPY --chown=appuser:appuser .env.example ./
+COPY --chown=appuser:appuser config.toml .env.example ./
 
 USER appuser
 

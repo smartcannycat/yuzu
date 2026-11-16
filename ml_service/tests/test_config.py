@@ -43,3 +43,15 @@ def test_get_settings_is_cached() -> None:
     first = get_settings()
     second = get_settings()
     assert first is second
+
+
+def test_ml_service_config_toml_loaded_with_env_override(monkeypatch) -> None:
+    from_toml = Settings(_env_file=None)
+    assert from_toml.crop_quality == 88
+    assert from_toml.batch_max_items == 10
+    assert from_toml.enable_gatekeeper is True
+    assert "gemini-3-flash-preview" in from_toml.gemini_fallback_models
+
+    monkeypatch.setenv("CROP_QUALITY", "92")
+    overridden = Settings(_env_file=None)
+    assert overridden.crop_quality == 92

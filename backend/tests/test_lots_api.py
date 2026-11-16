@@ -10,9 +10,9 @@ from django.test import Client
 from PIL import Image
 
 from apps.core.enums import BatchStatus, PowerHpSource
-from apps.lots.integrations.currency.domain import BaseRates, CurrencyRatesResult, RatesOrigin
-from apps.lots.integrations.drom.schemas import DromMarketResult
-from apps.lots.integrations.ml.parser import MlServiceParser
+from apps.integrations.currency.domain import BaseRates, CurrencyRatesResult, RatesOrigin
+from apps.integrations.drom.schemas import DromMarketResult
+from apps.integrations.ml.parser import MlServiceParser
 from apps.lots.media import render_browser_scan_and_thumbnail
 from apps.lots.models import Batch, BatchItem, Lot
 from apps.lots.pipeline import run_batch_pipeline
