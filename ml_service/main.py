@@ -32,6 +32,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         key_pool = GeminiKeyPool(
             api_keys=resolved_settings.gemini_api_keys,
             rpm_limit=resolved_settings.gemini_rpm_limit,
+            rpm_window_seconds=60.0,
         )
         image_loader = AsyncImageLoader(
             http_client=http_client,

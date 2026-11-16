@@ -41,6 +41,8 @@ export type LotLifecycleFilter = 'active' | 'archived' | 'all'
 
 export type LotArchiveReason = 'expired' | 'manual'
 
+export type PowerHpSource = 'drom_catalog' | 'katashiki_cache' | 'manual'
+
 export interface LotListQueryParams {
   query?: string
   make?: string
@@ -234,7 +236,7 @@ export interface NormalizedSheet {
   is_pass_corridor_3_5: boolean | null
   engine_cc: number | null
   power_hp: number | null
-  power_hp_source: 'drom_catalog' | 'katashiki_cache' | 'manual' | null
+  power_hp_source: PowerHpSource | null
   is_under_160_hp: boolean | null
   mileage_km: number | null
   odometer_status: OdometerStatus
@@ -477,6 +479,11 @@ export interface RecalculateResponse {
   market_price_rf_rub: number
   net_benefit_rub: number
   benefit_percentage: number
+  bid_slider_min_jpy?: number
+  power_hp?: number | null
+  power_hp_source?: PowerHpSource | null
+  is_under_160_hp?: boolean | null
+  ocr_warnings?: string[]
   verdict: TrafficLightVerdict
   is_simulation_modified?: boolean
   pdf_report_stale: boolean

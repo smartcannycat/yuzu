@@ -190,11 +190,15 @@ class SheetFactory:
             ext.auction_house_raw,
             default_strictness=self._default_auction_strictness,
         )
-        if auc_house is None and ext.auction_house:
-            auc_house, auc_strict = normalize_auction_house(
+        if (auc_house is None or auc_house == AuctionHouse.OTHER.value) and ext.auction_house:
+            fallback_house, fallback_strict = normalize_auction_house(
                 ext.auction_house,
                 default_strictness=self._default_auction_strictness,
             )
+            if fallback_house is not None and (
+                auc_house is None or fallback_house != AuctionHouse.OTHER.value
+            ):
+                auc_house, auc_strict = fallback_house, fallback_strict
         if auc_house is None:
             warnings.append("unidentified_auction_house")
         elif auc_house == AuctionHouse.OTHER.value:
@@ -234,6 +238,10 @@ class SheetFactory:
             repaired_grade_r_ra=_is_repaired_grade(ext.overall_grade),
         )
 
+        extra_ru = list(ext.extra_ru)
+        if ext.color_changed_ru and ext.color_changed_ru not in extra_ru:
+            extra_ru.append(ext.color_changed_ru)
+
         ocr_warnings = sorted(set(defect_warnings + list(ext.ocr_warnings)))
         sheet = NormalizedSheetEntity(
             lot_number=clean_code(ext.lot_number_raw),
@@ -269,7 +277,7 @@ class SheetFactory:
             risk_flags=risk_flags,
             inspector_notes_ru=ext.inspector_notes_ru,
             seller_comments_ru=ext.seller_comments_ru,
-            extra_ru=ext.extra_ru,
+            extra_ru=extra_ru,
             auction_branch=ext.auction_branch,
             right_hand_drive=ext.right_hand_drive,
             name_change_deadline=ext.name_change_deadline,

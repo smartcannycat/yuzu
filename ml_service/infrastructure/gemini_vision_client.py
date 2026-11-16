@@ -211,7 +211,7 @@ class AsyncGeminiVisionClient:
         resolved_mime = mime_type or detect_mime_from_magic_bytes(full_png)
         api_key = ""
         try:
-            async with self.key_pool.semaphore:
+            async with self.key_pool.acquire():
                 api_key = self.key_pool.next_key()
                 client = self._get_client(api_key)
                 decisions_api = getattr(client, "decisions", None)
@@ -322,7 +322,7 @@ class AsyncGeminiVisionClient:
         model_name = candidates[0] if candidates else self.flash_model
 
         async def _call_header() -> FastHeaderPreviewEntity:
-            async with self.key_pool.semaphore:
+            async with self.key_pool.acquire():
                 api_key = self.key_pool.next_key()
                 client = self._get_client(api_key)
                 contents = [
@@ -417,7 +417,7 @@ class AsyncGeminiVisionClient:
 
         for key_attempt in range(max_key_tries):
             t0 = time.perf_counter()
-            async with self.key_pool.semaphore:
+            async with self.key_pool.acquire():
                 api_key = self.key_pool.next_key()
                 try:
                     entity = await self._call_model_generate(

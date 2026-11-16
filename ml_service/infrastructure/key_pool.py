@@ -1,17 +1,49 @@
 import asyncio
 import time
+from collections import deque
+from contextlib import asynccontextmanager
 
 
 class GeminiKeyPool:
-    """Round-Robin API key pool with concurrency semaphore and 429 cooldown tracking."""
+    """Round-Robin API key pool with concurrency semaphore, sliding-window RPM, and cooldown."""
 
-    def __init__(self, api_keys: list[str], rpm_limit: int = 5) -> None:
+    def __init__(
+        self,
+        api_keys: list[str],
+        rpm_limit: int = 5,
+        *,
+        max_concurrency: int | None = None,
+        rpm_window_seconds: float = 0.0,
+    ) -> None:
         if rpm_limit < 1:
             raise ValueError("rpm_limit must be at least 1")
+        concurrency = rpm_limit if max_concurrency is None else max(1, max_concurrency)
         self._api_keys: list[str] = [k.strip() for k in api_keys if k.strip()]
         self._index: int = 0
         self._key_cooldown_until: dict[str, float] = {}
-        self.semaphore: asyncio.Semaphore = asyncio.Semaphore(rpm_limit)
+        self._rpm_limit: int = rpm_limit
+        self._rpm_window_seconds: float = max(0.0, rpm_window_seconds)
+        self._request_timestamps: deque[float] = deque()
+        self._rate_lock = asyncio.Lock()
+        self.semaphore: asyncio.Semaphore = asyncio.Semaphore(concurrency)
+
+    @asynccontextmanager
+    async def acquire(self):
+        """Acquire both a concurrency slot and (when configured) a sliding-window RPM slot."""
+        async with self.semaphore:
+            if self._rpm_window_seconds > 0:
+                async with self._rate_lock:
+                    while True:
+                        now = time.monotonic()
+                        cutoff = now - self._rpm_window_seconds
+                        while self._request_timestamps and self._request_timestamps[0] <= cutoff:
+                            self._request_timestamps.popleft()
+                        if len(self._request_timestamps) < self._rpm_limit:
+                            self._request_timestamps.append(now)
+                            break
+                        sleep_for = self._request_timestamps[0] - cutoff + 0.005
+                        await asyncio.sleep(max(0.005, sleep_for))
+            yield
 
     @property
     def key_count(self) -> int:

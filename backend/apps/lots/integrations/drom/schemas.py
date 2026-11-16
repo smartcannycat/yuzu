@@ -23,6 +23,7 @@ class DromSearchCriteria:
     transmission: str | None = None
     fuel_type: str | None = None
     model_code: str | None = None
+    trim: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

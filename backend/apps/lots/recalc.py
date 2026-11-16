@@ -65,6 +65,11 @@ def _build_recalc_response(
         market_price_rf_rub=lot.market_price_rf_rub,
         net_benefit_rub=lot.net_benefit_rub,
         benefit_percentage=lot.benefit_percentage,
+        bid_slider_min_jpy=lot.bid_slider_min_jpy,
+        power_hp=lot.power_hp,
+        power_hp_source=lot.power_hp_source,
+        is_under_160_hp=lot.is_under_160_hp,
+        ocr_warnings=list(lot.ocr_warnings or []),
         verdict=_build_verdict_schema(verdict),
         is_simulation_modified=is_simulation_modified(lot, customs_model, ladder),
         pdf_report_stale=pdf_report_stale,
@@ -135,6 +140,7 @@ def recalculate_lot(
             title="Недостаточно данных для расчёта",
         ) from exc
 
+    lot.refresh_from_db()
     verdict = compute_verdict(lot)
     return _build_recalc_response(lot, verdict=verdict, pdf_report_stale=True)
 
@@ -176,6 +182,7 @@ def reset_lot_simulation(
             title="Недостаточно данных для расчёта",
         ) from exc
 
+    lot.refresh_from_db()
     verdict = compute_verdict(lot)
     return _build_recalc_response(lot, verdict=verdict, pdf_report_stale=False)
 

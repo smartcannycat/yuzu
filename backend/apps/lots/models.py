@@ -156,7 +156,7 @@ class Lot(models.Model):
     has_anomaly = models.BooleanField(default=False)
     anomaly_text = models.CharField(max_length=500, blank=True, null=True)
 
-    bid_slider_min_jpy = models.PositiveIntegerField(default=300000)
+    bid_slider_min_jpy = models.PositiveIntegerField(default=100000)
     bid_slider_max_jpy = models.PositiveIntegerField(default=2500000)
     bid_slider_step_jpy = models.PositiveIntegerField(default=10000)
     is_repairs_included = models.BooleanField(default=True)

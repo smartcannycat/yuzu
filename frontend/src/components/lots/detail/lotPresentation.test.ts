@@ -44,6 +44,7 @@ describe('lotPresentation helpers', () => {
 
     expect(MAX_BID_RUB).toBe(50_000_000)
     expect(clampBidRub(1_000)).toBe(MIN_BID_RUB)
+    expect(clampBidRub(20_000, 0.55)).toBe(55_000)
     expect(clampBidRub(45_000_000)).toBe(45_000_000)
     expect(clampBidRub(99_999_999)).toBe(MAX_BID_RUB)
     expect(clampBidRub(Number.POSITIVE_INFINITY)).toBe(MIN_BID_RUB)
@@ -66,6 +67,10 @@ describe('lotPresentation helpers', () => {
     expect(formatUtilModeLabel(true, true)).toBe('Коммерческий тариф (ПП РФ № 1255)')
     expect(formatUtilModeLabel(false, false)).toBe('Повышенный тариф (> 160 л.с.)')
     expect(formatUtilModeLabel(false, true)).toBe('Льготный для физлица (≤ 160 л.с.)')
+    expect(formatUtilModeLabel(false, true, 'detailed', 3_400)).toBe(
+      'Льготный личный ввоз для физлица (≤ 160 л.с.): 3\u00A0400 ₽',
+    )
+    expect(formatUtilModeLabel(false, null, 'detailed')).toContain('Мощность не подтверждена')
 
     expect(getBenefitBadgeVariant(150_000)).toBe('success')
     expect(getBenefitBadgeVariant(50_000)).toBe('warning')
@@ -82,20 +87,24 @@ describe('lotPresentation helpers', () => {
     const flags: RiskFlags = {
       is_flooded: false,
       airbag_deployed: false,
-      hail_damage: false,
-      underbody_corrosion: false,
+      hail_damage: true,
+      underbody_corrosion: true,
       pillar_or_frame_repair: false,
       core_support_repair: true,
       underbody_rust: false,
-      panel_needs_replacement_x: false,
+      panel_needs_replacement_x: true,
       panel_replaced_xx: false,
       odometer_issue: false,
-      color_changed: false,
+      color_changed: true,
       windshield_damage: false,
       repaired_grade_r_ra: false,
     }
     expect(buildActiveRiskLabels(flags)).toEqual([
       { label: 'Ремонт рамки радиатора', variant: 'danger' },
+      { label: 'Сквозная коррозия C1–C3', variant: 'danger' },
+      { label: 'Повреждения от града', variant: 'warning' },
+      { label: 'Требуется замена панели X', variant: 'warning' },
+      { label: 'Перекрас кузова', variant: 'warning' },
     ])
 
     const summary = queryMockLots().items[0]!

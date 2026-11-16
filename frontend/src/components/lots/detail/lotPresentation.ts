@@ -42,9 +42,15 @@ export function clampBidJpy(value: number): number {
   return Math.min(MAX_BID_JPY, Math.max(MIN_BID_JPY, Math.round(value)))
 }
 
-export function clampBidRub(value: number): number {
-  if (!Number.isFinite(value)) return MIN_BID_RUB
-  return Math.min(MAX_BID_RUB, Math.max(MIN_BID_RUB, Math.round(value)))
+export function clampBidRub(value: number, jpyRate?: number | null): number {
+  const safeRate =
+    typeof jpyRate === 'number' && Number.isFinite(jpyRate) && jpyRate > 0 ? jpyRate : null
+  const minRub =
+    safeRate !== null ? Math.ceil(Number((MIN_BID_JPY * safeRate).toFixed(4))) : MIN_BID_RUB
+  const maxRub =
+    safeRate !== null ? Math.min(MAX_BID_RUB, Math.floor(MAX_BID_JPY * safeRate)) : MAX_BID_RUB
+  if (!Number.isFinite(value)) return minRub
+  return Math.min(maxRub, Math.max(minRub, Math.round(value)))
 }
 
 export interface ActiveRiskChip {
@@ -57,11 +63,16 @@ export function buildActiveRiskLabels(flags: RiskFlags): ActiveRiskChip[] {
   if (flags.repaired_grade_r_ra) chips.push({ label: 'Аварийная оценка R/RA', variant: 'danger' })
   if (flags.pillar_or_frame_repair) chips.push({ label: 'Ремонт стоек/каркаса', variant: 'danger' })
   if (flags.core_support_repair) chips.push({ label: 'Ремонт рамки радиатора', variant: 'danger' })
+  if (flags.underbody_corrosion) chips.push({ label: 'Сквозная коррозия C1–C3', variant: 'danger' })
   if (flags.odometer_issue) chips.push({ label: 'Нестыковка одометра', variant: 'danger' })
   if (flags.is_flooded) chips.push({ label: 'Риск затопления', variant: 'danger' })
   if (flags.airbag_deployed) chips.push({ label: 'Срабатывали SRS', variant: 'danger' })
-  if (flags.underbody_rust) chips.push({ label: 'Налёт ржавчины S1–S2', variant: 'warning' })
+  if (flags.hail_damage) chips.push({ label: 'Повреждения от града', variant: 'warning' })
+  if (flags.underbody_rust) chips.push({ label: 'Налёт ржавчины S1–S3', variant: 'warning' })
   if (flags.windshield_damage) chips.push({ label: 'Дефект лобового стекла', variant: 'warning' })
+  if (flags.panel_needs_replacement_x)
+    chips.push({ label: 'Требуется замена панели X', variant: 'warning' })
+  if (flags.color_changed) chips.push({ label: 'Перекрас кузова', variant: 'warning' })
   if (flags.panel_replaced_xx) chips.push({ label: 'Есть заменённые панели XX', variant: 'info' })
   return chips
 }
@@ -166,19 +177,28 @@ export function formatUtilModeLabel(
   isCommercialUtil: boolean,
   isUnder160Hp: boolean | null,
   variant: 'short' | 'detailed' = 'short',
+  utilFeeRub?: number | null,
 ): string {
   if (variant === 'detailed') {
+    if (isUnder160Hp === false) {
+      return 'Мощность > 160 л.с. — применяется коммерческий тариф'
+    }
+    if (isUnder160Hp === null) {
+      return 'Мощность не подтверждена — по ПП РФ № 1713 применён коммерческий тариф'
+    }
     if (isCommercialUtil) {
       return 'Коммерческий тариф по ПП РФ № 1255 (для перепродажи / юрлица)'
     }
-    if (isUnder160Hp === false) {
-      return 'Мощность > 160 л.с. — применяется повышенный утильсбор'
-    }
-    return 'Льготный личный ввоз для физлица (≤ 160 л.с.): 5 200 ₽'
+    const personalRub =
+      typeof utilFeeRub === 'number' && Number.isFinite(utilFeeRub) && utilFeeRub > 0
+        ? formatRub(utilFeeRub)
+        : '5\u00A0200 ₽'
+    return `Льготный личный ввоз для физлица (≤ 160 л.с.): ${personalRub}`
   }
 
   if (isCommercialUtil) return 'Коммерческий тариф (ПП РФ № 1255)'
   if (isUnder160Hp === false) return 'Повышенный тариф (> 160 л.с.)'
+  if (isUnder160Hp === null) return 'Коммерческий тариф (мощность не подтверждена)'
   return 'Льготный для физлица (≤ 160 л.с.)'
 }
 

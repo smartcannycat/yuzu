@@ -184,10 +184,18 @@ export function recalculateMockLotDetail(
     ? Math.round(payload.bid_rub!)
     : Math.round(appliedBidJpy * rate)
 
-  const isCommercialUtil =
+  const nextPowerHp =
+    typeof payload.custom_power_hp === 'number' && Number.isFinite(payload.custom_power_hp)
+      ? Math.round(payload.custom_power_hp)
+      : base.passport.power_hp
+  const nextIsUnder160 =
+    nextPowerHp !== null && nextPowerHp !== undefined ? nextPowerHp <= 160 : null
+
+  const requestedCommercial =
     typeof payload.is_commercial_util === 'boolean'
       ? payload.is_commercial_util
       : base.economics.customs.is_commercial_util
+  const isCommercialUtil = requestedCommercial || nextIsUnder160 !== true
 
   const includeRepairs =
     typeof payload.include_repairs === 'boolean'
@@ -226,6 +234,7 @@ export function recalculateMockLotDetail(
   const updatedCustoms: CustomsCalculation = {
     ...base.economics.customs,
     is_commercial_util: isCommercialUtil,
+    is_under_160_hp: nextIsUnder160,
     utilization_fee_rub: utilFeeRub,
     freight_vladivostok_rub: freightRub,
   }
@@ -263,6 +272,12 @@ export function recalculateMockLotDetail(
     market_price_rf_rub: marketPriceRfRub,
     net_benefit_rub: netBenefitRub,
     benefit_percentage: Number(benefitPct.toFixed(1)),
+    bid_slider_min_jpy: base.economics.bid_slider_min_jpy,
+    power_hp: nextPowerHp,
+    power_hp_source:
+      payload.custom_power_hp !== undefined ? 'manual' : base.passport.power_hp_source,
+    is_under_160_hp: nextIsUnder160,
+    ocr_warnings: base.passport.ocr_warnings,
     verdict: updatedVerdict,
     is_simulation_modified: false,
     pdf_report_stale: true,

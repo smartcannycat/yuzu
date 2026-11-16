@@ -1341,7 +1341,7 @@ def test_power_resolver_uses_catalog_slug_directly_and_handles_fallback_404() ->
         assert res.power_hp == 64
         assert "https://www.drom.ru/catalog/suzuki/every/" not in called_urls
         assert "https://www.drom.ru/catalog/suzuki/every_van/" in called_urls
-        assert ExternalCache.objects.filter(key="drom:catalog:suzuki:every_van:DA17").exists()
+        assert ExternalCache.objects.filter(key="drom:catalog:suzuki:every_van:DA17V").exists()
 
         # Both initial and fallback catalog URLs return 404 -> returns None cleanly
         missing = resolver.resolve(make="Honda", model="Civic", model_code="EK3", engine_cc=1500)

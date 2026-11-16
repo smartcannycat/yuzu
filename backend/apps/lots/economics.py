@@ -29,6 +29,7 @@ from apps.lots.models import (
 )
 
 _LEGACY_COROLLA_FRAME_ID = "NRE210-2005418"
+DEFAULT_BID_SLIDER_MIN_JPY = 100_000
 DEFAULT_BID_SLIDER_MAX_JPY = 2_500_000
 MAX_DYNAMIC_BID_SLIDER_MAX_JPY = 50_000_000
 _SLIDER_MAX_STEP_JPY = 100_000
@@ -362,7 +363,7 @@ def _resolve_start_bid_jpy(lot: Lot) -> int | None:
        step bid whose turnkey cost leaves a 15% target margin.
 
     """
-    min_bid = lot.bid_slider_min_jpy or 300_000
+    min_bid = min(lot.bid_slider_min_jpy or DEFAULT_BID_SLIDER_MIN_JPY, DEFAULT_BID_SLIDER_MIN_JPY)
     step_bid = lot.bid_slider_step_jpy or 10_000
 
     customs_model = CustomsCalculation.objects.filter(lot=lot).first()
@@ -389,6 +390,8 @@ def _resolve_start_bid_jpy(lot: Lot) -> int | None:
         return clamp(record.closing_price_jpy)
 
     if not lot.market_price_rf_rub:
+        return None
+    if not lot.first_reg_year or (lot.fuel_type != FuelType.EV and not lot.engine_cc):
         return None
 
     if rates_data is None:

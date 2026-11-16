@@ -29,7 +29,7 @@ def build_safety_checklist(lot: Lot) -> SafetyChecklist:
         flags = LotRiskFlags.objects.create(lot=lot)
 
     has_critical = any(
-        (flags.is_flooded, flags.airbag_deployed, flags.underbody_corrosion),
+        (flags.is_flooded, flags.underbody_corrosion),
     )
 
     items: list[dict[str, object]] = [

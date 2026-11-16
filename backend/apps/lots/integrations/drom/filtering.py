@@ -127,19 +127,7 @@ def _truncate_drom_url(
     *,
     mileage_segment: str = "/bez-probega/",
 ) -> str:
-    # Keep query parameters intact while bounding slug segments to DB URLField(max_length=500).
-    suffix = f"{mileage_segment}?{query}"
-    available = _MAX_URL_LENGTH - len(prefix) - len(suffix) - 1
-    if available >= 2:
-        half = max(1, available // 2)
-        bounded_make = safe_make[:half]
-        bounded_model = safe_model[: available - len(bounded_make)]
-        if bounded_make and bounded_model:
-            url = f"{prefix}{bounded_make}/{bounded_model}{suffix}"
-            if len(url) <= _MAX_URL_LENGTH:
-                return url
-
-    # If the query itself leaves no room, trim trailing query parameters cleanly at "&".
+    # Keep make/model path slugs intact and drop trailing query params at "&" boundaries.
     base_path = f"{prefix}{safe_make}/{safe_model}{mileage_segment}"
     parts = query.split("&") if query else []
     while parts:
@@ -147,6 +135,17 @@ def _truncate_drom_url(
         if len(candidate) <= _MAX_URL_LENGTH:
             return candidate
         parts.pop()
+    if len(base_path) <= _MAX_URL_LENGTH:
+        return base_path
+
+    # Fall back to bounding path segments only if the path itself exceeds max_length.
+    available = _MAX_URL_LENGTH - len(prefix) - len(mileage_segment) - 1
+    if available >= 2:
+        half = max(1, available // 2)
+        bounded_make = safe_make[:half]
+        bounded_model = safe_model[: available - len(bounded_make)]
+        if bounded_make and bounded_model:
+            return f"{prefix}{bounded_make}/{bounded_model}{mileage_segment}"[:_MAX_URL_LENGTH]
     return base_path[:_MAX_URL_LENGTH]
 
 

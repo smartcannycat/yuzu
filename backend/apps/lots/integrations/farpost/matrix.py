@@ -94,7 +94,7 @@ def _panel_codes(defects: list) -> dict[str, set[str]]:
         if not tokens:
             tokens = list(defect.defect_types)
         tokens = [
-            f"{code}{defect.severity}" if defect.severity and code in "AUWSCY" else code
+            f"{code}{defect.severity}" if defect.severity and code in "AUWSCYGP" else code
             for code in tokens
         ]
         panels.setdefault(defect.panel_id, set()).update(tokens or ["UNKNOWN"])
@@ -147,6 +147,8 @@ def _select_best_offer(
 
 
 def _work_label(kind: WorkType, name: str, panel: str) -> str:
+    if kind == WorkType.PDR_AND_POLISH and panel == "windshield":
+        return f"Ремонт скола / полимер: {name} (расчёт по матрице)"
     if kind == WorkType.BODYWORK or panel in FIXED_PANELS:
         return f"{LABELS[kind]}: {name} (расчёт по матрице)"
     return f"{LABELS[kind]}: {name} (норматив СТО)"

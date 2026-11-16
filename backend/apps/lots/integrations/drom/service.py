@@ -149,6 +149,7 @@ class DromMarketService:
             fuel_type=criteria.fuel_type,
             drive_type=criteria.drive_type,
             year=criteria.year,
+            trim=criteria.trim,
         )
 
         initial_slug = self._slug_resolver.resolve(criteria.make, criteria.model)
@@ -285,12 +286,11 @@ class DromMarketService:
         slug: ResolvedDromSlug,
         step: _SearchStep,
     ) -> str:
-        frame_type_id = None if step.region_scope == "rf" else slug.frame_type_id
         return build_drom_search_url(
             criteria,
             make_slug=slug.make_slug,
             model_slug=slug.model_slug,
-            frame_type_id=frame_type_id,
+            frame_type_id=slug.frame_type_id,
             region_scope=step.region_scope,
             year_tolerance=step.year_tolerance,
             relax_specs=step.relax_specs,

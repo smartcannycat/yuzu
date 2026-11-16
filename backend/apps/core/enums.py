@@ -88,6 +88,7 @@ class DefectCode(TextChoices):
     X = "X"
     P = "P"
     G = "G"
+    R = "R"
 
 
 class OdometerStatus(TextChoices):

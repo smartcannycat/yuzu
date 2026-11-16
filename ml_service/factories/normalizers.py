@@ -163,9 +163,21 @@ def synthesize_frame_id(model_code: str, chassis_number: str) -> tuple[str, Fram
     if "-" in c and CHASSIS_CANONICAL_RE.match(c):
         return c, FrameIdConfidence.EXACT
 
-    if c.isdigit():
-        clean_model = EMISSION_PREFIX_RE.sub("", m)
-        core_code = re.sub(r"(?<=\d)[A-Z]$", "", clean_model)
+    if c.isdigit() and m:
+        parts = [part for part in m.split("-") if part]
+        base = ""
+        if len(parts) >= 2:
+            for part in parts[1:]:
+                if re.fullmatch(r"[A-Z]{1,5}\d{1,4}[A-Z]{0,2}", part):
+                    base = part
+                    break
+        if not base and parts:
+            base = (
+                parts[0]
+                if len(parts) >= 2 and re.fullmatch(r"[A-Z]{1,5}\d{1,4}[A-Z]{0,2}", parts[0])
+                else EMISSION_PREFIX_RE.sub("", m)
+            )
+        core_code = re.sub(r"(?<=\d)[A-Z]$", "", base)
         if core_code:
             return f"{core_code}-{c}", FrameIdConfidence.SYNTHESIZED
 

@@ -20,6 +20,7 @@ from apps.core.enums import (
     LotArchiveReason,
     MascotMood,
     OdometerStatus,
+    PowerHpSource,
     RiskLevel,
     SystemKey,
     TaskStep,
@@ -355,7 +356,7 @@ class LotMediaLinks(StrictBaseModel):
 
 
 class EconomicsDetail(StrictBaseModel):
-    bid_slider_min_jpy: int = Field(300000, description="Min bid slider value (JPY)")
+    bid_slider_min_jpy: int = Field(100000, description="Min bid slider value (JPY)")
     bid_slider_max_jpy: int = Field(2500000, description="Max bid slider value (JPY)")
     bid_slider_step_jpy: int = Field(10000, description="Bid slider step (JPY)")
     is_repairs_included: bool = Field(
@@ -480,6 +481,13 @@ class RecalculateResponse(StrictBaseModel):
     market_price_rf_rub: int = Field(..., description="RF market price")
     net_benefit_rub: int = Field(..., description="Updated net benefit")
     benefit_percentage: float = Field(..., description="Updated benefit percentage")
+    bid_slider_min_jpy: int = Field(100000, description="Min bid slider value (JPY)")
+    power_hp: int | None = Field(None, description="Effective engine power (hp)")
+    power_hp_source: PowerHpSource | None = Field(None, description="Power figure origin")
+    is_under_160_hp: bool | None = Field(None, description="Whether power is confirmed <= 160 hp")
+    ocr_warnings: list[str] = Field(
+        default_factory=list, description="Updated OCR/calculator warnings"
+    )
     verdict: TrafficLightVerdict = Field(..., description="Updated traffic light verdict")
     is_simulation_modified: bool = Field(
         False, description="Whether persisted economics differ from initial baseline"

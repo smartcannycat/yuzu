@@ -11,7 +11,7 @@ import {
   formatUtilModeLabel,
   resolveSafeJpyRate,
 } from '@/components/lots/detail/lotPresentation'
-import { BaseBadge, BaseCard, BaseSwitch, CostLadder } from '@/components/ui'
+import { BaseBadge, BaseButton, BaseCard, BaseSwitch, CostLadder } from '@/components/ui'
 import type { LotDetailResponse, RecalculateRequest } from '@/types/api'
 import { formatRub } from '@/utils/formatters'
 
@@ -39,6 +39,9 @@ const draftBidJpy = ref(props.detail.economics.wise_cost_ladder.car_bid_jpy)
 const draftBidRubOverride = ref<number | null>(null)
 const draftCommercialUtil = ref(props.detail.economics.customs.is_commercial_util)
 const draftIncludeRepairs = ref(props.detail.economics.is_repairs_included)
+const draftPowerHpInput = ref(
+  props.detail.passport.power_hp !== null ? String(props.detail.passport.power_hp) : '',
+)
 
 let sliderTimerId: number | null = null
 
@@ -49,19 +52,35 @@ function clearSliderTimer(): void {
   }
 }
 
+function resetDraftsFromProps(): void {
+  clearSliderTimer()
+  draftBidJpy.value = props.detail.economics.wise_cost_ladder.car_bid_jpy
+  draftBidRubOverride.value = null
+  draftCommercialUtil.value = props.detail.economics.customs.is_commercial_util
+  draftIncludeRepairs.value = props.detail.economics.is_repairs_included
+  draftPowerHpInput.value =
+    props.detail.passport.power_hp !== null ? String(props.detail.passport.power_hp) : ''
+}
+
 watch(
   () => ({
     lotId: props.detail.lot_id,
     bidJpy: props.detail.economics.wise_cost_ladder.car_bid_jpy,
     commercialUtil: props.detail.economics.customs.is_commercial_util,
     includeRepairs: props.detail.economics.is_repairs_included,
+    powerHp: props.detail.passport.power_hp,
   }),
-  (next) => {
-    clearSliderTimer()
-    draftBidJpy.value = next.bidJpy
-    draftBidRubOverride.value = null
-    draftCommercialUtil.value = next.commercialUtil
-    draftIncludeRepairs.value = next.includeRepairs
+  () => {
+    resetDraftsFromProps()
+  },
+)
+
+watch(
+  () => props.recalculateError,
+  (nextError) => {
+    if (nextError) {
+      resetDraftsFromProps()
+    }
   },
 )
 
@@ -106,21 +125,24 @@ const displayBenefitPct = computed(() => {
   return Number(((displayNetBenefitRub.value / displayTurnkeyRub.value) * 100).toFixed(1))
 })
 
-function emitRecalculateNow(override?: { bidRub?: number }): void {
+function emitRecalculateNow(override?: { bidRub?: number; customPowerHp?: number }): void {
   clearSliderTimer()
+  const basePayload: RecalculateRequest = {
+    is_commercial_util: draftCommercialUtil.value,
+    include_repairs: draftIncludeRepairs.value,
+    ...(override?.customPowerHp !== undefined ? { custom_power_hp: override.customPowerHp } : {}),
+  }
   if (override?.bidRub !== undefined) {
     emit('recalculate', {
+      ...basePayload,
       bid_rub: override.bidRub,
-      is_commercial_util: draftCommercialUtil.value,
-      include_repairs: draftIncludeRepairs.value,
     })
     return
   }
 
   emit('recalculate', {
+    ...basePayload,
     bid_jpy: draftBidJpy.value,
-    is_commercial_util: draftCommercialUtil.value,
-    include_repairs: draftIncludeRepairs.value,
   })
 }
 
@@ -150,10 +172,22 @@ function handleCommitJpy(nextBidJpy: number): void {
 }
 
 function handleCommitRub(nextBidRub: number): void {
-  const safeRub = clampBidRub(nextBidRub)
+  const safeRub = clampBidRub(nextBidRub, jpyRate.value)
   draftBidRubOverride.value = safeRub
   draftBidJpy.value = clampBidJpy(Math.round(safeRub / jpyRate.value))
   emitRecalculateNow({ bidRub: safeRub })
+}
+
+function handleApplyCustomPower(): void {
+  const digits = draftPowerHpInput.value.replace(/[^\d]/g, '')
+  if (!digits) return
+  const parsed = Math.round(Number(digits))
+  if (!Number.isFinite(parsed) || parsed < 1 || parsed > 2000) return
+  draftPowerHpInput.value = String(parsed)
+  emitRecalculateNow({
+    ...(draftBidRubOverride.value !== null ? { bidRub: draftBidRubOverride.value } : {}),
+    customPowerHp: parsed,
+  })
 }
 
 function handleSwitchToggle(): void {
@@ -183,7 +217,12 @@ const utilDescription = computed(() =>
     draftCommercialUtil.value,
     props.detail.economics.customs.is_under_160_hp,
     'detailed',
+    props.detail.economics.customs.utilization_fee_rub,
   ),
+)
+
+const isUtilModeForcedCommercial = computed(
+  () => props.detail.economics.customs.is_under_160_hp !== true,
 )
 </script>
 
@@ -213,17 +252,47 @@ const utilDescription = computed(() =>
               v-model="draftCommercialUtil"
               label="Коммерческий утильсбор"
               :description="utilDescription"
+              :disabled="isUtilModeForcedCommercial"
               @update:model-value="handleSwitchToggle"
             />
           </div>
 
-          <div class="pt-3">
+          <div class="py-3">
             <BaseSwitch
               v-model="draftIncludeRepairs"
               label="Включать смету ремонта Farpost"
               :description="`Учтёт ${formatRub(detail.economics.farpost_repair.grand_total_repair_rub)} на кузовные детали и работы`"
               @update:model-value="handleSwitchToggle"
             />
+          </div>
+
+          <div class="pt-3">
+            <label
+              for="simulator-custom-power-hp"
+              class="text-text-primary block text-[14px] font-medium"
+            >
+              Мощность двигателя (л.с.)
+            </label>
+            <p class="text-text-secondary mt-0.5 text-[12px]">
+              {{
+                detail.passport.power_hp === null
+                  ? 'Для подтверждения льготного утильсбора или акциза на EV укажите мощность вручную'
+                  : 'Уточните мощность при расхождении с каталогом Drom'
+              }}
+            </p>
+            <form class="mt-2 flex items-center gap-2" @submit.prevent="handleApplyCustomPower">
+              <input
+                id="simulator-custom-power-hp"
+                v-model="draftPowerHpInput"
+                type="text"
+                inputmode="numeric"
+                placeholder="Напр. 150"
+                class="border-border bg-surface text-text-primary focus:border-accent w-28 rounded-sm border px-2.5 py-1.5 text-[14px] tabular-nums outline-none"
+              />
+              <BaseButton type="submit" variant="secondary" size="sm" :disabled="isRecalculating">
+                Применить
+              </BaseButton>
+            </form>
           </div>
         </div>
       </BaseCard>
