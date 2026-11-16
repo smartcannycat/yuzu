@@ -1,40 +1,34 @@
-# Agent Guidelines
+# Frontend Agent Guidelines
 
 ## 1. General Rules
 
-- Language: English only for all code, comments, documentation, and commit messages.
-- No Emojis: Never use emojis in code, comments, commit messages, or documentation.
+- Language: English only for code, comments, technical documentation, and commit messages. UI copy is Russian.
+- No Emojis: Never use emojis in code, comments, commit messages, or technical docs.
 
-## 2. Package Manager
+## 2. Package Manager & Tooling
 
-- Strictly use Bun (`bun`). Do not use npm, yarn, or pnpm.
-- Never generate or commit foreign lockfiles (`package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`).
+- Strictly use Bun (`bun`). Do not use npm, yarn, or pnpm, and never commit foreign lockfiles.
+- Linter: `oxlint` (`bun run lint`). Formatter: `oxfmt` (`bun run format:check`). Type checker: `vue-tsc` (`bun run typecheck`).
+- Git Hooks: managed at repository root by `lefthook.yml`.
 
-## 3. Tooling & Quality
+## 3. API Contracts & Domain Enums
 
-- Linter: `oxlint` (`bun run lint`, `bun run lint:fix`). Do not add ESLint.
-- Formatter: `oxfmt` (`bun run format`, `bun run format:check`). Do not add Prettier.
-- Type Checker: `vue-tsc` (`bun run typecheck`).
-- Git Hooks: Managed by `lefthook` (runs oxlint, oxfmt, and typecheck on pre-commit).
+- Machine contract types live in `src/types/api.generated.ts`, generated from `../docs/architecture/openapi.json` via `bun run gen:api`. Keep them synced (`make check-contracts` at repo root) and never hand-edit `api.generated.ts` or run `oxfmt` on it.
+- Always branch UI state on canonical backend enum fields (e.g., `PartSourceKind`, `TrafficLightColor`, `BatchStatus`, `ItemProcessingStatus`, `PowerHpSource`, `UtilFeeType`), **never** by substring-matching localized Russian UI strings.
 
-## 4. Vue & TypeScript Standards
+## 4. Vue, TypeScript & Module Size Standards
 
-- SFC: Use Single File Components with `<script setup lang="ts">`.
-- Strict Typing: Do not use `any`.
-- Imports: Always use the `@/` path alias for imports from `src/`.
-- Naming: `PascalCase.vue` for components, `useCamelCase.ts` for composables.
+- Soft module size limit: **~300–350 lines** per `.ts` or `.vue` file (excluding generated `api.generated.ts`). Extract composables, presenters, or subcomponents cleanly instead of growing god components.
+- SFC: `<script setup lang="ts">`. Strict typing without `any`. Always use `@/` alias for `src/` imports.
+- Tailwind CSS v4: `@tailwindcss/vite` + `@import "tailwindcss";`. Never add `tailwind.config.js` or `postcss.config.js`.
+- Pinia: setup stores (`defineStore('name', () => { ... })`). Vue Router: lazy route views (`() => import('@/views/...')`).
 
-## 5. Styling, State & Routing
+## 5. Verification Checklist
 
-- Tailwind CSS v4: Zero-config via `@tailwindcss/vite` and `@import "tailwindcss";`. Never create `tailwind.config.js` or `postcss.config.js`.
-- Pinia: Use setup store syntax (`defineStore('name', () => { ... })`).
-- Vue Router: Use dynamic imports for views (`component: () => import('@/views/...')`).
-
-## 6. Verification Checklist
-
-Run and ensure passing status before completing any task:
+Before completing any task, ensure all pass:
 
 1. `bun run typecheck`
 2. `bun run lint`
 3. `bun run format:check`
-4. `bun run build`
+4. `bun run check:api`
+5. `bun run test` && `bun run build`

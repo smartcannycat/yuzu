@@ -1,0 +1,4243 @@
+{
+  "components": {
+    "schemas": {
+      "AgeCorridor": {
+        "enum": [
+          "under_3_years",
+          "3_to_5_years",
+          "over_5_years"
+        ],
+        "title": "AgeCorridor",
+        "type": "string"
+      },
+      "AnomalyAlert": {
+        "additionalProperties": false,
+        "properties": {
+          "diff_details": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Before/after diff object",
+            "title": "Diff Details"
+          },
+          "message_ru": {
+            "description": "Anomaly explanation",
+            "title": "Message Ru",
+            "type": "string"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/AnomalySeverity",
+            "description": "Severity level"
+          },
+          "title_ru": {
+            "description": "Anomaly title",
+            "title": "Title Ru",
+            "type": "string"
+          },
+          "type": {
+            "description": "Anomaly type",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "severity",
+          "title_ru",
+          "message_ru"
+        ],
+        "title": "AnomalyAlert",
+        "type": "object"
+      },
+      "AnomalySeverity": {
+        "enum": [
+          "critical",
+          "warning",
+          "info"
+        ],
+        "title": "AnomalySeverity",
+        "type": "string"
+      },
+      "AuctionHouse": {
+        "enum": [
+          "TAA",
+          "USS",
+          "CAA",
+          "JU",
+          "Honda",
+          "ARAI",
+          "MIRIVE",
+          "KCAA",
+          "LAA",
+          "ORIX",
+          "ZIP",
+          "AUCNET",
+          "OTHER"
+        ],
+        "title": "AuctionHouse",
+        "type": "string"
+      },
+      "AuthTokensResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "access_token": {
+            "description": "JWT access token",
+            "title": "Access Token",
+            "type": "string"
+          },
+          "expires_in_sec": {
+            "default": 3600,
+            "description": "Access token lifetime in seconds",
+            "title": "Expires In Sec",
+            "type": "integer"
+          },
+          "refresh_token": {
+            "description": "JWT refresh token",
+            "title": "Refresh Token",
+            "type": "string"
+          },
+          "token_type": {
+            "const": "bearer",
+            "default": "bearer",
+            "description": "Authorization scheme",
+            "title": "Token Type",
+            "type": "string"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserProfileResponse",
+            "description": "Authenticated user profile"
+          }
+        },
+        "required": [
+          "access_token",
+          "refresh_token",
+          "user"
+        ],
+        "title": "AuthTokensResponse",
+        "type": "object"
+      },
+      "AvailableFilters": {
+        "additionalProperties": false,
+        "properties": {
+          "archived_lots_count": {
+            "default": 0,
+            "description": "Total non-deleted archived lots for user",
+            "minimum": 0,
+            "title": "Archived Lots Count",
+            "type": "integer"
+          },
+          "counts_by_verdict": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "Counts by traffic light color",
+            "propertyNames": {
+              "$ref": "#/components/schemas/TrafficLightColor"
+            },
+            "title": "Counts By Verdict",
+            "type": "object"
+          },
+          "makes": {
+            "description": "Makes with counts",
+            "items": {
+              "$ref": "#/components/schemas/FilterCountItem"
+            },
+            "title": "Makes",
+            "type": "array"
+          },
+          "models": {
+            "description": "Models with counts",
+            "items": {
+              "$ref": "#/components/schemas/FilterCountItem"
+            },
+            "title": "Models",
+            "type": "array"
+          },
+          "total_lots_count": {
+            "description": "Counter for 'All (N)' chip",
+            "minimum": 0,
+            "title": "Total Lots Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_lots_count"
+        ],
+        "title": "AvailableFilters",
+        "type": "object"
+      },
+      "BatchCreateResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "batch_id": {
+            "description": "Created batch identifier",
+            "format": "uuid",
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "created_at": {
+            "description": "Enqueue timestamp (UTC)",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "poll_interval_ms": {
+            "default": 1500,
+            "description": "Recommended polling interval in ms",
+            "title": "Poll Interval Ms",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/BatchStatus",
+            "description": "Batch status"
+          },
+          "total_items": {
+            "description": "Accepted file count",
+            "maximum": 10,
+            "minimum": 1,
+            "title": "Total Items",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "batch_id",
+          "total_items",
+          "status",
+          "created_at"
+        ],
+        "title": "BatchCreateResponse",
+        "type": "object"
+      },
+      "BatchItemStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "current_step": {
+            "$ref": "#/components/schemas/TaskStep",
+            "description": "Current DAG step"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Failure error text",
+            "title": "Error Message"
+          },
+          "file_index": {
+            "description": "File ordinal in batch",
+            "minimum": 0,
+            "title": "File Index",
+            "type": "integer"
+          },
+          "lot_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Lot ID (created on intake; null on failed / rejected_not_sheet)",
+            "title": "Lot Id"
+          },
+          "original_filename": {
+            "description": "Original uploaded filename",
+            "title": "Original Filename",
+            "type": "string"
+          },
+          "preview_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Fast Header OCR preview title",
+            "title": "Preview Title"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ItemProcessingStatus",
+            "description": "File processing status"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LotSummary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Compact lot card (filled when ready)"
+          }
+        },
+        "required": [
+          "file_index",
+          "original_filename",
+          "status",
+          "current_step"
+        ],
+        "title": "BatchItemStatus",
+        "type": "object"
+      },
+      "BatchProgressResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "batch_id": {
+            "description": "Polled batch identifier",
+            "format": "uuid",
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "failed_count": {
+            "description": "Failed files",
+            "minimum": 0,
+            "title": "Failed Count",
+            "type": "integer"
+          },
+          "items": {
+            "description": "Detailed per-file status",
+            "items": {
+              "$ref": "#/components/schemas/BatchItemStatus"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "mascot": {
+            "$ref": "#/components/schemas/MascotState",
+            "description": "Current mascot state"
+          },
+          "processed_count": {
+            "description": "Fully processed files",
+            "minimum": 0,
+            "title": "Processed Count",
+            "type": "integer"
+          },
+          "ready_count": {
+            "description": "Successfully ready lots",
+            "minimum": 0,
+            "title": "Ready Count",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/BatchStatus",
+            "description": "Overall batch status"
+          },
+          "total_count": {
+            "description": "Total files in batch",
+            "minimum": 1,
+            "title": "Total Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "batch_id",
+          "status",
+          "mascot",
+          "total_count",
+          "processed_count",
+          "ready_count",
+          "failed_count",
+          "items"
+        ],
+        "title": "BatchProgressResponse",
+        "type": "object"
+      },
+      "BatchStatus": {
+        "enum": [
+          "queued",
+          "processing",
+          "completed",
+          "partial_failed",
+          "failed"
+        ],
+        "title": "BatchStatus",
+        "type": "string"
+      },
+      "BodyPanel": {
+        "enum": [
+          "front_bumper",
+          "rear_bumper",
+          "hood",
+          "roof",
+          "tailgate",
+          "front_left_fender",
+          "front_right_fender",
+          "front_left_door",
+          "front_right_door",
+          "rear_left_door",
+          "rear_right_door",
+          "rear_left_quarter",
+          "rear_right_quarter",
+          "left_sill",
+          "right_sill",
+          "windshield"
+        ],
+        "title": "BodyPanel",
+        "type": "string"
+      },
+      "ChecklistItemStatus": {
+        "enum": [
+          "ok",
+          "warning",
+          "critical",
+          "unknown"
+        ],
+        "title": "ChecklistItemStatus",
+        "type": "string"
+      },
+      "CrossAuditReport": {
+        "additionalProperties": false,
+        "properties": {
+          "anomalies": {
+            "description": "Detected anomalies",
+            "items": {
+              "$ref": "#/components/schemas/AnomalyAlert"
+            },
+            "title": "Anomalies",
+            "type": "array"
+          },
+          "has_critical_anomaly": {
+            "description": "Critical anomaly flag (Sticky Alert trigger)",
+            "title": "Has Critical Anomaly",
+            "type": "boolean"
+          },
+          "headline_ru": {
+            "description": "Short audit conclusion",
+            "title": "Headline Ru",
+            "type": "string"
+          },
+          "history": {
+            "description": "Trading history",
+            "items": {
+              "$ref": "#/components/schemas/PastAuctionRecord"
+            },
+            "title": "History",
+            "type": "array"
+          },
+          "is_archive_available": {
+            "default": true,
+            "description": "Whether archive history was obtained",
+            "title": "Is Archive Available",
+            "type": "boolean"
+          },
+          "risk_level": {
+            "$ref": "#/components/schemas/RiskLevel",
+            "description": "Safety risk level"
+          },
+          "source_name": {
+            "default": "AucJP + AAA Japan / Pravto",
+            "description": "Aggregators used",
+            "title": "Source Name",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CrossAuditStatus",
+            "description": "Cross-audit status by Frame ID"
+          },
+          "times_auctioned": {
+            "description": "How many times the car was found at auctions",
+            "minimum": 0,
+            "title": "Times Auctioned",
+            "type": "integer"
+          },
+          "verified_at": {
+            "description": "Verification timestamp (UTC)",
+            "format": "date-time",
+            "title": "Verified At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "risk_level",
+          "has_critical_anomaly",
+          "headline_ru",
+          "times_auctioned",
+          "verified_at"
+        ],
+        "title": "CrossAuditReport",
+        "type": "object"
+      },
+      "CrossAuditStatus": {
+        "enum": [
+          "clean",
+          "anomaly_detected",
+          "not_found",
+          "live_only",
+          "unavailable"
+        ],
+        "title": "CrossAuditStatus",
+        "type": "string"
+      },
+      "CurrencyRates": {
+        "additionalProperties": false,
+        "properties": {
+          "cbrf_date": {
+            "description": "CBRF rate fixation date (DD.MM.YYYY)",
+            "title": "Cbrf Date",
+            "type": "string"
+          },
+          "eur_rub_cbrf": {
+            "description": "Official EUR/RUB rate from CBRF",
+            "title": "Eur Rub Cbrf",
+            "type": "number"
+          },
+          "jpy_rate_source": {
+            "default": "ДВ-банк (ориентир)",
+            "description": "Source of JPY/RUB rate",
+            "title": "Jpy Rate Source",
+            "type": "string"
+          },
+          "jpy_rub_bank": {
+            "description": "Commercial JPY/RUB rate (Far East bank)",
+            "title": "Jpy Rub Bank",
+            "type": "number"
+          },
+          "usd_rub_cbrf": {
+            "description": "Official USD/RUB rate from CBRF",
+            "title": "Usd Rub Cbrf",
+            "type": "number"
+          }
+        },
+        "required": [
+          "jpy_rub_bank",
+          "eur_rub_cbrf",
+          "usd_rub_cbrf",
+          "cbrf_date"
+        ],
+        "title": "CurrencyRates",
+        "type": "object"
+      },
+      "CustomsCalculation": {
+        "additionalProperties": false,
+        "properties": {
+          "age_corridor": {
+            "$ref": "#/components/schemas/AgeCorridor",
+            "description": "EAEU age corridor"
+          },
+          "broker_svh_sbkts_rub": {
+            "description": "Broker, SBKTS, lab, EPTS",
+            "title": "Broker Svh Sbkts Rub",
+            "type": "integer"
+          },
+          "customs_clearance_fee_rub": {
+            "description": "Customs clearance fee",
+            "title": "Customs Clearance Fee Rub",
+            "type": "integer"
+          },
+          "customs_duty_eur": {
+            "description": "Duty in EUR",
+            "title": "Customs Duty Eur",
+            "type": "number"
+          },
+          "customs_duty_rub": {
+            "description": "Duty in RUB",
+            "title": "Customs Duty Rub",
+            "type": "integer"
+          },
+          "duty_calculation_mode": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DutyCalculationMode"
+              }
+            ],
+            "default": "eur_per_cc"
+          },
+          "duty_rate_eur_per_cc": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Duty rate EUR per cc (for 3-5 and 5+ years)",
+            "title": "Duty Rate Eur Per Cc"
+          },
+          "effective_duty_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Duty percentage of vehicle value (under 3 years)",
+            "title": "Effective Duty Pct"
+          },
+          "engine_cc": {
+            "description": "Engine displacement in cc",
+            "title": "Engine Cc",
+            "type": "integer"
+          },
+          "excise_rub": {
+            "default": 0,
+            "description": "Import excise (EVs outside unified EAEU rates)",
+            "minimum": 0,
+            "title": "Excise Rub",
+            "type": "integer"
+          },
+          "freight_vladivostok_rub": {
+            "description": "Sea freight to Vladivostok and SVH",
+            "title": "Freight Vladivostok Rub",
+            "type": "integer"
+          },
+          "import_vat_rub": {
+            "default": 0,
+            "description": "Import VAT (EVs outside unified EAEU rates)",
+            "minimum": 0,
+            "title": "Import Vat Rub",
+            "type": "integer"
+          },
+          "is_commercial_util": {
+            "description": "Commercial utilization fee",
+            "title": "Is Commercial Util",
+            "type": "boolean"
+          },
+          "is_under_160_hp": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Power <= 160 hp",
+            "title": "Is Under 160 Hp"
+          },
+          "meti_sanction_risk": {
+            "default": false,
+            "description": "METI sanction risk (hybrid, EV, ICE >1900cc)",
+            "title": "Meti Sanction Risk",
+            "type": "boolean"
+          },
+          "rates_snapshot": {
+            "$ref": "#/components/schemas/CurrencyRates",
+            "description": "Currency rates snapshot (CBRF + Far East bank)"
+          },
+          "utilization_fee_rub": {
+            "description": "RF utilization fee",
+            "title": "Utilization Fee Rub",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "age_corridor",
+          "engine_cc",
+          "customs_duty_eur",
+          "customs_duty_rub",
+          "is_commercial_util",
+          "utilization_fee_rub",
+          "customs_clearance_fee_rub",
+          "freight_vladivostok_rub",
+          "broker_svh_sbkts_rub",
+          "rates_snapshot"
+        ],
+        "title": "CustomsCalculation",
+        "type": "object"
+      },
+      "DamagedPartItem": {
+        "additionalProperties": false,
+        "properties": {
+          "defect_code": {
+            "description": "Defect code (XX, X, A2, U2)",
+            "title": "Defect Code",
+            "type": "string"
+          },
+          "in_stock_vladivostok": {
+            "description": "In stock in Vladivostok",
+            "title": "In Stock Vladivostok",
+            "type": "boolean"
+          },
+          "is_statistical_fallback": {
+            "default": false,
+            "description": "From statistical matrix instead of live Farpost",
+            "title": "Is Statistical Fallback",
+            "type": "boolean"
+          },
+          "panel_id": {
+            "$ref": "#/components/schemas/BodyPanel",
+            "description": "Body panel"
+          },
+          "part_name_ru": {
+            "description": "Replaceable part name",
+            "title": "Part Name Ru",
+            "type": "string"
+          },
+          "price_from_rub": {
+            "description": "Lower bound part price in Vladivostok",
+            "minimum": 0,
+            "title": "Price From Rub",
+            "type": "integer"
+          },
+          "source_kind": {
+            "default": "",
+            "description": "Machine-readable price source / fallback reason",
+            "title": "Source Kind",
+            "type": "string"
+          },
+          "subtitle_ru": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Subtitle under the row",
+            "title": "Subtitle Ru"
+          }
+        },
+        "required": [
+          "panel_id",
+          "defect_code",
+          "part_name_ru",
+          "price_from_rub",
+          "in_stock_vladivostok"
+        ],
+        "title": "DamagedPartItem",
+        "type": "object"
+      },
+      "DriveType": {
+        "enum": [
+          "2WD",
+          "4WD"
+        ],
+        "title": "DriveType",
+        "type": "string"
+      },
+      "DutyCalculationMode": {
+        "enum": [
+          "eur_per_cc",
+          "pct_of_value"
+        ],
+        "title": "DutyCalculationMode",
+        "type": "string"
+      },
+      "EconomicsDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "bid_slider_max_jpy": {
+            "default": 2500000,
+            "description": "Max bid slider value (JPY)",
+            "title": "Bid Slider Max Jpy",
+            "type": "integer"
+          },
+          "bid_slider_min_jpy": {
+            "default": 100000,
+            "description": "Min bid slider value (JPY)",
+            "title": "Bid Slider Min Jpy",
+            "type": "integer"
+          },
+          "bid_slider_step_jpy": {
+            "default": 10000,
+            "description": "Bid slider step (JPY)",
+            "title": "Bid Slider Step Jpy",
+            "type": "integer"
+          },
+          "customs": {
+            "$ref": "#/components/schemas/CustomsCalculation",
+            "description": "Customs and logistics calculation"
+          },
+          "farpost_repair": {
+            "$ref": "#/components/schemas/FarpostRepairSummary",
+            "description": "Parts and STO works estimate"
+          },
+          "is_repairs_included": {
+            "default": true,
+            "description": "Whether Farpost repair is included in turnkey cost",
+            "title": "Is Repairs Included",
+            "type": "boolean"
+          },
+          "is_simulation_modified": {
+            "default": false,
+            "description": "Whether persisted economics differ from initial baseline",
+            "title": "Is Simulation Modified",
+            "type": "boolean"
+          },
+          "wise_cost_ladder": {
+            "$ref": "#/components/schemas/WiseCostLadder",
+            "description": "Transparent cost ladder (Screen 6)"
+          }
+        },
+        "required": [
+          "customs",
+          "farpost_repair",
+          "wise_cost_ladder"
+        ],
+        "title": "EconomicsDetail",
+        "type": "object"
+      },
+      "FarpostRepairSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "grand_total_repair_rub": {
+            "description": "Total estimated repair",
+            "minimum": 0,
+            "title": "Grand Total Repair Rub",
+            "type": "integer"
+          },
+          "has_color_matched_parts": {
+            "description": "Color-matched parts present",
+            "title": "Has Color Matched Parts",
+            "type": "boolean"
+          },
+          "included_in_turnkey_hint_ru": {
+            "default": "Сумма уже включена в расчёт под ключ",
+            "title": "Included In Turnkey Hint Ru",
+            "type": "string"
+          },
+          "parts": {
+            "description": "Parts for replacement",
+            "items": {
+              "$ref": "#/components/schemas/DamagedPartItem"
+            },
+            "title": "Parts",
+            "type": "array"
+          },
+          "service_works": {
+            "description": "STO works",
+            "items": {
+              "$ref": "#/components/schemas/ServiceWorkItem"
+            },
+            "title": "Service Works",
+            "type": "array"
+          },
+          "total_parts_from_rub": {
+            "description": "Total parts 'from' sum",
+            "minimum": 0,
+            "title": "Total Parts From Rub",
+            "type": "integer"
+          },
+          "total_works_rub": {
+            "description": "Total STO works sum",
+            "minimum": 0,
+            "title": "Total Works Rub",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_parts_from_rub",
+          "total_works_rub",
+          "grand_total_repair_rub",
+          "has_color_matched_parts"
+        ],
+        "title": "FarpostRepairSummary",
+        "type": "object"
+      },
+      "FilterCountItem": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "description": "Ready lots count",
+            "minimum": 0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "value": {
+            "description": "Filter value for query param",
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "count"
+        ],
+        "title": "FilterCountItem",
+        "type": "object"
+      },
+      "FuelType": {
+        "enum": [
+          "gasoline",
+          "hybrid",
+          "diesel",
+          "ev",
+          "other"
+        ],
+        "title": "FuelType",
+        "type": "string"
+      },
+      "HealthSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "default": "ok",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "title": "HealthSchema",
+        "type": "object"
+      },
+      "InProgressItemPreview": {
+        "additionalProperties": false,
+        "properties": {
+          "batch_id": {
+            "description": "Batch identifier",
+            "format": "uuid",
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "current_step": {
+            "$ref": "#/components/schemas/TaskStep",
+            "description": "Current pipeline step"
+          },
+          "display_title": {
+            "description": "Make/model from Fast Header OCR or filename",
+            "title": "Display Title",
+            "type": "string"
+          },
+          "lot_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Lot ID if already created",
+            "title": "Lot Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ItemProcessingStatus",
+            "description": "Item status"
+          }
+        },
+        "required": [
+          "batch_id",
+          "display_title",
+          "status",
+          "current_step"
+        ],
+        "title": "InProgressItemPreview",
+        "type": "object"
+      },
+      "InProgressSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "active_batches_count": {
+            "description": "Active batches count",
+            "minimum": 0,
+            "title": "Active Batches Count",
+            "type": "integer"
+          },
+          "items": {
+            "description": "In-progress items for accordion",
+            "items": {
+              "$ref": "#/components/schemas/InProgressItemPreview"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total_processing_lots": {
+            "description": "Cars in processing (no percentages)",
+            "minimum": 0,
+            "title": "Total Processing Lots",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "active_batches_count",
+          "total_processing_lots"
+        ],
+        "title": "InProgressSummary",
+        "type": "object"
+      },
+      "InvalidParamDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "description": "Field or header name with validation error",
+            "title": "Name",
+            "type": "string"
+          },
+          "reason": {
+            "description": "Human-readable validation failure reason",
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "reason"
+        ],
+        "title": "InvalidParamDetail",
+        "type": "object"
+      },
+      "ItemProcessingStatus": {
+        "enum": [
+          "queued",
+          "processing",
+          "ready",
+          "failed"
+        ],
+        "title": "ItemProcessingStatus",
+        "type": "string"
+      },
+      "LotArchiveReason": {
+        "enum": [
+          "expired",
+          "manual"
+        ],
+        "title": "LotArchiveReason",
+        "type": "string"
+      },
+      "LotBulkDeleteRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "lot_ids": {
+            "description": "List of lot UUIDs to soft-delete (1 to 100 per request)",
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Lot Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "lot_ids"
+        ],
+        "title": "LotBulkDeleteRequest",
+        "type": "object"
+      },
+      "LotBulkDeleteResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "deleted_count": {
+            "description": "Number of lots deleted in this request",
+            "minimum": 0,
+            "title": "Deleted Count",
+            "type": "integer"
+          },
+          "deleted_ids": {
+            "description": "UUIDs soft-deleted by this request",
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Deleted Ids",
+            "type": "array"
+          },
+          "not_found_ids": {
+            "description": "UUIDs not found, already deleted, or inaccessible to user",
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Not Found Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "deleted_ids",
+          "deleted_count"
+        ],
+        "title": "LotBulkDeleteResponse",
+        "type": "object"
+      },
+      "LotDetailResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Archive timestamp (UTC)",
+            "title": "Archived At"
+          },
+          "archived_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LotArchiveReason"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Archive reason"
+          },
+          "audit": {
+            "$ref": "#/components/schemas/CrossAuditReport",
+            "description": "Cross-audit history result (AucJP)"
+          },
+          "created_at": {
+            "description": "Creation timestamp (UTC)",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "economics": {
+            "$ref": "#/components/schemas/EconomicsDetail",
+            "description": "Slider params, customs, repair, cost ladder"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Auto-archive deadline (UTC)",
+            "title": "Expires At"
+          },
+          "is_archived": {
+            "default": false,
+            "description": "Whether lot is archived",
+            "title": "Is Archived",
+            "type": "boolean"
+          },
+          "lot_id": {
+            "description": "Unique lot identifier",
+            "format": "uuid",
+            "title": "Lot Id",
+            "type": "string"
+          },
+          "market": {
+            "$ref": "#/components/schemas/MarketComparisonInfo",
+            "description": "RF market comparison (Drom.ru)"
+          },
+          "media": {
+            "$ref": "#/components/schemas/LotMediaLinks",
+            "description": "Original sheet scan and Drom.ru link"
+          },
+          "passport": {
+            "$ref": "#/components/schemas/NormalizedSheet",
+            "description": "Vehicle passport, defects, risks, inspector notes"
+          },
+          "safety_checklist": {
+            "$ref": "#/components/schemas/SafetyChecklist",
+            "description": "Safety systems summary and checklist"
+          },
+          "updated_at": {
+            "description": "Update timestamp (UTC)",
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/TrafficLightVerdict",
+            "description": "Traffic light, body/interior bullets, net benefit"
+          }
+        },
+        "required": [
+          "lot_id",
+          "created_at",
+          "updated_at",
+          "passport",
+          "verdict",
+          "market",
+          "audit",
+          "safety_checklist",
+          "economics",
+          "media"
+        ],
+        "title": "LotDetailResponse",
+        "type": "object"
+      },
+      "LotLifecycleFilter": {
+        "enum": [
+          "active",
+          "archived",
+          "all"
+        ],
+        "title": "LotLifecycleFilter",
+        "type": "string"
+      },
+      "LotLifecyclePatchRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "is_archived": {
+            "description": "Archive manually (true) or restore to active without auto-archive (false)",
+            "title": "Is Archived",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "is_archived"
+        ],
+        "title": "LotLifecyclePatchRequest",
+        "type": "object"
+      },
+      "LotListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "available_filters": {
+            "$ref": "#/components/schemas/AvailableFilters",
+            "description": "Filters with counts"
+          },
+          "in_progress": {
+            "$ref": "#/components/schemas/InProgressSummary",
+            "description": "Active tasks block for header dropdown"
+          },
+          "items": {
+            "description": "Ready lots list (LIFO)",
+            "items": {
+              "$ref": "#/components/schemas/LotSummary"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMeta",
+            "description": "Pagination metadata"
+          }
+        },
+        "required": [
+          "items",
+          "in_progress",
+          "pagination",
+          "available_filters"
+        ],
+        "title": "LotListResponse",
+        "type": "object"
+      },
+      "LotMediaLinks": {
+        "additionalProperties": false,
+        "properties": {
+          "drom_search_url": {
+            "description": "Drom.ru analogs search URL",
+            "title": "Drom Search Url",
+            "type": "string"
+          },
+          "sheet_scan_url": {
+            "description": "Full auction sheet scan URL for lightbox",
+            "title": "Sheet Scan Url",
+            "type": "string"
+          },
+          "sheet_thumbnail_url": {
+            "description": "Auction sheet scan thumbnail URL",
+            "title": "Sheet Thumbnail Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sheet_thumbnail_url",
+          "sheet_scan_url",
+          "drom_search_url"
+        ],
+        "title": "LotMediaLinks",
+        "type": "object"
+      },
+      "LotSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "anomaly_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Anomaly warning text",
+            "title": "Anomaly Text"
+          },
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Archive timestamp (UTC)",
+            "title": "Archived At"
+          },
+          "archived_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LotArchiveReason"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Archive reason"
+          },
+          "auction_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Auction date (DD.MM.YYYY)",
+            "title": "Auction Date"
+          },
+          "auction_house": {
+            "$ref": "#/components/schemas/AuctionHouse",
+            "description": "Canonical auction house"
+          },
+          "created_at": {
+            "description": "Record creation timestamp (UTC)",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "engine_cc": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Engine displacement in cc",
+            "title": "Engine Cc"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Auto-archive deadline (UTC)",
+            "title": "Expires At"
+          },
+          "frame_id": {
+            "description": "Canonical body number",
+            "title": "Frame Id",
+            "type": "string"
+          },
+          "has_anomaly": {
+            "description": "Cross-audit anomaly flag",
+            "title": "Has Anomaly",
+            "type": "boolean"
+          },
+          "is_archived": {
+            "default": false,
+            "description": "Whether lot is archived",
+            "title": "Is Archived",
+            "type": "boolean"
+          },
+          "lot_id": {
+            "description": "Unique lot identifier",
+            "format": "uuid",
+            "title": "Lot Id",
+            "type": "string"
+          },
+          "lot_number": {
+            "description": "Lot number",
+            "title": "Lot Number",
+            "type": "string"
+          },
+          "make": {
+            "description": "Vehicle make",
+            "title": "Make",
+            "type": "string"
+          },
+          "market_price_rf_rub": {
+            "description": "RF market price (Drom)",
+            "title": "Market Price Rf Rub",
+            "type": "integer"
+          },
+          "meti_sanction_risk": {
+            "default": false,
+            "description": "METI sanction risk",
+            "title": "Meti Sanction Risk",
+            "type": "boolean"
+          },
+          "mileage_km": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Mileage in km",
+            "title": "Mileage Km"
+          },
+          "model": {
+            "description": "Vehicle model",
+            "title": "Model",
+            "type": "string"
+          },
+          "net_benefit_rub": {
+            "description": "Net benefit vs RF market",
+            "title": "Net Benefit Rub",
+            "type": "integer"
+          },
+          "overall_grade": {
+            "description": "Auction grade",
+            "title": "Overall Grade",
+            "type": "string"
+          },
+          "thumbnail_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Auction sheet scan thumbnail URL",
+            "title": "Thumbnail Url"
+          },
+          "turnkey_cost_rub": {
+            "description": "Turnkey price in Vladivostok",
+            "title": "Turnkey Cost Rub",
+            "type": "integer"
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/TrafficLightColor",
+            "description": "Traffic light verdict"
+          },
+          "verdict_headline": {
+            "description": "Verdict text in card",
+            "title": "Verdict Headline",
+            "type": "string"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Production year (null on partial OCR)",
+            "title": "Year"
+          }
+        },
+        "required": [
+          "lot_id",
+          "make",
+          "model",
+          "frame_id",
+          "auction_house",
+          "lot_number",
+          "overall_grade",
+          "turnkey_cost_rub",
+          "market_price_rf_rub",
+          "verdict",
+          "verdict_headline",
+          "net_benefit_rub",
+          "has_anomaly",
+          "created_at"
+        ],
+        "title": "LotSummary",
+        "type": "object"
+      },
+      "MarketComparisonInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "analogs_count": {
+            "description": "Comparable listings in stock in RF",
+            "minimum": 0,
+            "title": "Analogs Count",
+            "type": "integer"
+          },
+          "drom_search_url": {
+            "description": "Ready Drom.ru search URL with filters",
+            "title": "Drom Search Url",
+            "type": "string"
+          },
+          "excludes_under_order": {
+            "default": true,
+            "description": "Under-order listings filtered out",
+            "title": "Excludes Under Order",
+            "type": "boolean"
+          },
+          "fallback_reason_ru": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Expansion reason",
+            "title": "Fallback Reason Ru"
+          },
+          "filtered_out_under_order_count": {
+            "default": 0,
+            "description": "Filtered out under-order/anomaly count",
+            "minimum": 0,
+            "title": "Filtered Out Under Order Count",
+            "type": "integer"
+          },
+          "is_fallback": {
+            "default": false,
+            "description": "True if expanded due to <3 exact analogs",
+            "title": "Is Fallback",
+            "type": "boolean"
+          },
+          "market_price_rf_rub": {
+            "description": "Median analog price in RF (RUB)",
+            "minimum": 0,
+            "title": "Market Price Rf Rub",
+            "type": "integer"
+          },
+          "price_max_rub": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Max analog price in RF",
+            "title": "Price Max Rub"
+          },
+          "price_min_rub": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Min analog price in RF",
+            "title": "Price Min Rub"
+          },
+          "search_region_ru": {
+            "default": "ДФО / Владивосток",
+            "description": "Search region",
+            "title": "Search Region Ru",
+            "type": "string"
+          }
+        },
+        "required": [
+          "market_price_rf_rub",
+          "analogs_count",
+          "drom_search_url"
+        ],
+        "title": "MarketComparisonInfo",
+        "type": "object"
+      },
+      "MascotMood": {
+        "enum": [
+          "sleeping",
+          "thinking",
+          "happy",
+          "confused",
+          "warning"
+        ],
+        "title": "MascotMood",
+        "type": "string"
+      },
+      "MascotState": {
+        "additionalProperties": false,
+        "properties": {
+          "badge_text": {
+            "description": "Progress text ('Распознаем лоты... 3/4')",
+            "title": "Badge Text",
+            "type": "string"
+          },
+          "mood": {
+            "$ref": "#/components/schemas/MascotMood",
+            "description": "Mascot mood"
+          },
+          "phrase_ru": {
+            "description": "Contextual mascot phrase",
+            "title": "Phrase Ru",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mood",
+          "phrase_ru",
+          "badge_text"
+        ],
+        "title": "MascotState",
+        "type": "object"
+      },
+      "NormalizedDefect": {
+        "additionalProperties": false,
+        "properties": {
+          "defect_types": {
+            "description": "Damage types (A, U, W, S, XX, etc.)",
+            "items": {
+              "type": "string"
+            },
+            "title": "Defect Types",
+            "type": "array"
+          },
+          "description_ru": {
+            "description": "Short legend text for body diagram (Screen 5)",
+            "title": "Description Ru",
+            "type": "string"
+          },
+          "panel_id": {
+            "$ref": "#/components/schemas/BodyPanel",
+            "description": "Canonical body panel identifier (1 of 16)"
+          },
+          "panel_ru": {
+            "description": "Russian name of the panel",
+            "title": "Panel Ru",
+            "type": "string"
+          },
+          "raw_code": {
+            "description": "Original code from auction sheet (A2, U2, W1, XX)",
+            "title": "Raw Code",
+            "type": "string"
+          },
+          "severity": {
+            "anyOf": [
+              {
+                "maximum": 3,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Severity (1..3) or null for XX/X",
+            "title": "Severity"
+          }
+        },
+        "required": [
+          "panel_id",
+          "panel_ru",
+          "defect_types",
+          "raw_code",
+          "description_ru"
+        ],
+        "title": "NormalizedDefect",
+        "type": "object"
+      },
+      "NormalizedSheet": {
+        "additionalProperties": false,
+        "properties": {
+          "auction_branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Auction branch if specified",
+            "title": "Auction Branch"
+          },
+          "auction_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Auction date (DD.MM.YYYY)",
+            "title": "Auction Date"
+          },
+          "auction_house": {
+            "$ref": "#/components/schemas/AuctionHouse",
+            "description": "Canonical auction house"
+          },
+          "auction_strictness_index": {
+            "description": "Strictness index (0.55..1.00)",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Auction Strictness Index",
+            "type": "number"
+          },
+          "chassis_number": {
+            "description": "Chassis serial number",
+            "title": "Chassis Number",
+            "type": "string"
+          },
+          "color_ru": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Body color in Russian",
+            "title": "Color Ru"
+          },
+          "defects": {
+            "description": "Body defects (up to 16 panels)",
+            "items": {
+              "$ref": "#/components/schemas/NormalizedDefect"
+            },
+            "title": "Defects",
+            "type": "array"
+          },
+          "drive_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DriveType"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Drive type (2WD / 4WD)"
+          },
+          "engine_cc": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Engine displacement in cc",
+            "title": "Engine Cc"
+          },
+          "equipment_ru": {
+            "description": "Options list",
+            "items": {
+              "type": "string"
+            },
+            "title": "Equipment Ru",
+            "type": "array"
+          },
+          "exterior_grade": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Exterior grade",
+            "title": "Exterior Grade"
+          },
+          "extra_ru": {
+            "description": "Additional sheet marks",
+            "items": {
+              "type": "string"
+            },
+            "title": "Extra Ru",
+            "type": "array"
+          },
+          "first_reg_date_str": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Formatted date and age string",
+            "title": "First Reg Date Str"
+          },
+          "first_reg_month": {
+            "anyOf": [
+              {
+                "maximum": 12,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "First registration month",
+            "title": "First Reg Month"
+          },
+          "first_reg_year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "First registration year",
+            "title": "First Reg Year"
+          },
+          "frame_id": {
+            "description": "Canonical Frame ID",
+            "title": "Frame Id",
+            "type": "string"
+          },
+          "frame_id_confidence": {
+            "default": "exact",
+            "enum": [
+              "exact",
+              "synthesized",
+              "raw"
+            ],
+            "title": "Frame Id Confidence",
+            "type": "string"
+          },
+          "fuel_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FuelType"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Fuel type"
+          },
+          "inspector_notes_raw": {
+            "description": "Raw Japanese inspector notes",
+            "items": {
+              "type": "string"
+            },
+            "title": "Inspector Notes Raw",
+            "type": "array"
+          },
+          "inspector_notes_ru": {
+            "description": "Translated inspector notes",
+            "items": {
+              "type": "string"
+            },
+            "title": "Inspector Notes Ru",
+            "type": "array"
+          },
+          "interior_grade": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Interior grade",
+            "title": "Interior Grade"
+          },
+          "is_pass_corridor_3_5": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Pass-age 3-5 years (null if date not recognized)",
+            "title": "Is Pass Corridor 3 5"
+          },
+          "is_under_160_hp": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Power <= 160 hp (preferential util fee)",
+            "title": "Is Under 160 Hp"
+          },
+          "lot_number": {
+            "description": "Auction lot number",
+            "title": "Lot Number",
+            "type": "string"
+          },
+          "low_confidence_fields": {
+            "description": "Low-confidence OCR fields",
+            "items": {
+              "type": "string"
+            },
+            "title": "Low Confidence Fields",
+            "type": "array"
+          },
+          "make": {
+            "description": "Vehicle make in Latin",
+            "title": "Make",
+            "type": "string"
+          },
+          "mileage_km": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Mileage in km",
+            "title": "Mileage Km"
+          },
+          "model": {
+            "description": "Vehicle model in Latin",
+            "title": "Model",
+            "type": "string"
+          },
+          "model_code": {
+            "description": "Factory body model code",
+            "title": "Model Code",
+            "type": "string"
+          },
+          "ocr_warnings": {
+            "description": "Parser warnings",
+            "items": {
+              "type": "string"
+            },
+            "title": "Ocr Warnings",
+            "type": "array"
+          },
+          "odometer_status": {
+            "$ref": "#/components/schemas/OdometerStatus",
+            "description": "Odometer status"
+          },
+          "overall_grade": {
+            "description": "Overall auction grade",
+            "title": "Overall Grade",
+            "type": "string"
+          },
+          "paint_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Factory paint code",
+            "title": "Paint Code"
+          },
+          "power_hp": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Engine power in hp",
+            "title": "Power Hp"
+          },
+          "power_hp_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "drom_catalog",
+                  "katashiki_cache",
+                  "manual"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Power Hp Source"
+          },
+          "recycling_fee_paid": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Japanese recycling fee paid mark",
+            "title": "Recycling Fee Paid"
+          },
+          "recycling_fee_yen": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Japanese recycling fee (JPY)",
+            "title": "Recycling Fee Yen"
+          },
+          "risk_flags": {
+            "$ref": "#/components/schemas/RiskFlags",
+            "description": "Safety risk flags (13 flags)"
+          },
+          "seller_comments_ru": {
+            "description": "Translated seller comments",
+            "items": {
+              "type": "string"
+            },
+            "title": "Seller Comments Ru",
+            "type": "array"
+          },
+          "shaken_until": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Shaken expiry in Japan",
+            "title": "Shaken Until"
+          },
+          "transmission": {
+            "description": "Transmission type in Russian",
+            "title": "Transmission",
+            "type": "string"
+          },
+          "trim": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Trim level (optional)",
+            "title": "Trim"
+          }
+        },
+        "required": [
+          "lot_number",
+          "auction_house",
+          "auction_strictness_index",
+          "make",
+          "model",
+          "model_code",
+          "chassis_number",
+          "frame_id",
+          "odometer_status",
+          "transmission",
+          "overall_grade",
+          "risk_flags"
+        ],
+        "title": "NormalizedSheet",
+        "type": "object"
+      },
+      "OdometerStatus": {
+        "enum": [
+          "confirmed",
+          "replaced",
+          "tampered",
+          "unknown"
+        ],
+        "title": "OdometerStatus",
+        "type": "string"
+      },
+      "PaginationMeta": {
+        "additionalProperties": false,
+        "properties": {
+          "page": {
+            "description": "Current page",
+            "minimum": 1,
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "description": "Page size",
+            "maximum": 100,
+            "minimum": 1,
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total_items": {
+            "description": "Total records",
+            "minimum": 0,
+            "title": "Total Items",
+            "type": "integer"
+          },
+          "total_pages": {
+            "description": "Total pages",
+            "minimum": 0,
+            "title": "Total Pages",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_items",
+          "page",
+          "page_size",
+          "total_pages"
+        ],
+        "title": "PaginationMeta",
+        "type": "object"
+      },
+      "PastAuctionRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "auction_date": {
+            "description": "Past auction date (DD.MM.YYYY)",
+            "title": "Auction Date",
+            "type": "string"
+          },
+          "auction_house": {
+            "description": "Past auction house",
+            "title": "Auction House",
+            "type": "string"
+          },
+          "auction_strictness": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Auction strictness index",
+            "title": "Auction Strictness"
+          },
+          "closing_price_jpy": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Closing price in JPY",
+            "title": "Closing Price Jpy"
+          },
+          "defects_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Past auction defects summary",
+            "title": "Defects Summary"
+          },
+          "lot_number": {
+            "description": "Archive lot number",
+            "title": "Lot Number",
+            "type": "string"
+          },
+          "mileage_km": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Past auction mileage in km",
+            "title": "Mileage Km"
+          },
+          "overall_grade": {
+            "description": "Past auction grade",
+            "title": "Overall Grade",
+            "type": "string"
+          },
+          "sheet_archive_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Archive sheet scan URL",
+            "title": "Sheet Archive Url"
+          }
+        },
+        "required": [
+          "auction_date",
+          "auction_house",
+          "lot_number",
+          "overall_grade"
+        ],
+        "title": "PastAuctionRecord",
+        "type": "object"
+      },
+      "PowerHpSource": {
+        "enum": [
+          "drom_catalog",
+          "katashiki_cache",
+          "manual"
+        ],
+        "title": "PowerHpSource",
+        "type": "string"
+      },
+      "ProblemDetail": {
+        "additionalProperties": false,
+        "description": "RFC 7807 Problem Details response schema.",
+        "properties": {
+          "detail": {
+            "description": "Detailed human-readable explanation",
+            "title": "Detail",
+            "type": "string"
+          },
+          "instance": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Endpoint URI where error occurred",
+            "title": "Instance"
+          },
+          "invalid_params": {
+            "description": "List of invalid request parameters",
+            "items": {
+              "$ref": "#/components/schemas/InvalidParamDetail"
+            },
+            "title": "Invalid Params",
+            "type": "array"
+          },
+          "status": {
+            "description": "HTTP status code",
+            "title": "Status",
+            "type": "integer"
+          },
+          "timestamp": {
+            "description": "Error timestamp in UTC",
+            "format": "date-time",
+            "title": "Timestamp",
+            "type": "string"
+          },
+          "title": {
+            "description": "Short summary of the error",
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "default": "about:blank",
+            "description": "Error type URI",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "status",
+          "detail"
+        ],
+        "title": "ProblemDetail",
+        "type": "object"
+      },
+      "RecalculateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "bid_jpy": {
+            "anyOf": [
+              {
+                "maximum": 50000000,
+                "minimum": 100000,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "New auction bid in JPY",
+            "title": "Bid Jpy"
+          },
+          "bid_rub": {
+            "anyOf": [
+              {
+                "maximum": 50000000,
+                "minimum": 50000,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Alternative direct bid in RUB",
+            "title": "Bid Rub"
+          },
+          "custom_freight_rub": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Custom freight cost",
+            "title": "Custom Freight Rub"
+          },
+          "custom_power_hp": {
+            "anyOf": [
+              {
+                "maximum": 2000,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Manual power override in hp",
+            "title": "Custom Power Hp"
+          },
+          "include_repairs": {
+            "default": true,
+            "description": "Include Farpost repair in turnkey cost",
+            "title": "Include Repairs",
+            "type": "boolean"
+          },
+          "is_commercial_util": {
+            "default": false,
+            "description": "Util fee toggle: False=Personal, True=Commercial",
+            "title": "Is Commercial Util",
+            "type": "boolean"
+          }
+        },
+        "title": "RecalculateRequest",
+        "type": "object"
+      },
+      "RecalculateResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "applied_bid_jpy": {
+            "description": "Applied bid in JPY",
+            "title": "Applied Bid Jpy",
+            "type": "integer"
+          },
+          "applied_bid_rub": {
+            "description": "Applied bid in RUB",
+            "title": "Applied Bid Rub",
+            "type": "integer"
+          },
+          "benefit_percentage": {
+            "description": "Updated benefit percentage",
+            "title": "Benefit Percentage",
+            "type": "number"
+          },
+          "bid_slider_min_jpy": {
+            "default": 100000,
+            "description": "Min bid slider value (JPY)",
+            "title": "Bid Slider Min Jpy",
+            "type": "integer"
+          },
+          "customs": {
+            "$ref": "#/components/schemas/CustomsCalculation",
+            "description": "Updated customs calculation"
+          },
+          "include_repairs": {
+            "description": "Whether repair estimate is included",
+            "title": "Include Repairs",
+            "type": "boolean"
+          },
+          "is_commercial_util": {
+            "description": "Applied util fee mode",
+            "title": "Is Commercial Util",
+            "type": "boolean"
+          },
+          "is_simulation_modified": {
+            "default": false,
+            "description": "Whether persisted economics differ from initial baseline",
+            "title": "Is Simulation Modified",
+            "type": "boolean"
+          },
+          "is_under_160_hp": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Whether power is confirmed <= 160 hp",
+            "title": "Is Under 160 Hp"
+          },
+          "lot_id": {
+            "description": "Lot identifier",
+            "format": "uuid",
+            "title": "Lot Id",
+            "type": "string"
+          },
+          "market_price_rf_rub": {
+            "description": "RF market price",
+            "title": "Market Price Rf Rub",
+            "type": "integer"
+          },
+          "net_benefit_rub": {
+            "description": "Updated net benefit",
+            "title": "Net Benefit Rub",
+            "type": "integer"
+          },
+          "ocr_warnings": {
+            "description": "Updated OCR/calculator warnings",
+            "items": {
+              "type": "string"
+            },
+            "title": "Ocr Warnings",
+            "type": "array"
+          },
+          "pdf_report_stale": {
+            "default": true,
+            "description": "Flag that PDF export needs simulation params",
+            "title": "Pdf Report Stale",
+            "type": "boolean"
+          },
+          "power_hp": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Effective engine power (hp)",
+            "title": "Power Hp"
+          },
+          "power_hp_source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PowerHpSource"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Power figure origin"
+          },
+          "recalculated_at": {
+            "description": "Recalculation timestamp (UTC)",
+            "format": "date-time",
+            "title": "Recalculated At",
+            "type": "string"
+          },
+          "turnkey_cost_rub": {
+            "description": "Updated turnkey cost",
+            "title": "Turnkey Cost Rub",
+            "type": "integer"
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/TrafficLightVerdict",
+            "description": "Updated traffic light verdict"
+          },
+          "wise_cost_ladder": {
+            "$ref": "#/components/schemas/WiseCostLadder",
+            "description": "Updated cost ladder"
+          }
+        },
+        "required": [
+          "lot_id",
+          "recalculated_at",
+          "applied_bid_jpy",
+          "applied_bid_rub",
+          "is_commercial_util",
+          "include_repairs",
+          "customs",
+          "wise_cost_ladder",
+          "turnkey_cost_rub",
+          "market_price_rf_rub",
+          "net_benefit_rub",
+          "benefit_percentage",
+          "verdict"
+        ],
+        "title": "RecalculateResponse",
+        "type": "object"
+      },
+      "RiskFlags": {
+        "additionalProperties": false,
+        "properties": {
+          "airbag_deployed": {
+            "default": false,
+            "description": "Deployed airbags",
+            "title": "Airbag Deployed",
+            "type": "boolean"
+          },
+          "color_changed": {
+            "default": false,
+            "description": "Color change mark",
+            "title": "Color Changed",
+            "type": "boolean"
+          },
+          "core_support_repair": {
+            "default": false,
+            "description": "Core support repair",
+            "title": "Core Support Repair",
+            "type": "boolean"
+          },
+          "hail_damage": {
+            "default": false,
+            "description": "Hail damage",
+            "title": "Hail Damage",
+            "type": "boolean"
+          },
+          "is_flooded": {
+            "default": false,
+            "description": "Flooded vehicle",
+            "title": "Is Flooded",
+            "type": "boolean"
+          },
+          "odometer_issue": {
+            "default": false,
+            "description": "Odometer issues: tampered, replaced, unknown",
+            "title": "Odometer Issue",
+            "type": "boolean"
+          },
+          "panel_needs_replacement_x": {
+            "default": false,
+            "description": "Panel needs replacement (X)",
+            "title": "Panel Needs Replacement X",
+            "type": "boolean"
+          },
+          "panel_replaced_xx": {
+            "default": false,
+            "description": "Panel already replaced in Japan (XX)",
+            "title": "Panel Replaced Xx",
+            "type": "boolean"
+          },
+          "pillar_or_frame_repair": {
+            "default": false,
+            "description": "Load-bearing pillar/frame repair",
+            "title": "Pillar Or Frame Repair",
+            "type": "boolean"
+          },
+          "repaired_grade_r_ra": {
+            "default": false,
+            "description": "Official salvage grade R/RA/0",
+            "title": "Repaired Grade R Ra",
+            "type": "boolean"
+          },
+          "underbody_corrosion": {
+            "default": false,
+            "description": "Through corrosion of sills/longerons",
+            "title": "Underbody Corrosion",
+            "type": "boolean"
+          },
+          "underbody_rust": {
+            "default": false,
+            "description": "Surface underbody rust",
+            "title": "Underbody Rust",
+            "type": "boolean"
+          },
+          "windshield_damage": {
+            "default": false,
+            "description": "Windshield chip/crack/replacement",
+            "title": "Windshield Damage",
+            "type": "boolean"
+          }
+        },
+        "title": "RiskFlags",
+        "type": "object"
+      },
+      "RiskLevel": {
+        "enum": [
+          "CLEAN",
+          "INFO",
+          "WARNING",
+          "CRITICAL"
+        ],
+        "title": "RiskLevel",
+        "type": "string"
+      },
+      "SafetyCheckItem": {
+        "additionalProperties": false,
+        "properties": {
+          "detail_ru": {
+            "description": "Explanation strictly from sheet marks",
+            "title": "Detail Ru",
+            "type": "string"
+          },
+          "label_ru": {
+            "description": "System name for Bottom Sheet",
+            "title": "Label Ru",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ChecklistItemStatus",
+            "description": "Status from sheet data"
+          },
+          "system_key": {
+            "$ref": "#/components/schemas/SystemKey",
+            "description": "System key"
+          }
+        },
+        "required": [
+          "system_key",
+          "label_ru",
+          "status",
+          "detail_ru"
+        ],
+        "title": "SafetyCheckItem",
+        "type": "object"
+      },
+      "SafetyChecklist": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "description": "Checklist items for Bottom Sheet",
+            "items": {
+              "$ref": "#/components/schemas/SafetyCheckItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "overall_label_ru": {
+            "description": "Short status label ('В норме', etc.)",
+            "title": "Overall Label Ru",
+            "type": "string"
+          },
+          "overall_status": {
+            "$ref": "#/components/schemas/ChecklistItemStatus",
+            "description": "Overall status for Screen 5 row"
+          }
+        },
+        "required": [
+          "overall_status",
+          "overall_label_ru",
+          "items"
+        ],
+        "title": "SafetyChecklist",
+        "type": "object"
+      },
+      "ServiceWorkItem": {
+        "additionalProperties": false,
+        "properties": {
+          "amount_rub": {
+            "description": "Work cost in RUB",
+            "minimum": 0,
+            "title": "Amount Rub",
+            "type": "integer"
+          },
+          "label_ru": {
+            "description": "Work name for UI",
+            "title": "Label Ru",
+            "type": "string"
+          },
+          "work_type": {
+            "$ref": "#/components/schemas/WorkType",
+            "description": "Work category"
+          },
+          "zero_cost_reason_ru": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Zero cost reason",
+            "title": "Zero Cost Reason Ru"
+          }
+        },
+        "required": [
+          "work_type",
+          "label_ru",
+          "amount_rub"
+        ],
+        "title": "ServiceWorkItem",
+        "type": "object"
+      },
+      "SystemKey": {
+        "enum": [
+          "structural_frame",
+          "airbags_srs",
+          "engine_transmission",
+          "underbody_corrosion",
+          "flood_or_fire"
+        ],
+        "title": "SystemKey",
+        "type": "string"
+      },
+      "TaskStep": {
+        "enum": [
+          "gatekeeper",
+          "fast_header_ocr",
+          "gemini_ocr",
+          "cross_audit",
+          "customs_calc",
+          "farpost_parts",
+          "drom_market",
+          "scoring",
+          "completed",
+          "failed"
+        ],
+        "title": "TaskStep",
+        "type": "string"
+      },
+      "TokenRefreshRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "refresh_token": {
+            "description": "Valid refresh JWT token",
+            "minLength": 1,
+            "title": "Refresh Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "refresh_token"
+        ],
+        "title": "TokenRefreshRequest",
+        "type": "object"
+      },
+      "TrafficLightColor": {
+        "enum": [
+          "green",
+          "yellow",
+          "red"
+        ],
+        "title": "TrafficLightColor",
+        "type": "string"
+      },
+      "TrafficLightVerdict": {
+        "additionalProperties": false,
+        "properties": {
+          "badge_text": {
+            "description": "Green/yellow/red badge text (Screen 4)",
+            "title": "Badge Text",
+            "type": "string"
+          },
+          "benefit_percentage": {
+            "description": "Benefit percentage",
+            "title": "Benefit Percentage",
+            "type": "number"
+          },
+          "body_summary_ru": {
+            "description": "Short 'Body' bullet (Screen 4)",
+            "title": "Body Summary Ru",
+            "type": "string"
+          },
+          "headline": {
+            "description": "Verdict headline (Screen 4)",
+            "title": "Headline",
+            "type": "string"
+          },
+          "interior_summary_ru": {
+            "description": "Short 'Interior' bullet (Screen 4)",
+            "title": "Interior Summary Ru",
+            "type": "string"
+          },
+          "net_benefit_rub": {
+            "description": "Net benefit in RUB",
+            "title": "Net Benefit Rub",
+            "type": "integer"
+          },
+          "reasoning_bullets": {
+            "description": "Additional PDF bullets",
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasoning Bullets",
+            "type": "array"
+          },
+          "short_verdict_label": {
+            "description": "Short verdict label for card (Screen 1)",
+            "title": "Short Verdict Label",
+            "type": "string"
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/TrafficLightColor",
+            "description": "Traffic light color"
+          }
+        },
+        "required": [
+          "verdict",
+          "headline",
+          "short_verdict_label",
+          "badge_text",
+          "net_benefit_rub",
+          "benefit_percentage",
+          "body_summary_ru",
+          "interior_summary_ru"
+        ],
+        "title": "TrafficLightVerdict",
+        "type": "object"
+      },
+      "UserLoginRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "email": {
+            "description": "User email address",
+            "format": "email",
+            "title": "Email",
+            "type": "string"
+          },
+          "password": {
+            "description": "User password",
+            "minLength": 1,
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "UserLoginRequest",
+        "type": "object"
+      },
+      "UserProfileResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "description": "Registration timestamp in UTC",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "email": {
+            "description": "User email address",
+            "title": "Email",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "User display name",
+            "title": "Name"
+          },
+          "user_id": {
+            "description": "User UUID",
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "email",
+          "created_at"
+        ],
+        "title": "UserProfileResponse",
+        "type": "object"
+      },
+      "UserRegisterRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "email": {
+            "description": "User email address",
+            "format": "email",
+            "title": "Email",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional display name",
+            "title": "Name"
+          },
+          "password": {
+            "description": "User password",
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "UserRegisterRequest",
+        "type": "object"
+      },
+      "WiseCostLadder": {
+        "additionalProperties": false,
+        "properties": {
+          "benefit_percentage": {
+            "description": "Benefit percentage",
+            "title": "Benefit Percentage",
+            "type": "number"
+          },
+          "car_bid_jpy": {
+            "description": "Auction bid in JPY",
+            "minimum": 0,
+            "title": "Car Bid Jpy",
+            "type": "integer"
+          },
+          "car_bid_rub": {
+            "description": "Bid equivalent in RUB",
+            "minimum": 0,
+            "title": "Car Bid Rub",
+            "type": "integer"
+          },
+          "market_price_rf_rub": {
+            "description": "Median RF market price (Drom)",
+            "minimum": 0,
+            "title": "Market Price Rf Rub",
+            "type": "integer"
+          },
+          "net_benefit_rub": {
+            "description": "Net benefit for the client",
+            "title": "Net Benefit Rub",
+            "type": "integer"
+          },
+          "steps": {
+            "description": "Cost ladder steps (Screen 6)",
+            "items": {
+              "$ref": "#/components/schemas/WiseCostStep"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "turnkey_cost_rub": {
+            "description": "Total turnkey cost in Vladivostok",
+            "minimum": 0,
+            "title": "Turnkey Cost Rub",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "car_bid_jpy",
+          "car_bid_rub",
+          "turnkey_cost_rub",
+          "market_price_rf_rub",
+          "net_benefit_rub",
+          "benefit_percentage",
+          "steps"
+        ],
+        "title": "WiseCostLadder",
+        "type": "object"
+      },
+      "WiseCostStep": {
+        "additionalProperties": false,
+        "properties": {
+          "amount_rub": {
+            "description": "Amount in RUB",
+            "minimum": 0,
+            "title": "Amount Rub",
+            "type": "integer"
+          },
+          "is_optional": {
+            "default": false,
+            "description": "Toggleable step (repair estimate)",
+            "title": "Is Optional",
+            "type": "boolean"
+          },
+          "name_ru": {
+            "description": "Expense item name",
+            "title": "Name Ru",
+            "type": "string"
+          },
+          "original_amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Amount in original currency",
+            "title": "Original Amount"
+          },
+          "original_currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Original currency (JPY, EUR, RUB)",
+            "title": "Original Currency"
+          },
+          "step_number": {
+            "description": "Step ordinal",
+            "maximum": 10,
+            "minimum": 1,
+            "title": "Step Number",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "step_number",
+          "name_ru",
+          "amount_rub"
+        ],
+        "title": "WiseCostStep",
+        "type": "object"
+      },
+      "WorkType": {
+        "enum": [
+          "mount_dismount",
+          "paint",
+          "pdr_and_polish",
+          "bodywork"
+        ],
+        "title": "WorkType",
+        "type": "string"
+      }
+    },
+    "securitySchemes": {
+      "AppJWTAuth": {
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "description": "",
+    "title": "Yuzu API",
+    "version": "1.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/auth/login": {
+      "post": {
+        "operationId": "auth_login",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserLoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthTokensResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Login",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/me": {
+      "get": {
+        "operationId": "auth_me",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserProfileResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "AppJWTAuth": []
+          }
+        ],
+        "summary": "Me",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/refresh": {
+      "post": {
+        "operationId": "auth_refresh",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TokenRefreshRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthTokensResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Refresh",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/register": {
+      "post": {
+        "operationId": "auth_register",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserRegisterRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthTokensResponse"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Register",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "operationId": "health_health_check",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthSchema"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Health Check",
+        "tags": [
+          "Health"
+        ]
+      }
+    },
+    "/api/v1/lots": {
+      "get": {
+        "operationId": "lot_list_lots",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Query"
+            }
+          },
+          {
+            "in": "query",
+            "name": "make",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Make"
+            }
+          },
+          {
+            "in": "query",
+            "name": "model",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Model"
+            }
+          },
+          {
+            "in": "query",
+            "name": "verdict",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/TrafficLightColor"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "has_anomaly",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Has Anomaly"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lifecycle",
+            "required": false,
+            "schema": {
+              "allOf": [
+                {
+                  "enum": [
+                    "active",
+                    "archived",
+                    "all"
+                  ],
+                  "title": "LotLifecycleFilter",
+                  "type": "string"
+                }
+              ],
+              "default": "active"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_by",
+            "required": false,
+            "schema": {
+              "default": "created_at",
+              "enum": [
+                "created_at",
+                "net_benefit",
+                "turnkey_cost"
+              ],
+              "title": "Sort By",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_order",
+            "required": false,
+            "schema": {
+              "default": "desc",
+              "enum": [
+                "desc",
+                "asc"
+              ],
+              "title": "Sort Order",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LotListResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "AppJWTAuth": []
+          }
+        ],
+        "summary": "List Lots",
+        "tags": [
+          "Lots"
+        ]
+      }
+    },
+    "/api/v1/lots/batches": {
+      "post": {
+        "operationId": "lot_create_batch",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "files": {
+                    "items": {
+                      "format": "binary",
+                      "type": "string"
+                    },
+                    "title": "Files",
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "files"
+                ],
+                "title": "FileParams",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchCreateResponse"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "security": [
+          {
+            "AppJWTAuth": []
+          }
+        ],
+        "summary": "Create Batch",
+        "tags": [
+          "Lots"
+        ]
+      }
+    },
+    "/api/v1/lots/batches/{batch_id}": {
+      "get": {
+        "operationId": "lot_get_batch_progress",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "batch_id",
+            "required": true,
+            "schema": {
+              "format": "uuid4",
+              "title": "Batch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchProgressResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "AppJWTAuth": []
+          }
+        ],
+        "summary": "Get Batch Progress",
+        "tags": [
+          "Lots"
+        ]
+      }
+    },
+    "/api/v1/lots/batches/{batch_id}/items": {
+      "post": {
+        "operationId": "lot_append_batch_items",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "batch_id",
+            "required": true,
+            "schema": {
+              "format": "uuid4",
+              "title": "Batch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "files": {
+                    "items": {
+                      "format": "binary",
+                      "type": "string"
+                    },
+                    "title": "Files",
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "files"
+                ],
+                "title": "FileParams",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchProgressResponse"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "security": [
+          {
+            "AppJWTAuth": []
+          }
+        ],
+        "summary": "Append Batch Items",
+        "tags": [
+          "Lots"
+        ]
+      }
+    },
+    "/api/v1/lots/bulk-delete": {
+      "post": {
+        "operationId": "lot_bulk_delete_lots",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LotBulkDeleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LotBulkDeleteResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "AppJWTAuth": []
+          }
+        ],
+        "summary": "Bulk Delete Lots",
+        "tags": [
+          "Lots"
+        ]
+      }
+    },
+    "/api/v1/lots/{lot_id}": {
+      "delete": {
+        "operationId": "lot_delete_lot",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lot_id",
+            "required": true,
+            "schema": {
+              "format": "uuid4",
+              "title": "Lot Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "AppJWTAuth": []
+          }
+        ],
+        "summary": "Delete Lot",
+        "tags": [
+          "Lots"
+        ]
+      },
+      "get": {
+        "operationId": "lot_get_lot_detail",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lot_id",
+            "required": true,
+            "schema": {
+              "format": "uuid4",
+              "title": "Lot Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LotDetailResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "AppJWTAuth": []
+          }
+        ],
+        "summary": "Get Lot Detail",
+        "tags": [
+          "Lots"
+        ]
+      },
+      "patch": {
+        "operationId": "lot_update_lot_lifecycle",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lot_id",
+            "required": true,
+            "schema": {
+              "format": "uuid4",
+              "title": "Lot Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LotLifecyclePatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LotSummary"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "AppJWTAuth": []
+          }
+        ],
+        "summary": "Update Lot Lifecycle",
+        "tags": [
+          "Lots"
+        ]
+      }
+    },
+    "/api/v1/lots/{lot_id}/recalculate": {
+      "post": {
+        "operationId": "lot_recalculate_lot",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lot_id",
+            "required": true,
+            "schema": {
+              "format": "uuid4",
+              "title": "Lot Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecalculateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecalculateResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "AppJWTAuth": []
+          }
+        ],
+        "summary": "Recalculate Lot",
+        "tags": [
+          "Lots"
+        ]
+      }
+    },
+    "/api/v1/lots/{lot_id}/recalculate/reset": {
+      "post": {
+        "operationId": "lot_reset_lot_simulation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lot_id",
+            "required": true,
+            "schema": {
+              "format": "uuid4",
+              "title": "Lot Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecalculateResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "AppJWTAuth": []
+          }
+        ],
+        "summary": "Reset Lot Simulation",
+        "tags": [
+          "Lots"
+        ]
+      }
+    }
+  },
+  "servers": []
+}

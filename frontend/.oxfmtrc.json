@@ -1,5 +1,6 @@
 {
   "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "ignorePatterns": ["src/types/api.generated.ts"],
   "semi": false,
   "singleQuote": true,
   "tabWidth": 2,

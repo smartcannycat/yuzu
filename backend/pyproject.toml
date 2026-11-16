@@ -27,6 +27,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "import-linter>=2.16",
     "lefthook>=2.2.2",
     "pytest>=9.2.0",
     "pytest-django>=4.14.0",
@@ -57,7 +58,10 @@ select = [
     "F",      # pyflakes
     "I",      # isort
     "B",      # flake8-bugbear
+    "BLE",    # flake8-blind-except
     "C4",     # flake8-comprehensions
+    "C90",    # mccabe complexity
+    "PERF",   # perflint
     "UP",     # pyupgrade
     "ARG",    # flake8-unused-arguments
     "SIM",    # flake8-simplify
@@ -71,11 +75,51 @@ ignore = [
     "RUF012", # Mutable class attributes should be annotated with typing.ClassVar
 ]
 
+[tool.ruff.lint.mccabe]
+max-complexity = 12
+
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["ARG001", "ARG002"]
+# Scheduled for PR 3 cleanup/splitting:
+"apps/lots/integrations/cache.py" = ["C901"]
+"apps/lots/integrations/captcha/altcha.py" = ["C901"]
+"apps/lots/integrations/drom/catalog_parser.py" = ["PERF401"]
+"apps/lots/integrations/drom/client.py" = ["C901"]
+"apps/lots/integrations/drom/listings_parser.py" = ["PERF401"]
+"apps/lots/integrations/drom/service.py" = ["C901"]
+"apps/lots/integrations/farpost/client.py" = ["C901"]
+"apps/lots/integrations/farpost/parser.py" = ["C901"]
+"apps/lots/integrations/http_client.py" = ["C901"]
+"apps/lots/integrations/url_guard.py" = ["C901"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["config", "apps"]
+
+[tool.importlinter]
+root_packages = ["apps", "config"]
+include_external_packages = false
+
+[[tool.importlinter.contracts]]
+name = "Core is independent of domain apps"
+type = "forbidden"
+source_modules = ["apps.core"]
+forbidden_modules = ["apps.lots", "apps.users"]
+
+[[tool.importlinter.contracts]]
+name = "Lots models do not import API, pipeline, calculator, or integrations"
+type = "forbidden"
+source_modules = ["apps.lots.models"]
+forbidden_modules = [
+    "apps.lots.api",
+    "apps.lots.pipeline",
+    "apps.lots.recalc",
+    "apps.lots.economics",
+    "apps.lots.scoring",
+    "apps.lots.safety",
+    "apps.lots.customs",
+    "apps.lots.queries",
+    "apps.lots.integrations",
+]
 
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "config.settings.base"

@@ -2,33 +2,31 @@
 
 ## 1. General Rules
 
-- Language: English only for code, comments, technical documentation, and commit messages. User-facing API error descriptions (`ProblemDetail.title`, `ProblemDetail.detail`, `invalid_params[].reason`) and localized product strings follow `../docs/API_DATA_CONTRACTS.md` (Russian).
+- Language: English only for code, comments, technical documentation, and commit messages. User-facing error strings (`ProblemDetail`, `invalid_params[].reason`) and localized product labels follow `../docs/architecture/CONTRACTS.md` (Russian).
 - No Emojis: Never use emojis in code, comments, or commit messages.
 
-## 2. Commands & Workflow (`Makefile`)
+## 2. Architecture & Strict Layering (`../docs/architecture/BACKEND_LAYERS.md`)
 
-All project commands are defined in `Makefile` (`make help` lists every target):
-- `make install` - Install dependencies via `uv sync` and install root Lefthook hooks
-- `make up-db` / `make up` / `make down` - Manage dev PostgreSQL or full Docker Compose stack
-- `make migrate` / `make makemigrations` - Run or generate Django migrations
-- `make dev` - Run Granian ASGI server locally with reload (`127.0.0.1:8000`)
-- `make lint` / `make format` / `make test` / `make check` - Run Ruff checks, formatting, and Pytest
+- `apps/core/` — Shared enums, `StrictBaseModel`, RFC 7807 `ProblemDetail` errors, Redis utils. Never imports `apps.lots`, `apps.users`, or `config`.
+- `apps/users/` — Auth, custom `User` (`UUID` PK, lowercase `email`), JWT endpoints.
+- `apps/lots/` — Keep `app_label = "lots"` migrations intact:
+  - `models` — Django ORM models only; zero imports from `api`, `pipeline`, calculator, or `integrations`.
+  - Calculator modules (`calculator/` / `customs`, `economics`, `recalc`, `scoring`, `safety`) — Pure business math and DB reads/writes; no HTTP/network calls, no Celery or Ninja controller imports.
+  - Integrations (`integrations/` → `apps/integrations/`) — External HTTP/proxy/captcha/cache and parsers only; no customs math or REST controllers.
+  - Pipeline (`pipeline/`) — Batch orchestration, Celery tasks, retries, and recovery.
+  - API (`api`, queries, schemas) — Thin Ninja Extra `@api_controller` endpoints delegating work down cleanly.
+- Automated boundary checks run via `uv run lint-imports` (`[tool.importlinter]` in `pyproject.toml`).
 
-## 3. Package Manager & Tooling
+## 3. Code Size & Quality Rules
 
-- Strictly use `uv` (`uv.lock`). Do not use pip, poetry, or pipenv.
-- Linter & Formatter: `ruff`. Test Runner: `pytest`. Git Hooks: root `lefthook.yml`.
+- **Soft module size limit: ~300–350 lines** (excluding migrations). When modifying a file already >350 lines, extract a focused submodule rather than adding more code to a monolith.
+- **No blind `except Exception:`** (`BLE001` enabled in Ruff). Catch explicit exceptions or log explicitly at clear integration/worker boundaries.
+- **Complexity limit:** Ruff enforces `C901` (`max-complexity = 12`). Extract cohesive helpers instead of deep nested conditionals.
+- **Typing:** Python 3.12+ annotations (`list[str]`, `dict[str, Any]`, `X | None`) with `StrictBaseModel` (`extra="forbid"`, `use_enum_values=True`) for all API DTOs.
 
-## 4. Architecture & Python Standards
+## 4. Commands & Workflow (`Makefile`)
 
-- Layout: Project root (`backend/`) contains `manage.py`, project configuration in `config/`, domain apps in `apps/`.
-- API Framework: Django Ninja Extra with class-based controllers (`@api_controller`).
-- Schemas & Errors: Inherit API schemas from `apps.core.schemas.StrictBaseModel` (`extra="forbid"`, `use_enum_values=True`). Return all errors in RFC 7807 `ProblemDetail` format (`application/problem+json`).
-- User Model & Auth: Custom `apps.users.models.User` with UUID primary key (`id` exposed as `user_id`) and lowercase `email` as `USERNAME_FIELD`. Authenticate routes with `AppJWTAuth` and rotate/blacklist refresh tokens.
-- Configuration: Manage settings via `backend/config.toml` and Pydantic Settings in `config/settings/config.py` (secrets and host overrides in root `.env`).
-- Database: PostgreSQL 16 with `psycopg` (v3) is the standard for development, testing, and production.
-- Typing: Use modern Python 3.12+ type annotations (`list[str]`, `dict[str, Any]`, `X | None`).
-
-## 5. Verification Checklist
-
-Before completing any task, run `make check` (`ruff check`, `ruff format --check`, `pytest`) and ensure everything passes.
+- Package manager: strictly `uv` (`uv.lock`). Database: PostgreSQL 16 + `psycopg` (v3).
+- `make dev` / `make migrate` / `make makemigrations`
+- `make check` — Runs `ruff check .`, `ruff format --check .`, `lint-imports`, and `pytest`
+- Export OpenAPI schema after API changes: `make openapi` (from repo root) or `uv run python -m config.openapi`

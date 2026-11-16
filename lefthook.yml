@@ -7,6 +7,7 @@ pre-commit:
     oxfmt:
       root: "frontend/"
       glob: "*.{js,ts,vue,json,css,html,md}"
+      exclude: "src/types/api.generated.ts"
       run: bun x oxfmt {staged_files}
       stage_fixed: true
     oxlint:
@@ -22,6 +23,24 @@ pre-commit:
       glob: "*.py"
       run: uv run ruff check --fix {staged_files} && uv run ruff format {staged_files}
       stage_fixed: true
+    backend-imports:
+      root: "backend/"
+      glob: "*.py"
+      run: uv run lint-imports
+    contracts-check:
+      glob: "{backend/apps/**/api.py,backend/apps/**/schemas.py,backend/apps/**/controllers.py,backend/config/api.py,docs/architecture/openapi.json,frontend/src/types/api.generated.ts}"
+      run: make check-contracts
+    file-size-warn:
+      glob: "*.{py,ts,vue}"
+      exclude: "(^backend/apps/.*/migrations/|api\\.generated\\.ts$)"
+      run: |
+        for f in {staged_files}; do
+          [ -f "$f" ] || continue
+          lines=$(wc -l < "$f")
+          if [ "$lines" -gt 350 ]; then
+            echo "WARNING: $f has $lines lines (soft limit 350 lines; consider splitting)."
+          fi
+        done
     ml-ruff:
       root: "ml_service/"
       glob: "*.py"

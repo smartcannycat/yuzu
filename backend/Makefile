@@ -36,9 +36,10 @@ format: ## Format code with Ruff
 	uv run ruff format .
 	uv run ruff check --fix .
 
-check: ## Run lint, format check and tests
+check: ## Run lint, format check, import-linter, and tests
 	uv run ruff check .
 	uv run ruff format --check .
+	uv run lint-imports
 	uv run pytest
 
 up: ## Start development Docker Compose stack
