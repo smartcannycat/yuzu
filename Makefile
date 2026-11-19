@@ -11,8 +11,9 @@ check-contracts: ## Verify docs/architecture/openapi.json and api.generated.ts m
 	cd backend && uv run python -m config.openapi --check
 	cd frontend && bun run check:api
 
-check-architecture: ## Run backend import-linter layer boundary checks
+check-architecture: ## Run backend, ML service, and frontend architecture boundary checks
 	cd backend && uv run lint-imports
+	python3 scripts/check_architecture.py
 
 check: check-contracts check-architecture ## Run contract, architecture, backend, ML, and frontend checks
 	$(MAKE) -C backend check
