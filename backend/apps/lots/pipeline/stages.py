@@ -10,7 +10,8 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.core.enums import ItemProcessingStatus, TaskStep
-from apps.integrations.currency.service import to_customs_rates_input
+from apps.integrations.aleado import AleadoCrossAuditService
+from apps.integrations.currency.service import build_currency_service, to_customs_rates_input
 from apps.integrations.drom import DromMarketService
 from apps.integrations.drom.schemas import DromFetchError, DromMarketResult, DromSearchCriteria
 from apps.integrations.farpost.service import save_repair_estimate
@@ -33,6 +34,7 @@ from apps.lots.models import (
     MarketComparisonInfo,
     WiseCostLadder,
 )
+from apps.lots.pipeline.leases import managed_closing, renew_batch_lease
 
 if TYPE_CHECKING:
     import uuid
@@ -57,23 +59,6 @@ _SUMMARY_REQUIRED_FIELDS: tuple[str, ...] = (
 )
 
 
-def has_full_detail(lot: Lot) -> bool:
-    """Return True when all related detail models required for full specification exist."""
-    required_attrs = (
-        "risk_flags",
-        "verdict_detail",
-        "market_info",
-        "cross_audit",
-        "safety_checklist",
-        "customs_calc",
-        "farpost_repair",
-        "wise_cost_ladder",
-    )
-    if not all(hasattr(lot, name) for name in required_attrs):
-        return False
-    return hasattr(lot.customs_calc, "rates_snapshot")
-
-
 def _claim_next_queued_item(batch_id: uuid.UUID) -> BatchItem | None:
     with transaction.atomic():
         item = (
@@ -96,16 +81,18 @@ def _is_item_failed(item: BatchItem) -> bool:
 
 
 def _advance_step(item: BatchItem, step: TaskStep) -> None:
-    from apps.lots import pipeline as pipeline_pkg
-
+    now = timezone.now()
     updated = (
         BatchItem.objects.filter(pk=item.pk)
         .exclude(status=ItemProcessingStatus.FAILED)
-        .update(current_step=step, updated_at=timezone.now())
+        .update(current_step=step, updated_at=now)
     )
     if updated:
         item.current_step = step
-        time.sleep(pipeline_pkg._PIPELINE_STEP_DELAY_SEC)
+        if item.batch_id:
+            Batch.objects.filter(pk=item.batch_id).update(updated_at=now)
+            renew_batch_lease(item.batch_id)
+        time.sleep(_PIPELINE_STEP_DELAY_SEC)
 
 
 def _fail_item(item: BatchItem, step: TaskStep, message: str) -> None:
@@ -160,15 +147,14 @@ def _step_gatekeeper(item: BatchItem) -> bool:
 
 
 def _step_cross_audit(item: BatchItem) -> bool:
-    from apps.lots import pipeline as pipeline_pkg
-
     _advance_step(item, TaskStep.CROSS_AUDIT)
     lot = item.lot
     if lot is None:
         _fail_item(item, TaskStep.FAILED, "Лот не привязан к элементу пачки")
         return False
     try:
-        pipeline_pkg.AleadoCrossAuditService().audit_lot(lot)
+        with managed_closing(AleadoCrossAuditService()) as audit_service:
+            audit_service.audit_lot(lot)
     except Exception:
         logger.exception("Aleado cross audit failed for item %s", item.pk)
         try:
@@ -266,14 +252,12 @@ def _step_farpost_parts(item: BatchItem) -> bool:
 
 
 def _ensure_lot_rates(lot: Lot) -> bool:
-    from apps.lots import pipeline as pipeline_pkg
-
     if lot.customs_rates_input or (
         CustomsCalculation.objects.filter(lot=lot, rates_snapshot__isnull=False).exists()
     ):
         return True
     try:
-        result = pipeline_pkg.build_currency_service().get_currency_rates()
+        result = build_currency_service().get_currency_rates()
     except Exception:
         logger.exception("Currency rates gateway failed for lot %s", lot.pk)
         return False

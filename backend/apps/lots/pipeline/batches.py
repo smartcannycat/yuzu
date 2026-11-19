@@ -24,6 +24,7 @@ from apps.lots.media import (
     ensure_safe_image_dimensions,
 )
 from apps.lots.models import Batch, BatchItem, Lot
+from apps.lots.tasks import process_batch_task
 
 if TYPE_CHECKING:
     from django.core.files.uploadedfile import UploadedFile
@@ -193,20 +194,16 @@ def _create_batch_items(
 
 
 def _schedule_batch_pipeline(batch_id: uuid.UUID) -> None:
-    from apps.lots.tasks import process_batch_task
-
     transaction.on_commit(lambda: process_batch_task.delay(str(batch_id)))
 
 
 @transaction.atomic
 def enqueue_batch(user: User, files: list[UploadedFile]) -> Batch:
     """Validate uploaded sheets, persist a new queued batch, and schedule processing."""
-    from apps.lots import pipeline as pipeline_pkg
-
     validated_files = _validate_upload_files(files)
     batch = Batch.objects.create(user=user, status=BatchStatus.QUEUED)
     _create_batch_items(batch, user, validated_files, start_index=0)
-    pipeline_pkg._schedule_batch_pipeline(batch.id)
+    _schedule_batch_pipeline(batch.id)
     return batch
 
 
@@ -217,8 +214,6 @@ def append_items_to_batch(
     files: list[UploadedFile],
 ) -> Batch:
     """Append additional auction sheets to an active or partial-failed batch."""
-    from apps.lots import pipeline as pipeline_pkg
-
     validated_files = _validate_upload_files(files)
     try:
         batch = Batch.objects.select_for_update().get(id=batch_id, user=user)
@@ -238,7 +233,7 @@ def append_items_to_batch(
     if batch.status == BatchStatus.PARTIAL_FAILED:
         batch.status = BatchStatus.QUEUED
         batch.save(update_fields=["status", "updated_at"])
-        pipeline_pkg._schedule_batch_pipeline(batch.id)
+        _schedule_batch_pipeline(batch.id)
     return batch
 
 

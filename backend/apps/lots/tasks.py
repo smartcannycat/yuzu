@@ -40,3 +40,14 @@ def purge_stale_media_task() -> dict[str, int]:
     result = purge_stale_media()
     logger.info("Purged stale media: %s", result)
     return result
+
+
+@shared_task(name="apps.lots.tasks.archive_expired_lots_task", ignore_result=True)
+def archive_expired_lots_task() -> int:
+    """Periodically archive active completed lots whose expiration deadline has passed."""
+    from apps.lots.lifecycle import archive_expired_lots
+
+    archived = archive_expired_lots()
+    if archived:
+        logger.info("Archived %s expired lots", archived)
+    return archived

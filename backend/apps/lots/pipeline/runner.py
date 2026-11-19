@@ -8,9 +8,15 @@ from typing import TYPE_CHECKING
 from django.db import connection, transaction
 from django.utils import timezone
 
+from apps.core import redis_utils
 from apps.core.enums import BatchStatus, ItemProcessingStatus, TaskStep
-from apps.core.redis_utils import get_redis_client
 from apps.lots.models import Batch, BatchItem
+from apps.lots.pipeline.leases import (
+    acquire_batch_lease,
+    is_batch_lease_held,
+    release_batch_lease,
+    renew_batch_lease,
+)
 from apps.lots.pipeline.parallel import _run_ocr_stage, _run_parallel_steps, _validate_ready_lot
 from apps.lots.pipeline.stages import (
     _advance_step,
@@ -66,31 +72,30 @@ def _finalize_batch_locked(batch: Batch) -> None:
     batch.save(update_fields=["status", "updated_at"])
 
 
-def run_batch_pipeline(batch_id: uuid.UUID) -> None:
-    """Process all queued items in a batch sequentially and finalize batch status."""
+def _claim_batch_for_processing(batch_id: uuid.UUID) -> bool:
+    with transaction.atomic():
+        batch = Batch.objects.select_for_update().filter(id=batch_id).first()
+        if batch is None or batch.status not in (BatchStatus.QUEUED, BatchStatus.PROCESSING):
+            return False
+        BatchItem.objects.filter(
+            batch=batch,
+            status=ItemProcessingStatus.PROCESSING,
+        ).update(
+            status=ItemProcessingStatus.QUEUED,
+            current_step=TaskStep.GATEKEEPER,
+            updated_at=timezone.now(),
+        )
+        batch.status = BatchStatus.PROCESSING
+        batch.save(update_fields=["status", "updated_at"])
+        return True
+
+
+def _mark_batch_failed_safely(batch_id: uuid.UUID) -> None:
     try:
         with transaction.atomic():
-            batch = Batch.objects.select_for_update().get(id=batch_id)
-            if batch.status != BatchStatus.QUEUED:
+            batch = Batch.objects.select_for_update().filter(id=batch_id).first()
+            if batch is None:
                 return
-            batch.status = BatchStatus.PROCESSING
-            batch.save(update_fields=["status", "updated_at"])
-        while True:
-            item = _claim_next_queued_item(batch_id)
-            if item is not None:
-                _process_item(item)
-                Batch.objects.filter(pk=batch_id).update(updated_at=timezone.now())
-                continue
-            with transaction.atomic():
-                batch = Batch.objects.select_for_update().get(id=batch_id)
-                if batch.items.filter(status=ItemProcessingStatus.QUEUED).exists():
-                    continue
-                _finalize_batch_locked(batch)
-                break
-    except Exception:
-        logger.exception("Batch pipeline failed for %s", batch_id)
-        with transaction.atomic():
-            batch = Batch.objects.select_for_update().get(id=batch_id)
             batch.items.filter(
                 status__in=(ItemProcessingStatus.QUEUED, ItemProcessingStatus.PROCESSING)
             ).update(
@@ -100,8 +105,53 @@ def run_batch_pipeline(batch_id: uuid.UUID) -> None:
                 updated_at=timezone.now(),
             )
             _finalize_batch_locked(batch)
+    except Exception:
+        logger.exception("Failed to mark batch %s as FAILED after pipeline crash", batch_id)
+
+
+def run_batch_pipeline(batch_id: uuid.UUID) -> None:
+    """Process all queued items in a batch sequentially and finalize batch status."""
+    if not acquire_batch_lease(batch_id):
+        logger.info("Skipping batch %s: active lease held or Redis lock unavailable", batch_id)
+        return
+    try:
+        if not _claim_batch_for_processing(batch_id):
+            return
+        while True:
+            item = _claim_next_queued_item(batch_id)
+            if item is not None:
+                _process_item(item)
+                Batch.objects.filter(pk=batch_id).update(updated_at=timezone.now())
+                renew_batch_lease(batch_id)
+                continue
+            with transaction.atomic():
+                batch = Batch.objects.select_for_update().filter(id=batch_id).first()
+                if batch is None:
+                    break
+                if batch.items.filter(status=ItemProcessingStatus.QUEUED).exists():
+                    continue
+                _finalize_batch_locked(batch)
+                break
+    except Exception:
+        logger.exception("Batch pipeline failed for %s", batch_id)
+        _mark_batch_failed_safely(batch_id)
     finally:
+        release_batch_lease(batch_id)
         connection.close()
+
+
+def _acquire_startup_recovery_lock() -> bool:
+    client = redis_utils.get_redis_client()
+    if client is None:
+        return True
+    try:
+        return bool(client.set("yuzu:recovery:startup_lock", "1", nx=True, ex=60))
+    except Exception:
+        logger.warning(
+            "Could not acquire Redis startup recovery lock; skipping recovery",
+            exc_info=True,
+        )
+        return False
 
 
 def recover_batches_on_startup(
@@ -110,14 +160,8 @@ def recover_batches_on_startup(
     use_startup_lock: bool = True,
 ) -> int:
     """Requeue interrupted batches when a background worker starts or recovers."""
-    if use_startup_lock:
-        client = get_redis_client()
-        if client is not None:
-            try:
-                if not client.set("yuzu:recovery:startup_lock", "1", nx=True, ex=60):
-                    return 0
-            except Exception:
-                logger.warning("Could not acquire Redis startup recovery lock", exc_info=True)
+    if use_startup_lock and not _acquire_startup_recovery_lock():
+        return 0
 
     stuck_statuses = [BatchStatus.QUEUED, BatchStatus.PROCESSING]
     batches = Batch.objects.filter(status__in=stuck_statuses)
@@ -128,6 +172,8 @@ def recover_batches_on_startup(
 
     requeued = 0
     for batch in batches:
+        if is_batch_lease_held(batch.id):
+            continue
         with transaction.atomic():
             locked = Batch.objects.select_for_update().filter(
                 id=batch.id,

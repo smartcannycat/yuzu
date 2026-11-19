@@ -11,8 +11,8 @@ install: ## Install dependencies and setup git hooks
 hooks: ## Install Lefthook git hooks at repository root
 	cd .. && uv --project backend run lefthook install
 
-dev: ## Run development ASGI server (Granian) with reload
-	uv run granian --interface asginl config.asgi:application --reload --host 127.0.0.1 --port 8000
+dev: ## Run development WSGI server (Granian) with reload
+	uv run granian --interface wsgi config.wsgi:application --reload --blocking-threads 4 --host 127.0.0.1 --port 8000
 
 migrate: ## Apply database migrations
 	uv run python manage.py migrate
