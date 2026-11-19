@@ -1,3 +1,5 @@
+import hashlib
+import json
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -76,7 +78,7 @@ class AuctionExtractionSchema(BaseModel):
 
     model_config = ConfigDict(protected_namespaces=())
 
-    # 1. Сырые значения (извлекаются первыми как якорь точности)
+    # 1. Raw Japanese anchor fields (extracted first as accuracy anchors)
     auction_house_raw: str | None = Field(
         default=None,
         description="Название аукционной системы из шапки/логотипа бланка: USS, TAA, CAA, JU, ARAI, Honda, MIRIVE, KCAA, Aucnet и т. д.",
@@ -108,7 +110,7 @@ class AuctionExtractionSchema(BaseModel):
     inspector_notes_raw: list[str] = Field(default_factory=list)
     seller_comments_raw: list[str] = Field(default_factory=list)
 
-    # 2. Типизированные и переведённые поля (строго с листа, без каталожных догадок)
+    # 2. Typed and translated fields (strictly from the sheet, no catalog guessing)
     auction_house: str | None = Field(
         default=None,
         description="Нормализованное название аукционного дома латиницей: USS, TAA, CAA, JU, ARAI, Honda, MIRIVE, KCAA, Aucnet, ORIX, ZIP, LAA",
@@ -173,6 +175,10 @@ SYSTEM_PROMPT = """
 6. Отдельно проверяй вертикальный текст по краям листа, глубину протектора шин в мм у колёс (добавляй в extra_ru), расположение руля (右ハンドル/左ハンドル -> right_hand_drive), филиал аукциона (auction_branch) и срок перерегистрации (名変 -> name_change_deadline).
 7. Если поле обрезано или неразборчиво — не угадывай, добавь его имя в unreadable_fields.
 """.strip()
+
+EXTRACTION_CACHE_VERSION: str = hashlib.sha256(
+    f"{SYSTEM_PROMPT}\n{json.dumps(AuctionExtractionSchema.model_json_schema(), sort_keys=True)}".encode()
+).hexdigest()[:12]
 
 
 def to_raw_extraction_entity(schema: AuctionExtractionSchema) -> RawExtractionEntity:
