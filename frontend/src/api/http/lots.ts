@@ -1,5 +1,5 @@
 import type { HttpRequestFn } from '@/api/http/transport'
-import type { LotsApi } from '@/api/types'
+import type { LotsApi, RequestCancelOptions } from '@/api/types'
 import type {
   BatchCreateResponse,
   BatchProgressResponse,
@@ -26,8 +26,12 @@ function sanitizeLotQuery(
   if (params.verdict) cleaned.verdict = params.verdict
   if (typeof params.has_anomaly === 'boolean') cleaned.has_anomaly = params.has_anomaly
   if (params.lifecycle) cleaned.lifecycle = params.lifecycle
-  if (typeof params.page === 'number') cleaned.page = params.page
-  if (typeof params.page_size === 'number') cleaned.page_size = params.page_size
+  if (typeof params.page === 'number' && Number.isFinite(params.page)) {
+    cleaned.page = params.page
+  }
+  if (typeof params.page_size === 'number' && Number.isFinite(params.page_size)) {
+    cleaned.page_size = params.page_size
+  }
   if (params.sort_by) cleaned.sort_by = params.sort_by
   if (params.sort_order) cleaned.sort_order = params.sort_order
 
@@ -44,16 +48,18 @@ function buildBatchFormData(files: readonly File[]): FormData {
 
 export function createHttpLotsApi(request: HttpRequestFn): LotsApi {
   return {
-    list(params?: LotListQueryParams): Promise<LotListResponse> {
+    list(params?: LotListQueryParams, options?: RequestCancelOptions): Promise<LotListResponse> {
       return request<LotListResponse>('/lots', {
         method: 'GET',
         query: sanitizeLotQuery(params),
+        signal: options?.signal,
       })
     },
 
-    getDetail(lotId: string): Promise<LotDetailResponse> {
+    getDetail(lotId: string, options?: RequestCancelOptions): Promise<LotDetailResponse> {
       return request<LotDetailResponse>(`/lots/${encodeURIComponent(lotId)}`, {
         method: 'GET',
+        signal: options?.signal,
       })
     },
 

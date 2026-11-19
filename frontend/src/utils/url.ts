@@ -1,5 +1,6 @@
 const ALLOWED_EXTERNAL_PROTOCOLS = new Set(['http:', 'https:'])
 const ALLOWED_IMAGE_PROTOCOLS = new Set(['http:', 'https:', 'blob:'])
+const RELATIVE_URL_BASE = 'https://relative.invalid'
 const SAFE_DATA_IMAGE_PATTERN =
   /^data:image\/(?:png|jpeg|jpg|webp|gif|svg\+xml)(?:;charset=[a-z0-9-]+)?(?:;base64)?,(.+)$/i
 
@@ -13,8 +14,28 @@ function hasControlCharacters(value: string): boolean {
   return false
 }
 
-function isSafeRelativePath(value: string): boolean {
-  return value.startsWith('/') && !value.startsWith('//')
+/**
+ * Validates that a string is a strictly relative single-origin app path,
+ * rejecting protocol-relative (`//`), backslash (`/\`), control characters, and external origins.
+ */
+export function isSafeRelativePath(value: string): boolean {
+  if (
+    !value ||
+    hasControlCharacters(value) ||
+    !value.startsWith('/') ||
+    value.startsWith('//') ||
+    value.startsWith('/\\') ||
+    value.includes('\\')
+  ) {
+    return false
+  }
+
+  try {
+    const parsed = new URL(value, RELATIVE_URL_BASE)
+    return parsed.origin === RELATIVE_URL_BASE && parsed.pathname.startsWith('/')
+  } catch {
+    return false
+  }
 }
 
 /**

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { CircleAlert, Eye, EyeOff, Lock, Mail, Sparkles, User } from '@lucide/vue'
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { DEMO_ACCOUNT_CREDENTIALS, isMockMode } from '@/api'
+import { isMockMode } from '@/api'
 import {
   BaseBadge,
   BaseButton,
@@ -15,6 +15,7 @@ import {
 } from '@/components/ui'
 import { useAuthStore } from '@/stores/auth'
 import { ApiError } from '@/types/api'
+import { isSafeRelativePath } from '@/utils/url'
 import {
   NAME_MAX_LENGTH,
   PASSWORD_MAX_LENGTH,
@@ -60,6 +61,20 @@ const touched = reactive<Record<AuthField, boolean>>({
 const fieldErrors = ref<AuthFieldErrors>({})
 const serverError = ref<{ status: number; title: string; detail: string } | null>(null)
 const showPassword = ref(false)
+const demoCredentials = ref<{ email: string; password: string } | null>(null)
+const isMockEnv = import.meta.env.PROD
+  ? import.meta.env.VITE_USE_MOCKS === 'true'
+  : import.meta.env.VITE_USE_MOCKS !== 'false'
+
+if (isMockEnv) {
+  onMounted(async () => {
+    const { DEMO_ACCOUNT_CREDENTIALS } = await import('@/api/mockApiClient')
+    demoCredentials.value = {
+      email: DEMO_ACCOUNT_CREDENTIALS.email,
+      password: DEMO_ACCOUNT_CREDENTIALS.password,
+    }
+  })
+}
 
 const isRegister = computed(() => mode.value === 'register')
 const passwordInputType = computed(() => (showPassword.value ? 'text' : 'password'))
@@ -119,9 +134,10 @@ function handleInputUpdate(field: AuthField): void {
 }
 
 function applyDemoCredentials(): void {
+  if (!demoCredentials.value) return
   mode.value = 'login'
-  form.email = DEMO_ACCOUNT_CREDENTIALS.email
-  form.password = DEMO_ACCOUNT_CREDENTIALS.password
+  form.email = demoCredentials.value.email
+  form.password = demoCredentials.value.password
   fieldErrors.value = {}
   serverError.value = null
 }
@@ -133,12 +149,11 @@ function switchToLoginFromConflict(): void {
 
 function resolvePostAuthTarget() {
   const redirectParam = route.query.redirect
-  if (
-    typeof redirectParam === 'string' &&
-    redirectParam.startsWith('/') &&
-    !redirectParam.startsWith('//')
-  ) {
-    return redirectParam
+  if (typeof redirectParam === 'string') {
+    const trimmed = redirectParam.trim()
+    if (isSafeRelativePath(trimmed)) {
+      return trimmed
+    }
   }
   return { name: 'home' as const }
 }
@@ -339,7 +354,7 @@ async function handleSubmit(): Promise<void> {
     </BaseCard>
 
     <div
-      v-if="isMockMode"
+      v-if="isMockMode && demoCredentials"
       class="border-border bg-surface flex items-center justify-between gap-3 rounded-md border px-4 py-3"
     >
       <div class="flex min-w-0 flex-col gap-0.5">
@@ -351,7 +366,7 @@ async function handleSubmit(): Promise<void> {
             Mock API
           </BaseBadge>
           <span class="text-text-secondary truncate text-[12px]">
-            {{ DEMO_ACCOUNT_CREDENTIALS.email }}
+            {{ demoCredentials.email }}
           </span>
         </div>
         <span class="text-text-muted text-[12px]"> Демо-доступ для проверки без бэкенда </span>
