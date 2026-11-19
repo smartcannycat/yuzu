@@ -1,12 +1,21 @@
+"""Image preprocessing and quadrant slicing for auction sheet Vision OCR."""
+
 import asyncio
 from io import BytesIO
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from ml_service.domains.entities import SlicedSheetEntity
-from ml_service.infrastructure.image_formats import CROP_FORMAT_TO_MIME, ensure_heif_registered
+from ml_service.infrastructure.image_formats import (
+    CROP_FORMAT_TO_MIME,
+    MAX_IMAGE_DIMENSION,
+    MAX_IMAGE_PIXELS,
+    ensure_heif_registered,
+    validate_image_dimensions,
+)
 
 ensure_heif_registered()
+Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
 
 
 def trim_uniform_margins(
@@ -73,6 +82,8 @@ class PillowImageCropper:
         max_px: int = 1800,
         image_format: str = "PNG",
         quality: int = 88,
+        max_pixels: int = MAX_IMAGE_PIXELS,
+        max_dimension: int = MAX_IMAGE_DIMENSION,
     ) -> None:
         normalized_fmt = image_format.strip().upper()
         if normalized_fmt == "JPG":
@@ -83,6 +94,8 @@ class PillowImageCropper:
         self.max_px = max_px
         self.image_format = normalized_fmt
         self.quality = quality
+        self.max_pixels = max_pixels
+        self.max_dimension = max_dimension
         self.mime_type = CROP_FORMAT_TO_MIME[normalized_fmt]
 
     async def slice_image_bytes(self, data: bytes, overlap: float = 0.20) -> SlicedSheetEntity:
@@ -94,8 +107,17 @@ class PillowImageCropper:
     def _slice_sync(self, data: bytes, overlap: float) -> SlicedSheetEntity:
         try:
             with Image.open(BytesIO(data)) as raw_img:
+                validate_image_dimensions(
+                    raw_img,
+                    max_pixels=self.max_pixels,
+                    max_dimension=self.max_dimension,
+                )
                 img = ImageOps.exif_transpose(raw_img).convert("RGB")
-        except (UnidentifiedImageError, OSError, SyntaxError, ValueError) as exc:
+        except Image.DecompressionBombError as exc:
+            raise ValueError("Image exceeds maximum allowed pixel count.") from exc
+        except ValueError:
+            raise
+        except (UnidentifiedImageError, OSError, SyntaxError) as exc:
             raise ValueError("Unable to decode image for slicing.") from exc
 
         img = trim_uniform_margins(img)

@@ -1,9 +1,11 @@
+"""Two-tier (in-memory LRU + atomic JSON disk) cache for parsed auction sheets."""
+
 import asyncio
+import hashlib
 import json
 import logging
-import os
 import re
-import tempfile
+import time
 from collections import OrderedDict
 from dataclasses import asdict, fields, replace
 from enum import Enum
@@ -27,9 +29,26 @@ from ml_service.domains.enums import (
     OdometerStatus,
     ParseStatus,
 )
+from ml_service.infrastructure.atomic_io import atomic_write_json, enforce_cache_limits
 
 _SAFE_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 logger = logging.getLogger(__name__)
+
+
+def build_sheet_cache_key(
+    sha256: str,
+    *,
+    reference_year: int,
+    reference_month: int,
+    default_auction_strictness: float,
+    schema_version: str,
+) -> str:
+    """Build deterministic cache key scoped by image digest, normalization params, and schema."""
+    fingerprint = (
+        f"{reference_year}:{reference_month}:{default_auction_strictness:.6f}:{schema_version}"
+    )
+    suffix = hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()[:16]
+    return f"{sha256}_{suffix}"
 
 
 def _normalize_for_json(value: Any) -> Any:
@@ -148,66 +167,87 @@ def deserialize_parser_result(payload: dict[str, Any]) -> ParserResultEntity:
 class ResultCache:
     """Two-tier (bounded LRU in-memory + atomic JSON disk) cache for parsed auction sheets."""
 
-    def __init__(self, cache_dir: Path, max_memory_entries: int = 512) -> None:
+    def __init__(
+        self,
+        cache_dir: Path,
+        max_memory_entries: int = 512,
+        ttl_seconds: float | None = 604800.0,
+        max_disk_bytes: int | None = 512 * 1024 * 1024,
+    ) -> None:
         self.cache_dir = Path(cache_dir)
         self._max_memory_entries = max(1, max_memory_entries)
-        self._memory: OrderedDict[str, ParserResultEntity] = OrderedDict()
+        self._ttl_seconds = ttl_seconds
+        self._max_disk_bytes = max_disk_bytes
+        self._memory: OrderedDict[str, tuple[float, ParserResultEntity]] = OrderedDict()
 
-    def _remember(self, sha256: str, result: ParserResultEntity) -> None:
-        self._memory[sha256] = result
-        self._memory.move_to_end(sha256)
+    def _is_expired(self, stored_at: float) -> bool:
+        if self._ttl_seconds is None or self._ttl_seconds <= 0:
+            return False
+        return (time.time() - stored_at) > self._ttl_seconds
+
+    def _remember(
+        self, cache_key: str, result: ParserResultEntity, *, stored_at: float | None = None
+    ) -> None:
+        self._memory[cache_key] = (stored_at if stored_at is not None else time.time(), result)
+        self._memory.move_to_end(cache_key)
         while len(self._memory) > self._max_memory_entries:
             self._memory.popitem(last=False)
 
-    def _cache_path(self, sha256: str) -> Path | None:
-        if not _SAFE_KEY_RE.fullmatch(sha256):
+    def _cache_path(self, cache_key: str) -> Path | None:
+        if not _SAFE_KEY_RE.fullmatch(cache_key):
             return None
-        return self.cache_dir / f"{sha256}.json"
+        return self.cache_dir / f"{cache_key}.json"
 
-    def _read_json_entity(self, path: Path) -> ParserResultEntity | None:
+    def _read_json_entity(self, path: Path) -> tuple[float, ParserResultEntity] | None:
         if not path.is_file():
             return None
         try:
+            st = path.stat()
+            if self._is_expired(st.st_mtime):
+                path.unlink(missing_ok=True)
+                return None
             payload = json.loads(path.read_text(encoding="utf-8"))
-            return deserialize_parser_result(payload)
+            return st.st_mtime, deserialize_parser_result(payload)
         except (OSError, ValueError, KeyError, TypeError) as exc:
             logger.warning("Ignoring corrupted sheet cache entry %s: %s", path.name, exc)
             return None
 
     def _write_json_entity(self, path: Path, result: ParserResultEntity) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
         payload = serialize_parser_result(result)
-        data_text = json.dumps(payload, ensure_ascii=False, indent=2)
-        fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=".tmp_sheet_", suffix=".json")
-        tmp_path = Path(tmp_name)
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(data_text)
-            tmp_path.replace(path)
-        except BaseException:
-            if tmp_path.exists():
-                tmp_path.unlink()
-            raise
+        atomic_write_json(path, payload, prefix=".tmp_sheet_", indent=2)
+        enforce_cache_limits(
+            self.cache_dir,
+            max_age_seconds=self._ttl_seconds,
+            max_bytes=self._max_disk_bytes,
+            pattern="*.json",
+        )
 
-    async def get(self, sha256: str, filename: str = "") -> ParserResultEntity | None:  # noqa: ARG002
-        """Retrieve a cached result by SHA-256 from in-memory or disk cache."""
-        cached = self._memory.get(sha256)
-        if cached is not None:
-            self._memory.move_to_end(sha256)
-            return replace(cached, meta=replace(cached.meta, cached=True))
+    async def get(self, cache_key: str, filename: str = "") -> ParserResultEntity | None:  # noqa: ARG002
+        """Retrieve a cached result by key from in-memory or disk cache."""
+        entry = self._memory.get(cache_key)
+        if entry is not None:
+            stored_at, cached = entry
+            if not self._is_expired(stored_at):
+                self._memory.move_to_end(cache_key)
+                return replace(cached, meta=replace(cached.meta, cached=True))
+            self._memory.pop(cache_key, None)
 
-        disk_path = self._cache_path(sha256)
+        disk_path = self._cache_path(cache_key)
         if disk_path is not None:
-            disk_result = await asyncio.to_thread(self._read_json_entity, disk_path)
-            if disk_result is not None:
-                self._remember(sha256, disk_result)
+            loaded = await asyncio.to_thread(self._read_json_entity, disk_path)
+            if loaded is not None:
+                stored_at, disk_result = loaded
+                self._remember(cache_key, disk_result, stored_at=stored_at)
                 return replace(disk_result, meta=replace(disk_result.meta, cached=True))
 
         return None
 
-    async def set(self, sha256: str, result: ParserResultEntity) -> None:
-        """Store a ParserResultEntity in both in-memory and disk caches."""
-        self._remember(sha256, result)
-        disk_path = self._cache_path(sha256)
+    async def set(self, cache_key: str, result: ParserResultEntity) -> None:
+        """Store a result in memory and best-effort disk cache without crashing on OSError."""
+        self._remember(cache_key, result)
+        disk_path = self._cache_path(cache_key)
         if disk_path is not None:
-            await asyncio.to_thread(self._write_json_entity, disk_path, result)
+            try:
+                await asyncio.to_thread(self._write_json_entity, disk_path, result)
+            except OSError as exc:
+                logger.warning("Failed to write sheet cache entry %s: %s", disk_path.name, exc)
