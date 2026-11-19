@@ -1,17 +1,9 @@
-export interface InvalidParamDetail {
-  name: string
-  reason: string
-}
+import type { components } from '@/types/api.generated'
 
-export interface ProblemDetail {
-  type: string
-  title: string
-  status: number
-  detail: string
-  instance?: string | null
-  invalid_params?: InvalidParamDetail[]
-  timestamp?: string
-}
+type Schemas = components['schemas']
+
+export type InvalidParamDetail = Schemas['InvalidParamDetail']
+export type ProblemDetail = Schemas['ProblemDetail']
 
 export class ApiError extends Error {
   readonly status: number
@@ -22,7 +14,9 @@ export class ApiError extends Error {
   readonly invalidParams: InvalidParamDetail[]
 
   constructor(problem: ProblemDetail) {
-    super(problem.detail || problem.title)
+    const normalizedDetail = problem.detail.trim()
+    const normalizedTitle = problem.title.trim()
+    super(normalizedDetail || normalizedTitle || 'Ошибка запроса')
     this.name = 'ApiError'
     this.status = problem.status
     this.title = problem.title

@@ -60,6 +60,7 @@ export const PANEL_LABELS_RU: Record<BodyPanel, string> = {
   left_sill: 'Левый порог',
   right_sill: 'Правый порог',
   windshield: 'Лобовое стекло',
+  other: 'Прочие элементы',
 }
 
 export const PRESET_CONFIGS: Record<string, PresetDetailConfig> = {

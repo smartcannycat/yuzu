@@ -295,6 +295,7 @@ export function buildMockLotDetail(summary: LotSummary): LotDetailResponse {
     import_vat_rub: 0,
     is_under_160_hp: isUnder160,
     is_commercial_util: isCommercialUtil,
+    util_fee_type: isCommercialUtil ? 'commercial' : 'personal',
     utilization_fee_rub: utilFeeRub,
     customs_clearance_fee_rub: 4268,
     freight_vladivostok_rub: freightRub,

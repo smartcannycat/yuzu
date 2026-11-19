@@ -234,6 +234,7 @@ export function recalculateMockLotDetail(
   const updatedCustoms: CustomsCalculation = {
     ...base.economics.customs,
     is_commercial_util: isCommercialUtil,
+    util_fee_type: isCommercialUtil ? 'commercial' : 'personal',
     is_under_160_hp: nextIsUnder160,
     utilization_fee_rub: utilFeeRub,
     freight_vladivostok_rub: freightRub,

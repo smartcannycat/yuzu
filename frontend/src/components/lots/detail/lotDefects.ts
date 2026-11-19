@@ -54,7 +54,7 @@ export function getTonePanelColors(
   return { fill: '#EFF6FF', stroke: '#3B82F6' }
 }
 
-export const BODY_PANEL_PIN_COORDS: Record<BodyPanel, BodyPanelPinCoord> = {
+export const BODY_PANEL_PIN_COORDS: Partial<Record<BodyPanel, BodyPanelPinCoord>> = {
   front_bumper: { x: 140, y: 38 },
   hood: { x: 140, y: 92 },
   windshield: { x: 140, y: 145 },
