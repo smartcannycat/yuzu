@@ -6,12 +6,15 @@ from apps.core.enums import (
     AuctionHouse,
     FrameIdConfidence,
     OdometerStatus,
+    PartSourceKind,
+    UtilFeeType,
 )
 from apps.lots.api import schemas
 from apps.lots.calculator.economics import is_simulation_modified
 from apps.lots.models import (
     CrossAuditReport,
     CustomsCalculation,
+    DamagedPartItem,
     FarpostRepairSummary,
     Lot,
     SafetyChecklist,
@@ -20,7 +23,9 @@ from apps.lots.models import (
 
 
 def _build_thumbnail_url(lot: Lot) -> str | None:
-    return lot.sheet_thumbnail.url if lot.sheet_thumbnail else None
+    if not lot.sheet_thumbnail or not getattr(lot.sheet_thumbnail, "name", ""):
+        return None
+    return f"/api/v1/lots/{lot.id}/media/thumbnail"
 
 
 def _build_lot_summary(lot: Lot) -> schemas.LotSummary:
@@ -144,6 +149,9 @@ def _build_customs_out(customs: CustomsCalculation) -> schemas.CustomsCalculatio
         import_vat_rub=customs.import_vat_rub,
         is_under_160_hp=customs.is_under_160_hp,
         is_commercial_util=customs.is_commercial_util,
+        util_fee_type=(
+            UtilFeeType.COMMERCIAL if customs.is_commercial_util else UtilFeeType.PERSONAL
+        ),
         utilization_fee_rub=customs.utilization_fee_rub,
         customs_clearance_fee_rub=customs.customs_clearance_fee_rub,
         freight_vladivostok_rub=customs.freight_vladivostok_rub,
@@ -153,9 +161,27 @@ def _build_customs_out(customs: CustomsCalculation) -> schemas.CustomsCalculatio
     )
 
 
+def _serialize_damaged_part(part: DamagedPartItem) -> schemas.DamagedPartItem:
+    raw_kind = (part.source_kind or "").strip()
+    try:
+        source_kind = PartSourceKind(raw_kind) if raw_kind else PartSourceKind.MATRIX
+    except ValueError:
+        source_kind = PartSourceKind.MATRIX
+    return schemas.DamagedPartItem(
+        panel_id=part.panel_id,
+        defect_code=part.defect_code,
+        part_name_ru=part.part_name_ru,
+        subtitle_ru=part.subtitle_ru,
+        source_kind=source_kind,
+        price_from_rub=part.price_from_rub,
+        in_stock_vladivostok=part.in_stock_vladivostok,
+        is_statistical_fallback=part.is_statistical_fallback,
+    )
+
+
 def _build_farpost_out(repair: FarpostRepairSummary) -> schemas.FarpostRepairSummary:
     return schemas.FarpostRepairSummary(
-        parts=[schemas.DamagedPartItem.model_validate(p) for p in repair.parts.all()],
+        parts=[_serialize_damaged_part(p) for p in repair.parts.all()],
         service_works=[
             schemas.ServiceWorkItem.model_validate(w) for w in repair.service_works.all()
         ],
@@ -193,8 +219,10 @@ def _build_economics(lot: Lot) -> schemas.EconomicsDetail:
 
 
 def _build_media_links(lot: Lot) -> schemas.LotMediaLinks:
+    has_thumb = bool(lot.sheet_thumbnail and getattr(lot.sheet_thumbnail, "name", ""))
+    has_scan = bool(lot.sheet_scan and getattr(lot.sheet_scan, "name", ""))
     return schemas.LotMediaLinks(
-        sheet_thumbnail_url=lot.sheet_thumbnail.url if lot.sheet_thumbnail else "",
-        sheet_scan_url=lot.sheet_scan.url if lot.sheet_scan else "",
+        sheet_thumbnail_url=f"/api/v1/lots/{lot.id}/media/thumbnail" if has_thumb else "",
+        sheet_scan_url=f"/api/v1/lots/{lot.id}/media/scan" if has_scan else "",
         drom_search_url=lot.market_info.drom_search_url,
     )

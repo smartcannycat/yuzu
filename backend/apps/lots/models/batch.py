@@ -4,12 +4,19 @@ from __future__ import annotations
 
 import uuid
 
+from django.core.files.storage import storages
+from django.core.signals import setting_changed
 from django.db import models
+from django.dispatch import receiver
 
 from apps.core.enums import BatchStatus, ItemProcessingStatus, TaskStep
 from apps.lots.models import _batch_item_upload_to
 from apps.lots.models.lot import Lot
 from apps.users.models import User
+
+
+def _get_private_intake_storage():
+    return storages["private_intake"]
 
 
 class Batch(models.Model):
@@ -47,7 +54,10 @@ class BatchItem(models.Model):
     )
     file_index = models.IntegerField()
     original_filename = models.CharField(max_length=255)
-    original_file = models.FileField(upload_to=_batch_item_upload_to)
+    original_file = models.FileField(
+        upload_to=_batch_item_upload_to,
+        storage=_get_private_intake_storage,
+    )
     preview_title = models.CharField(max_length=200, blank=True, null=True)
     status = models.CharField(
         max_length=20,
@@ -73,3 +83,9 @@ class BatchItem(models.Model):
 
     def __str__(self) -> str:
         return f"{self.batch_id} [{self.file_index}] {self.original_filename}"
+
+
+@receiver(setting_changed)
+def _refresh_batch_item_storage(*, setting: str, **_kwargs: object) -> None:
+    if setting in {"STORAGES", "PRIVATE_INTAKE_ROOT"}:
+        BatchItem._meta.get_field("original_file").storage = _get_private_intake_storage()

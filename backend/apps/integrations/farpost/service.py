@@ -7,7 +7,7 @@ import time
 
 from django.db import transaction
 
-from apps.core.enums import PartSourceKind, WorkType
+from apps.core.enums import BodyPanel, PartSourceKind, WorkType
 from apps.integrations.captcha import (
     FarpostCaptchaSolver,
     TesseractImageCaptchaSolver,
@@ -172,6 +172,8 @@ def estimate_repair(lot: Lot, *, client: FarpostClient | None = None) -> RepairS
         active_client.__enter__()
     try:
         for panel, codes in sorted(_panel_codes(list(lot.defects.all())).items()):
+            if panel == BodyPanel.OTHER:
+                continue
             name = FIXED_PANELS.get(panel, PANELS.get(panel, (panel,))[0])
             is_replacement = bool(codes & {"X", "XX"})
             if is_replacement and panel in FIXED_PANELS:

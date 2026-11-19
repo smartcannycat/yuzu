@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from django.http import HttpRequest
+from django.http import FileResponse, HttpRequest
 from ninja import Query, Status, UploadedFile
 from ninja_extra import ControllerBase, api_controller, http_delete, http_get, http_patch, http_post
 from pydantic import UUID4
@@ -177,6 +177,36 @@ class LotController(ControllerBase):
     ) -> LotDetailResponse:
         user = self._require_user(request)
         return services.get_lot_detail(user, lot_id)
+
+    @http_get(
+        "/{lot_id}/media/{kind}",
+        response={
+            401: ProblemDetail,
+            404: ProblemDetail,
+            422: ProblemDetail,
+        },
+        openapi_extra={
+            "responses": {
+                200: {
+                    "description": "Authenticated auction sheet scan or thumbnail image",
+                    "content": {
+                        "image/jpeg": {"schema": {"type": "string", "format": "binary"}},
+                        "image/png": {"schema": {"type": "string", "format": "binary"}},
+                        "image/webp": {"schema": {"type": "string", "format": "binary"}},
+                        "image/svg+xml": {"schema": {"type": "string", "format": "binary"}},
+                    },
+                }
+            }
+        },
+    )
+    def get_lot_media(
+        self,
+        request: HttpRequest,
+        lot_id: UUID4,
+        kind: Literal["scan", "thumbnail"],
+    ) -> FileResponse:
+        user = self._require_user(request)
+        return services.get_lot_media_response(user, lot_id, kind)
 
     @http_post(
         "/{lot_id}/recalculate",

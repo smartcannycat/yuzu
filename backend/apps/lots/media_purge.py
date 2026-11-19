@@ -6,6 +6,7 @@ import logging
 from datetime import datetime, timedelta
 
 from django.conf import settings
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.core.enums import BatchStatus, ItemProcessingStatus
@@ -33,13 +34,27 @@ def _delete_field_file(instance: object, field_name: str) -> bool:
     return True
 
 
+def _purge_lot_media_files(lot: Lot) -> int:
+    removed = 0
+    changed_fields: list[str] = []
+    if _delete_field_file(lot, "sheet_scan"):
+        removed += 1
+        changed_fields.append("sheet_scan")
+    if _delete_field_file(lot, "sheet_thumbnail"):
+        removed += 1
+        changed_fields.append("sheet_thumbnail")
+    if changed_fields:
+        lot.save(update_fields=[*changed_fields, "updated_at"])
+    return removed
+
+
 def purge_stale_media(
     *,
     deleted_after_days: int | None = None,
     originals_after_hours: int | None = None,
     now: datetime | None = None,
 ) -> dict[str, int]:
-    """Delete media files for aged soft-deleted lots and completed batch uploads."""
+    """Delete media files for aged soft-deleted lots, failed orphans, and old uploads."""
     moment = now or timezone.now()
     del_days = (
         getattr(settings, "MEDIA_PURGE_DELETED_AFTER_DAYS", 7)
@@ -62,19 +77,23 @@ def purge_stale_media(
         .iterator(chunk_size=100)
     )
     for lot in deleted_lots:
-        changed_fields: list[str] = []
-        if _delete_field_file(lot, "sheet_scan"):
-            deleted_lots_files += 1
-            changed_fields.append("sheet_scan")
-        if _delete_field_file(lot, "sheet_thumbnail"):
-            deleted_lots_files += 1
-            changed_fields.append("sheet_thumbnail")
-        if changed_fields:
-            lot.save(update_fields=[*changed_fields, "updated_at"])
+        deleted_lots_files += _purge_lot_media_files(lot)
         item = getattr(lot, "batch_item", None)
         if item is not None and _delete_field_file(item, "original_file"):
             batch_originals_files += 1
             item.save(update_fields=["original_file", "updated_at"])
+
+    orphan_failed_lots = (
+        Lot.objects.filter(
+            completed_at__isnull=True,
+            deleted_at__isnull=True,
+            batch_item__status=ItemProcessingStatus.FAILED,
+        )
+        .filter(Q(sheet_scan__gt="") | Q(sheet_thumbnail__gt=""))
+        .iterator(chunk_size=100)
+    )
+    for lot in orphan_failed_lots:
+        deleted_lots_files += _purge_lot_media_files(lot)
 
     originals_cutoff = moment - timedelta(hours=orig_hours)
     terminal_items = (

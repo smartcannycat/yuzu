@@ -26,7 +26,7 @@ from apps.lots.models import (
 class BatchItemInline(admin.StackedInline):
     model = BatchItem
     extra = 0
-    readonly_fields = ("id", "created_at", "updated_at")
+    readonly_fields = ("id", "original_file", "created_at", "updated_at")
 
 
 @admin.register(Batch)

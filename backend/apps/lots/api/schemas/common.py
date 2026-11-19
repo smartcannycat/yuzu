@@ -23,7 +23,9 @@ class CurrencyRates(StrictBaseModel):
 
 
 class NormalizedDefect(StrictBaseModel):
-    panel_id: BodyPanel = Field(..., description="Canonical body panel identifier (1 of 16)")
+    panel_id: BodyPanel = Field(
+        ..., description="Canonical body panel identifier (16 panels or 'other')"
+    )
     panel_ru: str = Field(..., description="Russian name of the panel")
     defect_types: list[str] = Field(..., description="Damage types (A, U, W, S, XX, etc.)")
     severity: int | None = Field(None, ge=1, le=3, description="Severity (1..3) or null for XX/X")

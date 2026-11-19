@@ -85,14 +85,14 @@ def compute_verdict(lot: Lot) -> TrafficLightVerdict:
 
     benefit_str = f"{benefit:+,} ₽".replace(",", " ")
     if color == TrafficLightColor.GREEN:
-        headline = "🟢 РЕКОМЕНДОВАНО К ПОКУПКЕ"
+        headline = "РЕКОМЕНДОВАНО К ПОКУПКЕ"
         badge_text = f"Выгода: {benefit_str}"
     elif color == TrafficLightColor.YELLOW:
-        headline = "🟡 ВНИМАНИЕ: ЕСТЬ НЮАНСЫ"
+        headline = "ВНИМАНИЕ: ЕСТЬ НЮАНСЫ"
         caveat = ", ".join(warning[:2])
         badge_text = f"Выгода: {benefit_str} ({caveat})" if caveat else f"Выгода: {benefit_str}"
     else:
-        headline = "🔴 ПОКУПКУ НЕ РЕКОМЕНДУЕМ"
+        headline = "ПОКУПКУ НЕ РЕКОМЕНДУЕМ"
         reasons = critical + (["санкционный риск экспорта (METI)"] if meti_risk else [])
         if benefit < YELLOW_BENEFIT_MIN_RUB:
             reasons.append("низкая выгода")
