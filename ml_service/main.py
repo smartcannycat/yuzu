@@ -6,7 +6,8 @@ import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from ml_service.api.router import register_exception_handlers, router
+from ml_service.api.errors import register_exception_handlers
+from ml_service.api.router import router
 from ml_service.config import Settings, get_settings
 from ml_service.factories.sheet_factory import SheetFactory
 from ml_service.infrastructure.chassis_ocr_client import ChassisOcrClient
@@ -28,6 +29,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         http_client = httpx.AsyncClient(
             timeout=resolved_settings.http_timeout_seconds,
             follow_redirects=False,
+            trust_env=False,
         )
         key_pool = GeminiKeyPool(
             api_keys=resolved_settings.gemini_api_keys,
@@ -37,6 +39,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         image_loader = AsyncImageLoader(
             http_client=http_client,
             max_bytes=resolved_settings.max_image_bytes,
+            total_timeout_seconds=resolved_settings.http_timeout_seconds,
         )
         cropper = PillowImageCropper(
             min_px=resolved_settings.crop_min_px,
@@ -69,10 +72,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             reference_month=resolved_settings.reference_month,
             default_auction_strictness=resolved_settings.default_auction_strictness,
         )
-        cache = ResultCache(cache_dir=resolved_settings.cache_dir)
-        chassis_ocr_client = ChassisOcrClient(
-            vision_client=vision_client,
+        cache = ResultCache(
             cache_dir=resolved_settings.cache_dir,
+            ttl_seconds=resolved_settings.cache_ttl_seconds,
+            max_disk_bytes=resolved_settings.cache_max_bytes,
+        )
+        chassis_ocr_client = ChassisOcrClient(
+            runner=vision_client.runner,
+            cache_dir=resolved_settings.cache_dir,
+            ttl_seconds=resolved_settings.cache_ttl_seconds,
+            max_disk_bytes=resolved_settings.cache_max_bytes,
         )
 
         parser_service = SheetParserService(
@@ -89,6 +98,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             image_loader=image_loader,
             ttl_seconds=resolved_settings.batch_ttl_seconds,
             max_batches=resolved_settings.batch_max_stored_batches,
+            cache_dir=resolved_settings.cache_dir,
+            max_queued_bytes=resolved_settings.batch_max_queued_bytes,
         )
 
         app_instance.state.settings = resolved_settings
@@ -100,6 +111,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             yield
         finally:
             await batch_service.shutdown()
+            await vision_client.aclose()
             await http_client.aclose()
 
     app_instance = FastAPI(
@@ -107,14 +119,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version="0.1.0",
         description="Domain-driven FastAPI microservice for Japanese car auction sheet parsing.",
         lifespan=lifespan,
+        docs_url="/docs" if resolved_settings.enable_docs else None,
+        redoc_url="/redoc" if resolved_settings.enable_docs else None,
+        openapi_url="/openapi.json" if resolved_settings.enable_docs else None,
     )
-    app_instance.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=False,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    if resolved_settings.cors_allowed_origins:
+        app_instance.add_middleware(
+            CORSMiddleware,
+            allow_origins=resolved_settings.cors_allowed_origins,
+            allow_credentials=False,
+            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_headers=["X-API-Key", "Content-Type"],
+        )
     register_exception_handlers(app_instance)
     app_instance.include_router(router)
     return app_instance
