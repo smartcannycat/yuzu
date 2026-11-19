@@ -429,4 +429,63 @@ describe('HomeView in-progress placement & auto-expand behavior', () => {
 
     expect(bulkDeleteSpy).toHaveBeenCalledWith([firstLot.lot_id, secondLot.lot_id])
   })
+
+  it('prevents orphaned background polling timers when unmounted during initial fetchLots (FE-MAJ-05)', async () => {
+    const lotsStore = useLotFeedStore()
+    lotsStore.hasLoadedOnce = false
+    let resolveFetch!: () => void
+    vi.spyOn(lotsStore, 'fetchLots').mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveFetch = () => {
+            lotsStore.inProgress = {
+              active_batches_count: 1,
+              total_processing_lots: 2,
+              items: makeInProgressItems(2),
+            }
+            lotsStore.hasLoadedOnce = true
+            resolve()
+          }
+        }),
+    )
+    const refreshSpy = vi.spyOn(lotsStore, 'refreshLotsSilently').mockResolvedValue()
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/', name: 'home', component: { template: '<div />' } }],
+    })
+    await router.push('/')
+    await router.isReady()
+
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    app = createApp(HomeView)
+    app.use(pinia)
+    app.use(router)
+    app.mount(host)
+    await flushUi()
+
+    // Unmount BEFORE initial fetchLots resolves
+    app.unmount()
+    app = null
+    resolveFetch()
+    await flushUi()
+
+    await vi.advanceTimersByTimeAsync(10_000)
+    await flushUi()
+    expect(refreshSpy).not.toHaveBeenCalled()
+  })
+
+  it('catches createBatch rejection gracefully without unhandled rejection (FE-MAJ-05)', async () => {
+    const { host, batchesStore } = await mountHomeView(0)
+    vi.spyOn(batchesStore, 'createBatch').mockRejectedValue(new Error('Ошибка сети при загрузке'))
+
+    const submitTrigger = host.querySelector(
+      '[data-testid="mock-upload-submit"]',
+    ) as HTMLButtonElement
+    submitTrigger.click()
+    await flushUi()
+
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('Ошибка сети при загрузке')
+  })
 })
