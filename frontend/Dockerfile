@@ -43,12 +43,17 @@ RUN bun run build
 # ==========================================
 FROM caddy:2.11.9-alpine AS prod
 
+RUN addgroup -S caddy && adduser -S -G caddy caddy
+
 COPY docker/Caddyfile /etc/caddy/Caddyfile
 COPY --from=prod-builder /app/dist /srv
+RUN chown -R caddy:caddy /config /data /srv
 
-EXPOSE 80
+USER caddy
+
+EXPOSE 8080
 
 HEALTHCHECK --interval=10s --timeout=5s --retries=3 --start-period=5s \
-    CMD [ "$(wget -qO- http://127.0.0.1:80/healthz)" = "OK" ] || exit 1
+    CMD [ "$(wget -qO- http://127.0.0.1:8080/healthz)" = "OK" ] || exit 1
 
 CMD ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
