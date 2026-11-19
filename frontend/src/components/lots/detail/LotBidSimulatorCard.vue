@@ -18,10 +18,12 @@ interface Props {
   maxJpy: number
   stepJpy: number
   showReset?: boolean
+  isRecalculating?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
   showReset: false,
+  isRecalculating: false,
 })
 
 const emit = defineEmits<{
@@ -197,7 +199,14 @@ function submitRubEdit(): void {
         </div>
       </div>
 
-      <BaseButton v-if="showReset" variant="ghost" size="sm" pill @click="emit('reset')">
+      <BaseButton
+        v-if="showReset"
+        variant="ghost"
+        size="sm"
+        pill
+        :disabled="isRecalculating"
+        @click="emit('reset')"
+      >
         <template #icon-left>
           <RotateCcw :size="14" />
         </template>

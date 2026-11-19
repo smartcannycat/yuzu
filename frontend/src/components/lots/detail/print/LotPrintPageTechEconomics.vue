@@ -98,7 +98,9 @@ function partSourceLabel(part: DamagedPartItem): string {
       >
         <h2 class="mb-1.5 text-[13px] font-semibold">Замечания инспектора</h2>
         <ul class="list-disc space-y-1 pl-4 text-[10.5px] leading-snug text-[#374151]">
-          <li v-for="note in detail.passport.inspector_notes_ru" :key="note">{{ note }}</li>
+          <li v-for="(note, idx) in detail.passport.inspector_notes_ru" :key="`${idx}:${note}`">
+            {{ note }}
+          </li>
         </ul>
       </div>
     </section>
@@ -114,8 +116,8 @@ function partSourceLabel(part: DamagedPartItem): string {
       </p>
       <ul v-else class="grid grid-cols-2 gap-1.5">
         <li
-          v-for="defect in detail.passport.defects"
-          :key="`${defect.panel_id}-${defect.raw_code}-${defect.description_ru}`"
+          v-for="(defect, idx) in detail.passport.defects"
+          :key="`${idx}:${defect.panel_id}-${defect.raw_code}`"
           class="flex break-inside-avoid items-start justify-between gap-2 rounded-sm border border-[#E5E5EA] bg-[#F8F8FA] px-2 py-1"
         >
           <div class="min-w-0">
@@ -145,8 +147,8 @@ function partSourceLabel(part: DamagedPartItem): string {
       </p>
       <ul v-else class="divide-y divide-[#F2F2F7] text-[10.5px]">
         <li
-          v-for="part in detail.economics.farpost_repair.parts"
-          :key="`${part.panel_id}-${part.part_name_ru}`"
+          v-for="(part, idx) in detail.economics.farpost_repair.parts"
+          :key="`${idx}:${part.panel_id}-${part.part_name_ru}`"
           class="flex break-inside-avoid items-center justify-between gap-2 py-0.5"
         >
           <span class="truncate">
@@ -158,8 +160,8 @@ function partSourceLabel(part: DamagedPartItem): string {
           </span>
         </li>
         <li
-          v-for="work in detail.economics.farpost_repair.service_works"
-          :key="work.label_ru"
+          v-for="(work, idx) in detail.economics.farpost_repair.service_works"
+          :key="`${idx}:${work.label_ru}`"
           class="flex break-inside-avoid items-center justify-between gap-2 py-0.5"
         >
           <span class="truncate">{{ work.label_ru }}</span>

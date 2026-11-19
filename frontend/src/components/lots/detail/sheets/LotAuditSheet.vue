@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { isRiskyAuctionGrade } from '@/components/lots/detail/lotSummaryHelpers'
 import { BaseBadge, BaseButton, BottomSheet } from '@/components/ui'
 import type { LotDetailResponse } from '@/types/api'
 import { formatJpy, formatMileageKm } from '@/utils/formatters'
@@ -43,8 +44,8 @@ const open = defineModel<boolean>('open', { default: false })
           Выявленные нестыковки
         </h4>
         <div
-          v-for="anomaly in detail.audit.anomalies"
-          :key="anomaly.title_ru"
+          v-for="(anomaly, idx) in detail.audit.anomalies"
+          :key="`${idx}:${anomaly.title_ru}`"
           class="border-border bg-surface rounded-sm border p-3"
         >
           <div class="flex items-center justify-between gap-2">
@@ -88,15 +89,17 @@ const open = defineModel<boolean>('open', { default: false })
 
         <ol class="flex flex-col gap-2.5">
           <li
-            v-for="record in detail.audit.history"
-            :key="`${record.auction_date}-${record.lot_number}`"
+            v-for="(record, idx) in detail.audit.history"
+            :key="`${idx}:${record.auction_date}-${record.lot_number}`"
             class="border-border bg-surface-inset/50 rounded-sm border p-3"
           >
             <div class="flex flex-wrap items-center justify-between gap-2">
               <div class="text-text-primary text-[14px] font-semibold">
                 {{ record.auction_date }} · {{ record.auction_house }} #{{ record.lot_number }}
               </div>
-              <BaseBadge :variant="record.overall_grade === 'R' ? 'danger' : 'neutral'">
+              <BaseBadge
+                :variant="isRiskyAuctionGrade(record.overall_grade) ? 'danger' : 'neutral'"
+              >
                 Оценка {{ record.overall_grade }}
               </BaseBadge>
             </div>

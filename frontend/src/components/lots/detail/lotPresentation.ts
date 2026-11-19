@@ -7,10 +7,12 @@ import type {
   OdometerStatus,
   RiskFlags,
   SafetyCheckItem,
-  TrafficLightColor,
   WiseCostStep,
 } from '@/types/api'
 import { formatEngineLiters, formatJpy, formatMileageKm, formatRub } from '@/utils/formatters'
+import { TRAFFIC_LIGHT_META } from '@/utils/lotPresentation'
+
+export { TRAFFIC_LIGHT_META as VERDICT_META }
 
 export const DEFAULT_JPY_RUB_RATE = 0.64
 export const FX_RATE_SOURCE_LABEL = 'VL.ru Деньги'
@@ -75,31 +77,6 @@ export function buildActiveRiskLabels(flags: RiskFlags): ActiveRiskChip[] {
   if (flags.color_changed) chips.push({ label: 'Перекрас кузова', variant: 'warning' })
   if (flags.panel_replaced_xx) chips.push({ label: 'Есть заменённые панели XX', variant: 'info' })
   return chips
-}
-
-export const VERDICT_META: Record<
-  TrafficLightColor,
-  {
-    badgeVariant: 'success' | 'warning' | 'danger'
-    label: string
-    shortTitle: string
-  }
-> = {
-  green: {
-    badgeVariant: 'success',
-    label: 'Можно брать',
-    shortTitle: 'Рекомендуется к покупке',
-  },
-  yellow: {
-    badgeVariant: 'warning',
-    label: 'Под вопросом',
-    shortTitle: 'Требует проверки сметы и рисков',
-  },
-  red: {
-    badgeVariant: 'danger',
-    label: 'Высокий риск',
-    shortTitle: 'Покупка не рекомендуется',
-  },
 }
 
 export const CHECKLIST_STATUS_META: Record<
@@ -169,7 +146,7 @@ export function formatRoiPercent(
 }
 
 export function formatDromPriceRange(minRub: number | null, maxRub: number | null): string | null {
-  if (!minRub || !maxRub) return null
+  if (!minRub || !maxRub || minRub === maxRub) return null
   return `${formatRub(minRub)} – ${formatRub(maxRub)}`
 }
 

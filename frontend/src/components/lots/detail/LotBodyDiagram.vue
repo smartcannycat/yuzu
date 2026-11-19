@@ -2,8 +2,9 @@
 import { computed } from 'vue'
 
 import {
-  BODY_PANEL_PIN_COORDS,
   BODY_PANEL_SHAPES,
+  getBodyPanelPinCoord,
+  getDefectPriorityScore,
   getDefectTone,
   getTonePanelColors,
   getTonePinFill,
@@ -25,7 +26,8 @@ const emit = defineEmits<{
 const defectByPanel = computed(() => {
   const map = new Map<BodyPanel, NormalizedDefect>()
   for (const defect of props.defects) {
-    if (!map.has(defect.panel_id)) {
+    const existing = map.get(defect.panel_id)
+    if (!existing || getDefectPriorityScore(defect) > getDefectPriorityScore(existing)) {
       map.set(defect.panel_id, defect)
     }
   }
@@ -35,13 +37,17 @@ const defectByPanel = computed(() => {
 const uniquePinDefects = computed(() => {
   const pins: Array<{ defect: NormalizedDefect; coord: BodyPanelPinCoord }> = []
   for (const defect of defectByPanel.value.values()) {
-    const coord = BODY_PANEL_PIN_COORDS[defect.panel_id]
+    const coord = getBodyPanelPinCoord(defect.panel_id)
     if (coord) {
       pins.push({ defect, coord })
     }
   }
   return pins
 })
+
+const unpinnedDefects = computed(() =>
+  props.defects.filter((defect) => !getBodyPanelPinCoord(defect.panel_id)),
+)
 
 function getPanelColors(panelId: BodyPanel) {
   const defect = defectByPanel.value.get(panelId)
@@ -160,6 +166,33 @@ function togglePanel(panelId: BodyPanel): void {
         <span class="h-2.5 w-2.5 rounded-full bg-[#1D4ED8]" />
         Косметика (A1, U1)
       </span>
+    </div>
+
+    <div
+      v-if="unpinnedDefects.length > 0"
+      class="border-border bg-surface w-full rounded-sm border px-2.5 py-2"
+    >
+      <div class="text-text-secondary mb-1.5 text-[11px] font-medium">Вне схемы кузова</div>
+      <ul class="flex flex-wrap gap-1.5">
+        <li
+          v-for="(defect, index) in unpinnedDefects"
+          :key="`${defect.panel_id}-${defect.raw_code}-${index}`"
+        >
+          <button
+            type="button"
+            class="inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors"
+            :class="
+              selectedPanel === defect.panel_id
+                ? 'border-accent bg-accent-subtle text-text-primary'
+                : 'border-border bg-surface-inset text-text-secondary hover:text-text-primary'
+            "
+            @click="togglePanel(defect.panel_id)"
+          >
+            <span>{{ defect.panel_ru }}</span>
+            <span class="font-mono font-semibold">{{ defect.raw_code }}</span>
+          </button>
+        </li>
+      </ul>
     </div>
   </div>
 </template>

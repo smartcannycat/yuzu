@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { AlertTriangle, CheckCircle2, OctagonAlert, RotateCcw } from '@lucide/vue'
+import { RotateCcw } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 
+import { buildVerdictOptionItems } from '@/components/lots/verdictOptions'
 import {
   BaseButton,
   BaseSwitch,
@@ -54,11 +55,26 @@ const draftSortBy = ref<LotSortBy>(props.sortBy)
 const draftSortOrder = ref<LotSortOrder>(props.sortOrder)
 const liveFilters = ref<AvailableFilters>(props.availableFilters)
 let previewRequestSeq = 0
+let skipPreviewKey: string | null = null
+
+function buildPreviewKey(
+  lifecycle: LotLifecycleFilter,
+  make: string | null,
+  verdict: TrafficLightColor | null,
+  onlyAnomalies: boolean,
+): string {
+  return `${lifecycle}|${make ?? ''}|${verdict ?? ''}|${String(onlyAnomalies)}`
+}
 
 watch(
   open,
   (isOpen) => {
     if (!isOpen) return
+    const changed =
+      draftLifecycle.value !== props.lifecycle ||
+      draftMake.value !== props.make ||
+      draftVerdict.value !== props.verdict ||
+      draftOnlyAnomalies.value !== props.onlyAnomalies
     previewRequestSeq += 1
     draftLifecycle.value = props.lifecycle
     draftMake.value = props.make
@@ -67,6 +83,9 @@ watch(
     draftSortBy.value = props.sortBy
     draftSortOrder.value = props.sortOrder
     liveFilters.value = props.availableFilters
+    skipPreviewKey = changed
+      ? buildPreviewKey(props.lifecycle, props.make, props.verdict, props.onlyAnomalies)
+      : null
   },
   { immediate: true },
 )
@@ -82,6 +101,18 @@ watch(
 
 watch([draftLifecycle, draftMake, draftVerdict, draftOnlyAnomalies], async () => {
   if (!open.value || !props.previewFilters) return
+  const nextKey = buildPreviewKey(
+    draftLifecycle.value,
+    draftMake.value,
+    draftVerdict.value,
+    draftOnlyAnomalies.value,
+  )
+  if (skipPreviewKey !== null && nextKey === skipPreviewKey) {
+    skipPreviewKey = null
+    return
+  }
+  skipPreviewKey = null
+
   const seq = ++previewRequestSeq
   const next = await props.previewFilters({
     lifecycle: draftLifecycle.value,
@@ -122,29 +153,9 @@ const makesTotalCount = computed(() =>
   liveFilters.value.makes.reduce((sum, item) => sum + item.count, 0),
 )
 
-const VERDICT_OPTIONS = computed(() => [
-  {
-    value: 'green' as const,
-    label: 'Можно брать',
-    count: liveFilters.value.counts_by_verdict.green ?? 0,
-    icon: CheckCircle2,
-    activeClass: 'bg-success-bg text-success border-success/30',
-  },
-  {
-    value: 'yellow' as const,
-    label: 'Под вопросом',
-    count: liveFilters.value.counts_by_verdict.yellow ?? 0,
-    icon: AlertTriangle,
-    activeClass: 'bg-warning-bg text-warning border-warning/30',
-  },
-  {
-    value: 'red' as const,
-    label: 'Высокий риск',
-    count: liveFilters.value.counts_by_verdict.red ?? 0,
-    icon: OctagonAlert,
-    activeClass: 'bg-danger-bg text-danger border-danger/30',
-  },
-])
+const VERDICT_OPTIONS = computed(() =>
+  buildVerdictOptionItems(liveFilters.value.counts_by_verdict, 'filter'),
+)
 
 function toggleVerdict(value: TrafficLightColor) {
   draftVerdict.value = draftVerdict.value === value ? null : value
@@ -167,6 +178,9 @@ function handleApply() {
 }
 
 function handleReset() {
+  previewRequestSeq += 1
+  skipPreviewKey = buildPreviewKey('active', null, null, false)
+  open.value = false
   draftLifecycle.value = 'active'
   draftMake.value = null
   draftVerdict.value = null
@@ -174,7 +188,6 @@ function handleReset() {
   draftSortBy.value = 'created_at'
   draftSortOrder.value = 'desc'
   emit('reset')
-  open.value = false
 }
 </script>
 

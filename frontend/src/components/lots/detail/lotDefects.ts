@@ -29,6 +29,42 @@ export function getDefectTone(defect: NormalizedDefect): DefectTone {
   return 'info'
 }
 
+function resolveDefectSeverityLevel(defect: NormalizedDefect): number {
+  if (typeof defect.severity === 'number' && Number.isFinite(defect.severity)) {
+    return Math.min(9, Math.max(0, Math.round(defect.severity)))
+  }
+  const match = /([1-3])$/.exec(defect.raw_code.trim())
+  return match ? Number(match[1]) : 0
+}
+
+/**
+ * Ranks defects per panel so higher-severity marks always win:
+ * XX > X > severity 3 > severity 2 > severity 1.
+ */
+export function getDefectPriorityScore(defect: NormalizedDefect): number {
+  const code = defect.raw_code.toUpperCase()
+  const types = defect.defect_types ?? []
+  const severity = resolveDefectSeverityLevel(defect)
+
+  if (types.includes('XX') || code.includes('XX')) {
+    return 500 + severity
+  }
+  if (types.includes('X') || code.includes('X')) {
+    return 400 + severity
+  }
+
+  const tone = getDefectTone(defect)
+  const toneBonus = tone === 'danger' ? 3 : tone === 'warning' ? 2 : 1
+  return severity * 10 + toneBonus
+}
+
+export function getBodyPanelPinCoord(panelId: BodyPanel): BodyPanelPinCoord | undefined {
+  if (!Object.hasOwn(BODY_PANEL_PIN_COORDS, panelId)) {
+    return undefined
+  }
+  return BODY_PANEL_PIN_COORDS[panelId]
+}
+
 export function getTonePinFill(tone: DefectTone): string {
   if (tone === 'danger') return '#B91C1C'
   if (tone === 'warning') return '#B45309'

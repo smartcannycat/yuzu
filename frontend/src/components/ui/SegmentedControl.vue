@@ -1,6 +1,6 @@
 <script setup lang="ts" generic="T extends string | number">
 import { useResizeObserver } from '@vueuse/core'
-import { computed, nextTick, onMounted, ref, useTemplateRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUpdate, onMounted, ref, useTemplateRef, watch } from 'vue'
 
 export interface SegmentOption<Value extends string | number = string> {
   value: Value
@@ -144,6 +144,10 @@ function setTabRef(el: unknown, index: number) {
     tabRefs.value[index] = el
   }
 }
+
+onBeforeUpdate(() => {
+  tabRefs.value = []
+})
 </script>
 
 <template>
