@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 
+from django.conf import settings
 from django.db import transaction
 
 from apps.core.enums import BodyPanel, PartSourceKind, WorkType
@@ -33,7 +34,6 @@ from apps.integrations.farpost.matrix import (
 )
 from apps.integrations.farpost.schemas import FarpostRepairEstimate as RepairSchema
 from apps.lots.models import DamagedPartItem, FarpostRepairSummary, Lot, ServiceWorkItem
-from config.settings.config import get_settings
 
 __all__ = [
     "FIXED_PANELS",
@@ -61,23 +61,22 @@ _FALLBACK_SUBTITLES = {
 }
 
 
-def _build_farpost_client(settings) -> FarpostClient:
-    image_solver = (
-        TesseractImageCaptchaSolver(command=settings.FARPOST_CAPTCHA_OCR_COMMAND)
-        if settings.FARPOST_CAPTCHA_OCR_ENABLED
-        else None
-    )
+def _build_farpost_client() -> FarpostClient:
+    ocr_enabled = bool(getattr(settings, "FARPOST_CAPTCHA_OCR_ENABLED", False))
+    ocr_command = str(getattr(settings, "FARPOST_CAPTCHA_OCR_COMMAND", "tesseract"))
+    timeout_sec = float(getattr(settings, "SCRAPER_TIMEOUT_SEC", 10.0))
+    image_solver = TesseractImageCaptchaSolver(command=ocr_command) if ocr_enabled else None
     return FarpostClient(
-        timeout_sec=settings.SCRAPER_TIMEOUT_SEC,
-        request_interval_sec=settings.SCRAPER_REQUEST_INTERVAL_SEC,
-        request_jitter_sec=settings.SCRAPER_REQUEST_JITTER_SEC,
-        proxy_ban_sec=settings.SCRAPER_PROXY_BAN_SEC,
-        proxy_urls=settings.SCRAPER_PROXY_URLS,
+        timeout_sec=timeout_sec,
+        request_interval_sec=float(getattr(settings, "SCRAPER_REQUEST_INTERVAL_SEC", 1.2)),
+        request_jitter_sec=float(getattr(settings, "SCRAPER_REQUEST_JITTER_SEC", 0.4)),
+        proxy_ban_sec=int(getattr(settings, "SCRAPER_PROXY_BAN_SEC", 120)),
+        proxy_urls=getattr(settings, "SCRAPER_PROXY_URLS", ()),
         captcha_solver=FarpostCaptchaSolver(
-            max_attempts=settings.FARPOST_CAPTCHA_MAX_ATTEMPTS,
-            solve_budget_sec=settings.FARPOST_CAPTCHA_SOLVE_BUDGET_SEC,
-            max_workers=settings.FARPOST_CAPTCHA_MAX_WORKERS,
-            request_timeout_sec=settings.SCRAPER_TIMEOUT_SEC,
+            max_attempts=int(getattr(settings, "FARPOST_CAPTCHA_MAX_ATTEMPTS", 2)),
+            solve_budget_sec=float(getattr(settings, "FARPOST_CAPTCHA_SOLVE_BUDGET_SEC", 20.0)),
+            max_workers=int(getattr(settings, "FARPOST_CAPTCHA_MAX_WORKERS", 8)),
+            request_timeout_sec=timeout_sec,
             image_solver=image_solver,
         ),
     )
@@ -157,10 +156,9 @@ def _estimate_replacement_panel(
 
 
 def estimate_repair(lot: Lot, *, client: FarpostClient | None = None) -> RepairSchema:
-    settings = get_settings()
     managed = client is None
-    active_client = client or _build_farpost_client(settings)
-    deadline = time.monotonic() + settings.FARPOST_BUDGET_SEC
+    active_client = client or _build_farpost_client()
+    deadline = time.monotonic() + float(getattr(settings, "FARPOST_BUDGET_SEC", 30.0))
     matrix = repair_matrix()
     parts, works = [], []
     has_color_matched_parts = False

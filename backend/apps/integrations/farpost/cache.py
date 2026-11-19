@@ -9,7 +9,9 @@ import threading
 import time
 from dataclasses import asdict, replace
 from datetime import timedelta
+from typing import Protocol, runtime_checkable
 
+from django.conf import settings
 from django.utils import timezone
 from redis.exceptions import RedisError
 
@@ -25,7 +27,6 @@ from apps.integrations.farpost.client import (
     PartOffer,
 )
 from apps.integrations.shared.cache import upsert_external_cache
-from config.settings.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -122,9 +123,17 @@ def _stale_fallback(entry: ExternalCache | None) -> tuple[list[PartOffer], bool]
     return [], True
 
 
+@runtime_checkable
+class FarpostMetadataSearchClient(Protocol):
+    """Protocol for Farpost clients exposing metadata-aware search."""
+
+    def search_with_metadata(self, criteria: PartCriteria, *, deadline: float) -> ParseResult: ...
+
+
 def _supports_metadata_search(client: object) -> bool:
-    real_search = getattr(FarpostClient, "search", None)
-    return real_search is not None and getattr(type(client), "search", None) is real_search
+    return isinstance(client, FarpostMetadataSearchClient) and callable(
+        getattr(type(client), "search_with_metadata", None)
+    )
 
 
 def _search_cached_with_reason(
@@ -134,7 +143,8 @@ def _search_cached_with_reason(
     deadline: float,
 ) -> tuple[list[PartOffer], bool, str]:
     """Read-through cache keyed independently of paint_code with typed fallback reasons."""
-    settings = get_settings()
+    cooldown_sec = int(getattr(settings, "FARPOST_COOLDOWN_SEC", 45))
+    cache_ttl_hours = int(getattr(settings, "FARPOST_CACHE_TTL_HOURS", 24))
     query_criteria = replace(criteria, paint_code="")
     key = _cache_key(query_criteria)
     entry = ExternalCache.objects.filter(key=key, source=ExternalCacheSource.FARPOST).first()
@@ -161,7 +171,7 @@ def _search_cached_with_reason(
     except FarpostRateLimitedError as exc:
         logger.warning("Farpost rate limited on %s: %s", criteria.panel_id, exc)
         if getattr(exc, "triggers_global_cooldown", True):
-            _activate_rate_limit_cooldown(settings.FARPOST_COOLDOWN_SEC)
+            _activate_rate_limit_cooldown(cooldown_sec)
             reason = PartSourceKind.RATE_LIMITED.value
         else:
             reason = PartSourceKind.FETCH_ERROR.value
@@ -178,7 +188,7 @@ def _search_cached_with_reason(
             key,
             source=ExternalCacheSource.FARPOST,
             payload={"offers": [asdict(offer) for offer in offers]},
-            ttl=timedelta(hours=settings.FARPOST_CACHE_TTL_HOURS),
+            ttl=timedelta(hours=cache_ttl_hours),
         )
         ExternalCache.objects.filter(key=key + ":empty").delete()
         return offers, False, ""
