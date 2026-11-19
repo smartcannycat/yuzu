@@ -7,10 +7,12 @@ from apps.core.enums import (
     FrameIdConfidence,
     OdometerStatus,
     PartSourceKind,
+    TrafficLightColor,
     UtilFeeType,
 )
 from apps.lots.api import schemas
 from apps.lots.calculator.economics import is_simulation_modified
+from apps.lots.lifecycle import resolve_effective_archive_state
 from apps.lots.models import (
     CrossAuditReport,
     CustomsCalculation,
@@ -18,6 +20,7 @@ from apps.lots.models import (
     FarpostRepairSummary,
     Lot,
     SafetyChecklist,
+    TrafficLightVerdict,
     WiseCostLadder,
 )
 
@@ -29,6 +32,7 @@ def _build_thumbnail_url(lot: Lot) -> str | None:
 
 
 def _build_lot_summary(lot: Lot) -> schemas.LotSummary:
+    is_archived, archived_at, archived_reason = resolve_effective_archive_state(lot)
     return schemas.LotSummary(
         lot_id=lot.id,
         make=lot.make,
@@ -50,9 +54,9 @@ def _build_lot_summary(lot: Lot) -> schemas.LotSummary:
         anomaly_text=lot.anomaly_text,
         thumbnail_url=_build_thumbnail_url(lot),
         auction_date=lot.auction_date,
-        is_archived=lot.is_archived,
-        archived_at=lot.archived_at,
-        archived_reason=lot.archived_reason,
+        is_archived=is_archived,
+        archived_at=archived_at,
+        archived_reason=archived_reason,
         expires_at=lot.expires_at,
         created_at=lot.created_at,
     )
@@ -190,6 +194,20 @@ def _build_farpost_out(repair: FarpostRepairSummary) -> schemas.FarpostRepairSum
         grand_total_repair_rub=repair.grand_total_repair_rub,
         has_color_matched_parts=repair.has_color_matched_parts,
         included_in_turnkey_hint_ru=repair.included_in_turnkey_hint_ru,
+    )
+
+
+def _build_verdict_out(verdict: TrafficLightVerdict) -> schemas.TrafficLightVerdict:
+    return schemas.TrafficLightVerdict(
+        verdict=TrafficLightColor(verdict.verdict),
+        headline=verdict.headline,
+        short_verdict_label=verdict.short_verdict_label,
+        badge_text=verdict.badge_text,
+        net_benefit_rub=verdict.net_benefit_rub,
+        benefit_percentage=verdict.benefit_percentage,
+        body_summary_ru=verdict.body_summary_ru,
+        interior_summary_ru=verdict.interior_summary_ru,
+        reasoning_bullets=list(verdict.reasoning_bullets),
     )
 
 

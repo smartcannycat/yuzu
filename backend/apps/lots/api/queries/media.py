@@ -44,16 +44,7 @@ def get_lot_media_response(
 ) -> FileResponse:
     """Stream an owned, completed lot's scan or thumbnail with strict security headers."""
     field_name = "sheet_scan" if kind == "scan" else "sheet_thumbnail"
-    lot = (
-        Lot.objects.filter(
-            id=lot_id,
-            user=user,
-            completed_at__isnull=False,
-            deleted_at__isnull=True,
-        )
-        .only("id", field_name)
-        .first()
-    )
+    lot = Lot.objects.ready_for_user(user).only("id", field_name).filter(id=lot_id).first()
     if lot is None:
         raise NotFoundProblemError("Лот не найден", title="Лот не найден")
 

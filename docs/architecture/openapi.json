@@ -2328,6 +2328,7 @@
           "custom_freight_rub": {
             "anyOf": [
               {
+                "maximum": 50000000,
                 "minimum": 0,
                 "type": "integer"
               },
@@ -3362,6 +3363,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 100,
                   "type": "string"
                 },
                 {
@@ -3378,6 +3380,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 100,
                   "type": "string"
                 },
                 {
@@ -3394,6 +3397,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 100,
                   "type": "string"
                 },
                 {

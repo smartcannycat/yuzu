@@ -11,7 +11,7 @@ from apps.core.enums import LotLifecycleFilter, TrafficLightColor
 from apps.core.exceptions import UnauthorizedProblemError
 from apps.core.redis_utils import enforce_rate_limit
 from apps.core.schemas import ProblemDetail
-from apps.lots import services
+from apps.lots.api import batches, queries
 from apps.lots.api.schemas import (
     BatchCreateResponse,
     BatchProgressResponse,
@@ -49,9 +49,9 @@ class LotController(ControllerBase):
     def list_lots(
         self,
         request: HttpRequest,
-        query: str | None = None,
-        make: str | None = None,
-        model: str | None = None,
+        query: str | None = Query(None, max_length=100),
+        make: str | None = Query(None, max_length=100),
+        model: str | None = Query(None, max_length=100),
         verdict: TrafficLightColor | None = None,
         has_anomaly: bool | None = None,
         lifecycle: LotLifecycleFilter = LotLifecycleFilter.ACTIVE,
@@ -61,7 +61,7 @@ class LotController(ControllerBase):
         sort_order: Literal["desc", "asc"] = "desc",
     ) -> LotListResponse:
         user = self._require_user(request)
-        return services.get_lots_list(
+        return queries.get_lots_list(
             user,
             query=query,
             make=make,
@@ -98,7 +98,7 @@ class LotController(ControllerBase):
             window_sec=60,
             detail="Слишком много загрузок пачек. Попробуйте через минуту.",
         )
-        return Status(202, services.create_batch(user, files))
+        return Status(202, batches.create_batch(user, files))
 
     @http_get(
         "/batches/{batch_id}",
@@ -115,7 +115,7 @@ class LotController(ControllerBase):
         batch_id: UUID4,
     ) -> BatchProgressResponse:
         user = self._require_user(request)
-        return services.get_batch_progress(user, batch_id)
+        return batches.get_batch_progress(user, batch_id)
 
     @http_post(
         "/batches/{batch_id}/items",
@@ -143,7 +143,7 @@ class LotController(ControllerBase):
             window_sec=60,
             detail="Слишком много загрузок пачек. Попробуйте через минуту.",
         )
-        return Status(202, services.append_batch_items(user, batch_id, files))
+        return Status(202, batches.append_batch_items(user, batch_id, files))
 
     @http_post(
         "/bulk-delete",
@@ -159,7 +159,7 @@ class LotController(ControllerBase):
         payload: LotBulkDeleteRequest,
     ) -> LotBulkDeleteResponse:
         user = self._require_user(request)
-        return services.bulk_delete_lots(user, payload.lot_ids)
+        return queries.bulk_delete_lots(user, payload.lot_ids)
 
     @http_get(
         "/{lot_id}",
@@ -176,7 +176,7 @@ class LotController(ControllerBase):
         lot_id: UUID4,
     ) -> LotDetailResponse:
         user = self._require_user(request)
-        return services.get_lot_detail(user, lot_id)
+        return queries.get_lot_detail(user, lot_id)
 
     @http_get(
         "/{lot_id}/media/{kind}",
@@ -206,7 +206,7 @@ class LotController(ControllerBase):
         kind: Literal["scan", "thumbnail"],
     ) -> FileResponse:
         user = self._require_user(request)
-        return services.get_lot_media_response(user, lot_id, kind)
+        return queries.get_lot_media_response(user, lot_id, kind)
 
     @http_post(
         "/{lot_id}/recalculate",
@@ -225,7 +225,7 @@ class LotController(ControllerBase):
         payload: RecalculateRequest,
     ) -> RecalculateResponse:
         user = self._require_user(request)
-        return services.recalculate_lot(user, lot_id, payload)
+        return queries.recalculate_lot(user, lot_id, payload)
 
     @http_post(
         "/{lot_id}/recalculate/reset",
@@ -243,7 +243,7 @@ class LotController(ControllerBase):
         lot_id: UUID4,
     ) -> RecalculateResponse:
         user = self._require_user(request)
-        return services.reset_lot_simulation(user, lot_id)
+        return queries.reset_lot_simulation(user, lot_id)
 
     @http_patch(
         "/{lot_id}",
@@ -261,7 +261,7 @@ class LotController(ControllerBase):
         payload: LotLifecyclePatchRequest,
     ) -> LotSummary:
         user = self._require_user(request)
-        return services.update_lot_lifecycle(
+        return queries.update_lot_lifecycle(
             user,
             lot_id,
             is_archived=payload.is_archived,
@@ -282,5 +282,5 @@ class LotController(ControllerBase):
         lot_id: UUID4,
     ) -> Status:
         user = self._require_user(request)
-        services.delete_lot(user, lot_id)
+        queries.delete_lot(user, lot_id)
         return Status(204, None)

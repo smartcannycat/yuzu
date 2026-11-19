@@ -146,7 +146,9 @@ class RecalculateRequest(StrictBaseModel):
     custom_power_hp: int | None = Field(
         None, ge=1, le=2000, description="Manual power override in hp"
     )
-    custom_freight_rub: int | None = Field(None, ge=0, description="Custom freight cost")
+    custom_freight_rub: int | None = Field(
+        None, ge=0, le=50_000_000, description="Custom freight cost"
+    )
 
     @model_validator(mode="after")
     def validate_exclusive_bid_currency(self) -> "RecalculateRequest":
