@@ -1,9 +1,9 @@
 import { createPinia, setActivePinia } from 'pinia'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 
-import { useLotsStore } from '@/stores/lots'
+import { useLotDetailStore } from '@/stores/lotDetail'
 import LotDetailView from '@/views/LotDetailView.vue'
 
 async function flushUi(): Promise<void> {
@@ -17,6 +17,10 @@ describe('LotDetailView (Screens 4, 5, 6)', () => {
   let host: HTMLDivElement | null = null
   let app: ReturnType<typeof createApp> | null = null
   let pinia: ReturnType<typeof createPinia>
+
+  beforeAll(async () => {
+    await import('@/api/mockApiClient')
+  })
 
   beforeEach(() => {
     vi.useFakeTimers()
@@ -55,7 +59,7 @@ describe('LotDetailView (Screens 4, 5, 6)', () => {
     await vi.advanceTimersByTimeAsync(400)
     await flushUi()
 
-    return { host, router, lotsStore: useLotsStore() }
+    return { host, router, lotsStore: useLotDetailStore() }
   }
 
   it('renders Screen 4 General tab cleanly without Sticky Danger Alert on clean Corolla lot', async () => {

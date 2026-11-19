@@ -1,10 +1,10 @@
 import { createPinia, setActivePinia } from 'pinia'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, defineComponent, h, nextTick } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 
 import { useBatchesStore } from '@/stores/batches'
-import { useLotsStore } from '@/stores/lots'
+import { useLotFeedStore } from '@/stores/lotFeed'
 import type { BatchCreateResponse, InProgressItemPreview } from '@/types/api'
 import HomeView from '@/views/HomeView.vue'
 
@@ -78,6 +78,10 @@ describe('HomeView in-progress placement & auto-expand behavior', () => {
   let app: ReturnType<typeof createApp> | null = null
   let pinia: ReturnType<typeof createPinia>
 
+  beforeAll(async () => {
+    await import('@/api/mockApiClient')
+  })
+
   beforeEach(() => {
     vi.useFakeTimers()
     uploadPayloadCount = 3
@@ -96,7 +100,7 @@ describe('HomeView in-progress placement & auto-expand behavior', () => {
   })
 
   async function mountHomeView(initialProcessingCount: number) {
-    const lotsStore = useLotsStore()
+    const lotsStore = useLotFeedStore()
     lotsStore.hasLoadedOnce = true
     lotsStore.inProgress = {
       active_batches_count: initialProcessingCount > 0 ? 1 : 0,

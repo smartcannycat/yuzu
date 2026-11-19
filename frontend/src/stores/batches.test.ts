@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockApiClient, resetMockLotsWorkspace } from '@/api/mockApiClient'
 import type { ApiClient } from '@/api/types'
 import { clampPollIntervalMs, useBatchesStore } from '@/stores/batches'
-import { useLotsStore } from '@/stores/lots'
+import { useLotFeedStore } from '@/stores/lotFeed'
 import { ApiError, type BatchProgressResponse } from '@/types/api'
 
 function makeSheetFile(name: string): File {
@@ -25,7 +25,7 @@ describe('useBatchesStore & mock batch pipeline', () => {
     vi.setSystemTime(new Date('2026-11-13T10:00:00Z'))
 
     const client = createMockApiClient({ delayMs: 0 })
-    const lotsStore = useLotsStore()
+    const lotsStore = useLotFeedStore()
     const batchesStore = useBatchesStore()
 
     await lotsStore.fetchLots(client)
@@ -67,6 +67,162 @@ describe('useBatchesStore & mock batch pipeline', () => {
     await lotsStore.refreshLotsSilently(client)
     expect(lotsStore.items.length).toBeGreaterThanOrEqual(9)
     expect(lotsStore.inProgress.total_processing_lots).toBe(0)
+  })
+
+  it('clears activeBatch immediately when fetching a different batchId or on error (FE-MAJ-03)', async () => {
+    const batchesStore = useBatchesStore()
+    batchesStore.activeBatch = {
+      batch_id: 'batch-1',
+      status: 'completed',
+      mascot: { mood: 'happy', phrase_ru: 'Готово', badge_text: '1 из 1 готово' },
+      total_count: 1,
+      processed_count: 1,
+      ready_count: 1,
+      failed_count: 0,
+      items: [],
+    }
+
+    let resolveSecond!: (val: BatchProgressResponse) => void
+    const baseClient = createMockApiClient({ delayMs: 0 })
+    const getBatchMock = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<BatchProgressResponse>((resolve) => {
+            resolveSecond = resolve
+          }),
+      )
+      .mockRejectedValueOnce(
+        new ApiError({
+          type: 'about:blank',
+          title: 'Not Found',
+          status: 404,
+          detail: '',
+        }),
+      )
+
+    const client = {
+      ...baseClient,
+      lots: { ...baseClient.lots, getBatch: getBatchMock },
+    } as unknown as ApiClient
+
+    const pendingB = batchesStore.fetchBatch('batch-2', {}, client)
+    expect(batchesStore.activeBatch).toBeNull()
+
+    resolveSecond({
+      batch_id: 'batch-2',
+      status: 'processing',
+      mascot: { mood: 'thinking', phrase_ru: 'В работе', badge_text: '0 из 1 готово' },
+      total_count: 1,
+      processed_count: 0,
+      ready_count: 0,
+      failed_count: 0,
+      items: [],
+    })
+    await pendingB
+    expect(batchesStore.activeBatch?.batch_id).toBe('batch-2')
+
+    const failed = await batchesStore.fetchBatch('batch-2', {}, client)
+    expect(failed).toBeNull()
+    expect(batchesStore.activeBatch).toBeNull()
+    expect(batchesStore.batchError).toBe('Not Found')
+  })
+
+  it('uses separate counters so overlapping background polls never discard appendItems (FE-MAJ-03)', async () => {
+    const batchesStore = useBatchesStore()
+    const baseClient = createMockApiClient({ delayMs: 0 })
+
+    let resolvePollBeforeAppend!: (val: BatchProgressResponse) => void
+    let resolvePollDuringAppend!: (val: BatchProgressResponse) => void
+    let resolveAppend!: (val: BatchProgressResponse) => void
+
+    const getBatchMock = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<BatchProgressResponse>((resolve) => {
+            resolvePollBeforeAppend = resolve
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<BatchProgressResponse>((resolve) => {
+            resolvePollDuringAppend = resolve
+          }),
+      )
+
+    const appendMock = vi.fn(
+      () =>
+        new Promise<BatchProgressResponse>((resolve) => {
+          resolveAppend = resolve
+        }),
+    )
+
+    const client = {
+      ...baseClient,
+      lots: {
+        ...baseClient.lots,
+        getBatch: getBatchMock,
+        appendBatchItems: appendMock,
+        list: vi.fn().mockResolvedValue({
+          items: [],
+          in_progress: { active_batches_count: 0, total_processing_lots: 0, items: [] },
+          pagination: { total_items: 0, page: 1, page_size: 20, total_pages: 0 },
+          available_filters: {
+            total_lots_count: 0,
+            archived_lots_count: 0,
+            makes: [],
+            models: [],
+            counts_by_verdict: {},
+          },
+        }),
+      },
+    } as unknown as ApiClient
+
+    const poll1 = batchesStore.fetchBatch('batch-1', { silent: true }, client)
+    const appendPromise = batchesStore.appendItems('batch-1', [makeSheetFile('extra.jpg')], client)
+    const poll2 = batchesStore.fetchBatch('batch-1', { silent: true }, client)
+
+    // Poll 2 finishes before append resolves: still pre-append count=1.
+    resolvePollDuringAppend({
+      batch_id: 'batch-1',
+      status: 'processing',
+      mascot: { mood: 'thinking', phrase_ru: 'До append', badge_text: '0 из 1' },
+      total_count: 1,
+      processed_count: 0,
+      ready_count: 0,
+      failed_count: 0,
+      items: [],
+    })
+    await poll2
+
+    // Append resolves with count=2: MUST NOT be discarded even though poll2 started after append!
+    resolveAppend({
+      batch_id: 'batch-1',
+      status: 'processing',
+      mascot: { mood: 'thinking', phrase_ru: 'После append', badge_text: '0 из 2' },
+      total_count: 2,
+      processed_count: 0,
+      ready_count: 0,
+      failed_count: 0,
+      items: [],
+    })
+    await appendPromise
+    expect(batchesStore.activeBatch?.total_count).toBe(2)
+
+    // Poll 1 resolves very late with stale count=1: MUST NOT overwrite count=2!
+    resolvePollBeforeAppend({
+      batch_id: 'batch-1',
+      status: 'processing',
+      mascot: { mood: 'thinking', phrase_ru: 'Старый опрос', badge_text: '0 из 1' },
+      total_count: 1,
+      processed_count: 0,
+      ready_count: 0,
+      failed_count: 0,
+      items: [],
+    })
+    await poll1
+    expect(batchesStore.activeBatch?.total_count).toBe(2)
   })
 
   it('protects activeBatch against stale polling responses', async () => {
