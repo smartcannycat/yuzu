@@ -1,10 +1,14 @@
+import json
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
+from zoneinfo import ZoneInfo
 
 from pydantic import Field, field_validator
 from pydantic_settings import (
     BaseSettings,
+    NoDecode,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
     TomlConfigSettingsSource,
@@ -13,6 +17,7 @@ from pydantic_settings import (
 _SERVICE_ROOT = Path(__file__).resolve().parent
 _RUNTIME_ROOT = Path.cwd() if "site-packages" in _SERVICE_ROOT.parts else _SERVICE_ROOT
 _REPO_ROOT = _RUNTIME_ROOT.parent
+TOKYO_TZ = ZoneInfo("Asia/Tokyo")
 
 _TOML_SECTION_PREFIXES: dict[str, str] = {
     "service": "",
@@ -25,6 +30,25 @@ _TOML_KEY_OVERRIDES: dict[tuple[str, str], str] = {
     ("gemini", "enable_gatekeeper"): "enable_gatekeeper",
     ("gemini", "fallback_models"): "gemini_fallback_models_raw",
 }
+
+
+def current_jst_datetime() -> datetime:
+    """Return current timezone-aware datetime in Japan Standard Time (Asia/Tokyo)."""
+    return datetime.now(TOKYO_TZ)
+
+
+def resolve_reference_date(
+    reference_year: int | None = None,
+    reference_month: int | None = None,
+) -> tuple[int, int]:
+    """Resolve reference (year, month), defaulting omitted components to current JST date."""
+    if reference_year is not None and reference_month is not None:
+        return reference_year, reference_month
+    now_jst = current_jst_datetime()
+    return (
+        reference_year if reference_year is not None else now_jst.year,
+        reference_month if reference_month is not None else now_jst.month,
+    )
 
 
 def _flatten_toml_sections(data: dict[str, Any]) -> dict[str, Any]:
@@ -131,7 +155,12 @@ class Settings(BaseSettings):
     batch_max_concurrency: int = Field(default=3, ge=1, le=20)
     batch_max_stored_batches: int = Field(default=200, ge=1, le=10000)
     batch_ttl_seconds: float = Field(default=1800.0, ge=10.0, le=86400.0)
+    batch_max_queued_bytes: int = Field(default=256 * 1024 * 1024, ge=1024)
     rate_limit_requests_per_minute: int = Field(default=120, ge=0, le=10000)
+    pre_auth_rate_limit_requests_per_minute: int = Field(default=300, ge=0, le=100000)
+
+    enable_docs: bool = Field(default=False)
+    cors_allowed_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     crop_format: str = Field(default="JPEG")
     crop_quality: int = Field(default=88, ge=50, le=100)
@@ -142,8 +171,10 @@ class Settings(BaseSettings):
     http_timeout_seconds: float = Field(default=20.0, gt=0)
 
     cache_dir: Path = Field(default=_RUNTIME_ROOT / ".cache" / "sheets")
-    reference_year: int = Field(default=2026, ge=2020, le=2035)
-    reference_month: int = Field(default=11, ge=1, le=12)
+    cache_ttl_seconds: float = Field(default=604800.0, ge=0.0)
+    cache_max_disk_mb: int = Field(default=512, ge=1, le=10240)
+    reference_year: int | None = Field(default=None, ge=2020, le=2035)
+    reference_month: int | None = Field(default=None, ge=1, le=12)
 
     @field_validator("gemini_fallback_models_raw", mode="before")
     @classmethod
@@ -151,6 +182,23 @@ class Settings(BaseSettings):
         if isinstance(value, list):
             return ",".join(str(item).strip() for item in value if str(item).strip())
         return value
+
+    @field_validator("cors_allowed_origins", mode="before")
+    @classmethod
+    def _parse_cors_origins(cls, value: list[str] | str) -> list[str]:
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return []
+            if stripped.startswith("["):
+                parsed = json.loads(stripped)
+                if not isinstance(parsed, list):
+                    raise ValueError("CORS_ALLOWED_ORIGINS JSON must be a list of origins.")
+                return [str(item).strip() for item in parsed if str(item).strip()]
+            return [item.strip() for item in stripped.split(",") if item.strip()]
+        raise ValueError("CORS_ALLOWED_ORIGINS must be a list or comma-separated string.")
 
     @field_validator("cache_dir", mode="after")
     @classmethod
@@ -178,12 +226,16 @@ class Settings(BaseSettings):
 
     @property
     def gemini_api_keys(self) -> list[str]:
-        """Returns clean list of API keys from pool or single key fallback."""
+        """Return clean list of API keys from pool or single key fallback."""
         return _parse_key_list(self.gemini_api_keys_raw, self.gemini_api_key_single)
 
     @property
     def max_image_bytes(self) -> int:
         return self.max_image_size_mb * 1024 * 1024
+
+    @property
+    def cache_max_bytes(self) -> int:
+        return self.cache_max_disk_mb * 1024 * 1024
 
 
 @lru_cache

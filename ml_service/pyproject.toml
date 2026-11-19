@@ -63,6 +63,9 @@ select = [
     "I",      # isort
     "B",      # flake8-bugbear
     "C4",     # flake8-comprehensions
+    "C90",    # mccabe complexity
+    "BLE",    # flake8-blind-except
+    "PERF",   # perflint
     "UP",     # pyupgrade
     "ARG",    # flake8-unused-arguments
     "SIM",    # flake8-simplify
@@ -73,10 +76,11 @@ select = [
 ignore = [
     "B008",   # Do not perform function calls in argument defaults (FastAPI Depends/File/Query)
     "RUF001", # Allow Cyrillic/Japanese characters in user-facing strings and normalizers
-    "RUF002", # Allow Cyrillic characters in docstrings
-    "RUF003", # Allow Cyrillic characters in comments
     "RUF012", # Mutable class attributes should be annotated with typing.ClassVar
 ]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 12
 
 [tool.ruff.lint.per-file-ignores]
 "infrastructure/gemini_schemas.py" = ["E501"]

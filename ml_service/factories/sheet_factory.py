@@ -1,111 +1,35 @@
 """Factory assembling normalized domain results from raw Vision LLM extractions."""
 
-import re
-
+from ml_service.config import resolve_reference_date
 from ml_service.domains.entities import (
     FastHeaderPreviewEntity,
     GatekeeperDecisionEntity,
-    NormalizedDefectEntity,
     NormalizedSheetEntity,
     ParserMetaEntity,
     ParserResultEntity,
-    RawDefectEntity,
     RawExtractionEntity,
-    RiskFlagsEntity,
 )
-from ml_service.domains.enums import (
-    AuctionHouse,
-    DefectCode,
-    FrameIdConfidence,
-    OdometerStatus,
-    ParseStatus,
-)
+from ml_service.domains.enums import FrameIdConfidence, ParseStatus
 from ml_service.factories.markdown_renderer import render_markdown
 from ml_service.factories.normalizers import (
-    CHASSIS_RE,
-    KATASHIKI_RE,
-    build_defect_description_ru,
     calculate_age_and_corridor,
     clean_code,
     clean_color_ru,
-    derive_structural_risk_flags,
-    normalize_auction_house,
-    normalize_body_panel,
     normalize_transmission_ru,
-    parse_defect_codes_with_warnings,
     parse_japanese_date,
     synthesize_frame_id,
 )
+from ml_service.factories.sheet_builders import (
+    build_risk_flags,
+    collect_field_warnings,
+    normalize_defects,
+    resolve_auction_house,
+)
+from ml_service.factories.sheet_builders import (
+    is_repaired_grade as _is_repaired_grade,
+)
 
-_REPAIRED_GRADE_RE = re.compile(r"^(?:R|RA|RB|RC|R\d|[*★]+|0|1|2|99)$")
-
-
-def _normalize_defects(
-    raw_defects: list[RawDefectEntity],
-) -> tuple[list[NormalizedDefectEntity], bool, bool, bool, list[str]]:
-    norm_defects: list[NormalizedDefectEntity] = []
-    has_xx = False
-    has_x = False
-    has_severe_corrosion_c = False
-    defect_warnings: list[str] = []
-
-    for defect in raw_defects:
-        panel_id, panel_ru = normalize_body_panel(
-            defect.panel_id,
-            defect.panel_ru,
-            defect.visual_location,
-        )
-        parsed_codes, code_warnings = parse_defect_codes_with_warnings(defect.raw_code)
-        defect_warnings.extend(code_warnings)
-
-        if not parsed_codes:
-            raw_label = defect.raw_code.strip() or "не указан"
-            norm_defects.append(
-                NormalizedDefectEntity(
-                    panel_id=panel_id,
-                    panel_ru=panel_ru,
-                    defect_types=[],
-                    severity=None,
-                    raw_code=defect.raw_code,
-                    description_ru=f"{panel_ru} — код дефекта ({raw_label})",
-                )
-            )
-            continue
-
-        for d_type, severity in parsed_codes:
-            if d_type == DefectCode.XX:
-                has_xx = True
-            elif d_type == DefectCode.X:
-                has_x = True
-            elif d_type == DefectCode.C:
-                has_severe_corrosion_c = True
-
-            norm_defects.append(
-                NormalizedDefectEntity(
-                    panel_id=panel_id,
-                    panel_ru=panel_ru,
-                    defect_types=[d_type],
-                    severity=severity,
-                    raw_code=defect.raw_code,
-                    description_ru=build_defect_description_ru(
-                        panel_ru,
-                        d_type,
-                        severity,
-                        raw_code=defect.raw_code,
-                    ),
-                )
-            )
-
-    return norm_defects, has_xx, has_x, has_severe_corrosion_c, defect_warnings
-
-
-def _is_repaired_grade(overall_grade: str) -> bool:
-    grade_up = overall_grade.strip().upper()
-    if not grade_up:
-        return False
-    return bool(_REPAIRED_GRADE_RE.match(grade_up)) or any(
-        _REPAIRED_GRADE_RE.match(tok) for tok in re.split(r"[\s/,+]+", grade_up) if tok
-    )
+__all__ = ["SheetFactory", "_is_repaired_grade"]
 
 
 class SheetFactory:
@@ -113,13 +37,21 @@ class SheetFactory:
 
     def __init__(
         self,
-        reference_year: int = 2026,
-        reference_month: int = 11,
+        reference_year: int | None = None,
+        reference_month: int | None = None,
         default_auction_strictness: float = 0.65,
     ) -> None:
         self._reference_year = reference_year
         self._reference_month = reference_month
         self._default_auction_strictness = default_auction_strictness
+
+    @property
+    def default_auction_strictness(self) -> float:
+        return self._default_auction_strictness
+
+    def resolve_reference_date(self) -> tuple[int, int]:
+        """Return effective (year, month), defaulting omitted fields to current JST date."""
+        return resolve_reference_date(self._reference_year, self._reference_month)
 
     def build_result(
         self,
@@ -132,17 +64,17 @@ class SheetFactory:
         sha256: str,
         gatekeeper: GatekeeperDecisionEntity | None = None,
         header_preview: FastHeaderPreviewEntity | None = None,
+        reference_date: tuple[int, int] | None = None,
     ) -> ParserResultEntity:
         """Normalize raw Vision extraction into a complete ParserResultEntity."""
+        ref_year, ref_month = reference_date or self.resolve_reference_date()
         warnings: list[str] = list(ext.ocr_warnings)
         if gatekeeper and gatekeeper.warning:
             warnings.append(gatekeeper.warning)
         low_conf = list(ext.unreadable_fields)
 
         reg_y, reg_m, _, reg_ambig = parse_japanese_date(
-            ext.first_reg_raw,
-            is_future_date=False,
-            current_year=self._reference_year,
+            ext.first_reg_raw, is_future_date=False, current_year=ref_year
         )
         if reg_ambig:
             warnings.append("ambiguous_bare_year_without_era")
@@ -151,98 +83,36 @@ class SheetFactory:
             low_conf.append("first_reg_date_str")
 
         reg_age_str, is_pass_corridor = calculate_age_and_corridor(
-            reg_y,
-            reg_m,
-            reference_year=self._reference_year,
-            reference_month=self._reference_month,
+            reg_y, reg_m, reference_year=ref_year, reference_month=ref_month
         )
-
         _, _, shaken_str, _ = parse_japanese_date(
-            ext.shaken_raw,
-            is_future_date=True,
-            current_year=self._reference_year,
+            ext.shaken_raw, is_future_date=True, current_year=ref_year
         )
 
         chassis = clean_code(ext.chassis_number_raw)
         katashiki = clean_code(ext.model_code_raw)
         paint_code = clean_code(ext.paint_code_raw) or None
-
-        if not CHASSIS_RE.match(chassis.upper()):
-            warnings.append("invalid_chassis_format")
-            low_conf.append("chassis_number")
-        if not KATASHIKI_RE.match(katashiki.upper()):
-            warnings.append("invalid_model_code_format")
-            low_conf.append("model_code")
-        if not ext.make_en.strip():
-            low_conf.append("make")
-        if not ext.model_en.strip():
-            low_conf.append("model")
-        if ext.drive_type is None:
-            warnings.append("drive_type_not_marked_on_sheet")
-        if ext.engine_cc is None:
-            warnings.append("missing_engine_cc")
-            low_conf.append("engine_cc")
-        if ext.mileage_km is None:
-            warnings.append("missing_mileage_km")
-            low_conf.append("mileage_km")
-
-        auc_house, auc_strict = normalize_auction_house(
-            ext.auction_house_raw,
-            default_strictness=self._default_auction_strictness,
+        collect_field_warnings(
+            ext, chassis=chassis, katashiki=katashiki, warnings=warnings, low_conf=low_conf
         )
-        if (auc_house is None or auc_house == AuctionHouse.OTHER.value) and ext.auction_house:
-            fallback_house, fallback_strict = normalize_auction_house(
-                ext.auction_house,
-                default_strictness=self._default_auction_strictness,
-            )
-            if fallback_house is not None and (
-                auc_house is None or fallback_house != AuctionHouse.OTHER.value
-            ):
-                auc_house, auc_strict = fallback_house, fallback_strict
-        if auc_house is None:
-            warnings.append("unidentified_auction_house")
-        elif auc_house == AuctionHouse.OTHER.value:
-            warnings.append("auction_house_other")
 
+        auc_house, auc_strict = resolve_auction_house(
+            ext, default_strictness=self._default_auction_strictness, warnings=warnings
+        )
         frame_id, frame_conf = synthesize_frame_id(katashiki, chassis)
         if frame_conf == FrameIdConfidence.RAW:
             warnings.append("unverified_frame_id_format")
 
-        norm_defects, has_xx, has_x, has_severe_corrosion_c, defect_warnings = _normalize_defects(
-            ext.defects
-        )
+        norm_defects, has_xx, has_x, has_corr_c, defect_warnings = normalize_defects(ext.defects)
         warnings.extend(defect_warnings)
-
-        defect_texts = [f"{d.visual_location} {d.panel_ru} {d.raw_code}" for d in ext.defects]
-        pillar_or_frame, core_support = derive_structural_risk_flags(
-            llm_pillar_or_frame=ext.risk_flags.pillar_or_frame_repair,
-            llm_core_support=ext.risk_flags.core_support_repair,
-            inspector_notes_raw=ext.inspector_notes_raw,
-            inspector_notes_ru=ext.inspector_notes_ru,
-            defect_texts=defect_texts,
-        )
-
-        risk_flags = RiskFlagsEntity(
-            is_flooded=ext.risk_flags.is_flooded,
-            airbag_deployed=ext.risk_flags.airbag_deployed,
-            hail_damage=ext.risk_flags.hail_damage,
-            underbody_rust=ext.risk_flags.underbody_rust,
-            underbody_corrosion=ext.risk_flags.underbody_corrosion or has_severe_corrosion_c,
-            core_support_repair=core_support,
-            pillar_or_frame_repair=pillar_or_frame,
-            panel_replaced_xx=has_xx,
-            panel_needs_replacement_x=has_x,
-            odometer_issue=(ext.odometer_status != OdometerStatus.CONFIRMED),
-            color_changed=ext.risk_flags.color_changed,
-            windshield_damage=ext.risk_flags.windshield_damage,
-            repaired_grade_r_ra=_is_repaired_grade(ext.overall_grade),
+        risk_flags = build_risk_flags(
+            ext, has_xx=has_xx, has_x=has_x, has_severe_corrosion_c=has_corr_c
         )
 
         extra_ru = list(ext.extra_ru)
         if ext.color_changed_ru and ext.color_changed_ru not in extra_ru:
             extra_ru.append(ext.color_changed_ru)
 
-        ocr_warnings = sorted(set(defect_warnings + list(ext.ocr_warnings)))
         sheet = NormalizedSheetEntity(
             lot_number=clean_code(ext.lot_number_raw),
             auction_house=auc_house,
@@ -282,19 +152,15 @@ class SheetFactory:
             right_hand_drive=ext.right_hand_drive,
             name_change_deadline=ext.name_change_deadline,
             inspector_notes_raw=list(ext.inspector_notes_raw),
-            ocr_warnings=ocr_warnings,
+            ocr_warnings=sorted(set(defect_warnings + list(ext.ocr_warnings))),
         )
-
-        summary_md = render_markdown(sheet)
-        status = ParseStatus.PARTIAL if low_conf else ParseStatus.OK
-
         return ParserResultEntity(
-            status=status,
+            status=ParseStatus.PARTIAL if low_conf else ParseStatus.OK,
             warnings=sorted(set(warnings)),
             low_confidence_fields=sorted(set(low_conf)),
             sheet=sheet,
             raw=ext.to_raw_dict(),
-            summary_md=summary_md,
+            summary_md=render_markdown(sheet),
             meta=ParserMetaEntity(
                 processing_ms=processing_ms,
                 mode_used=mode_used,
