@@ -366,7 +366,7 @@ def test_batch_upload_validation_and_append_conflicts(
         == 400
     )
 
-    with patch("apps.lots.pipeline._schedule_batch_pipeline"):
+    with patch("apps.lots.pipeline.batches._schedule_batch_pipeline"):
         files = [
             SimpleUploadedFile("../../traversal/sheet.png", png_bytes, content_type="image/png")
         ]
@@ -443,7 +443,7 @@ def test_batch_upload_cleans_saved_files_on_outer_atomic_rollback(
     png_bytes = _make_png_bytes((128, 128), mode="RGB")
 
     with (
-        patch("apps.lots.pipeline._schedule_batch_pipeline"),
+        patch("apps.lots.pipeline.batches._schedule_batch_pipeline"),
         pytest.raises(RuntimeError, match="outer enqueue rollback"),
         transaction.atomic(),
     ):
@@ -462,7 +462,7 @@ def test_batch_upload_cleans_saved_files_on_outer_atomic_rollback(
     assert [p for p in Path(settings.PRIVATE_INTAKE_ROOT).rglob("*") if p.is_file()] == []
 
     # Committed batch stays on disk; a subsequent rolled-back append cleans only the new upload.
-    with patch("apps.lots.pipeline._schedule_batch_pipeline"):
+    with patch("apps.lots.pipeline.batches._schedule_batch_pipeline"):
         committed_batch = enqueue_batch(
             user,
             [SimpleUploadedFile("kept.png", png_bytes, content_type="image/png")],
@@ -471,7 +471,7 @@ def test_batch_upload_cleans_saved_files_on_outer_atomic_rollback(
     assert kept_path.is_file()
 
     with (
-        patch("apps.lots.pipeline._schedule_batch_pipeline"),
+        patch("apps.lots.pipeline.batches._schedule_batch_pipeline"),
         pytest.raises(RuntimeError, match="outer append rollback"),
         transaction.atomic(),
     ):
@@ -503,7 +503,7 @@ def test_batch_pipeline_generates_browser_scan_and_thumbnail_for_png_and_heic(
         content_type="image/heic",
     )
 
-    with patch("apps.lots.pipeline._schedule_batch_pipeline"):
+    with patch("apps.lots.pipeline.batches._schedule_batch_pipeline"):
         created = api_client.post(
             "/api/v1/lots/batches",
             {"files": [png_file, heic_file]},
@@ -538,14 +538,14 @@ def test_batch_pipeline_generates_browser_scan_and_thumbnail_for_png_and_heic(
     )
 
     with (
-        patch("apps.lots.pipeline._PIPELINE_STEP_DELAY_SEC", 0),
-        patch("apps.lots.pipeline.import_string", return_value=_FakeParser),
+        patch("apps.lots.pipeline.stages._PIPELINE_STEP_DELAY_SEC", 0),
+        patch("apps.lots.pipeline.parallel.import_string", return_value=_FakeParser),
         patch(
-            "apps.lots.pipeline.AleadoCrossAuditService.audit_lot",
+            "apps.lots.pipeline.stages.AleadoCrossAuditService.audit_lot",
             side_effect=RuntimeError("offline"),
         ),
-        patch("apps.lots.services.DromMarketService.evaluate", return_value=drom_result),
-        patch("apps.lots.pipeline.build_currency_service") as mock_curr,
+        patch("apps.lots.pipeline.stages.DromMarketService.evaluate", return_value=drom_result),
+        patch("apps.lots.pipeline.stages.build_currency_service") as mock_curr,
     ):
         mock_curr.return_value.get_currency_rates.return_value = rates_result
         worker = threading.Thread(target=run_batch_pipeline, args=(batch_id,))

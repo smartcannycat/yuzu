@@ -509,3 +509,58 @@ def test_me_requires_valid_bearer_token_and_handles_bad_claims(
         HTTP_AUTHORIZATION=f"Bearer {valid_token}",
     )
     assert deleted_user_resp.status_code == 401
+
+
+@pytest.mark.django_db
+@override_settings(RATE_LIMIT_ENABLED=True)
+def test_register_and_refresh_enforce_429_rate_limits(
+    api_client: Client,
+    user_factory,
+    monkeypatch,
+) -> None:
+    fake_redis = _FakeRateLimitRedis()
+    monkeypatch.setattr("apps.core.redis_utils.get_redis_client", lambda: fake_redis)
+
+    # Register allows 10/min per IP -> 11th returns 429 ProblemDetail.
+    for idx in range(10):
+        resp = api_client.post(
+            "/api/v1/auth/register",
+            {"email": f"rl-reg-{idx}@example.com", "password": "Password123!"},
+            content_type="application/json",
+            REMOTE_ADDR="198.51.100.20",
+        )
+        assert resp.status_code == 201
+
+    reg_blocked = api_client.post(
+        "/api/v1/auth/register",
+        {"email": "rl-reg-11@example.com", "password": "Password123!"},
+        content_type="application/json",
+        REMOTE_ADDR="198.51.100.20",
+    )
+    assert reg_blocked.status_code == 429
+    assert reg_blocked.headers["Content-Type"].startswith("application/problem+json")
+
+    # Refresh allows 30/min per IP -> 31st returns 429 ProblemDetail.
+    user_factory(email="rl-refresh@example.com", password="Password123!")
+    login_resp = api_client.post(
+        "/api/v1/auth/login",
+        {"email": "rl-refresh@example.com", "password": "Password123!"},
+        content_type="application/json",
+        REMOTE_ADDR="198.51.100.21",
+    )
+    assert login_resp.status_code == 200
+    for _ in range(30):
+        ok_ref = api_client.post(
+            "/api/v1/auth/refresh",
+            HTTP_X_REQUESTED_WITH="YuzuSPA",
+            REMOTE_ADDR="198.51.100.21",
+        )
+        assert ok_ref.status_code == 200
+
+    refresh_blocked = api_client.post(
+        "/api/v1/auth/refresh",
+        HTTP_X_REQUESTED_WITH="YuzuSPA",
+        REMOTE_ADDR="198.51.100.21",
+    )
+    assert refresh_blocked.status_code == 429
+    assert refresh_blocked.headers["Content-Type"].startswith("application/problem+json")
