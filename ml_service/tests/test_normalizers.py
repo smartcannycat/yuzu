@@ -90,6 +90,123 @@ def test_parse_defect_codes_and_descriptions() -> None:
     assert desc_plain == "Кузов — замена детали"
 
 
+def test_all_canonical_defect_codes_and_composites() -> None:
+    # Ensure every single canonical DefectCode parses cleanly without unknown warnings.
+    all_bare = "A / U / B / E / W / S / C / Y / P / H / G / O / T / L / F / M / BP / XX / X / R"
+    parsed_bare, warnings_bare = parse_defect_codes_with_warnings(all_bare)
+    assert warnings_bare == []
+    assert [code for code, _ in parsed_bare] == [
+        DefectCode.A,
+        DefectCode.U,
+        DefectCode.B,
+        DefectCode.E,
+        DefectCode.W,
+        DefectCode.S,
+        DefectCode.C,
+        DefectCode.Y,
+        DefectCode.P,
+        DefectCode.H,
+        DefectCode.G,
+        DefectCode.O,
+        DefectCode.T,
+        DefectCode.L,
+        DefectCode.F,
+        DefectCode.M,
+        DefectCode.BP,
+        DefectCode.XX,
+        DefectCode.X,
+        DefectCode.R,
+    ]
+
+    # B1..B4, Y1..Y4, E1..E3, H2, BP2 (must NOT split into B+P), severity 4, X1, R2, XX1.
+    cases = (
+        (
+            "B1 B2 B3 B4",
+            [(DefectCode.B, 1), (DefectCode.B, 2), (DefectCode.B, 3), (DefectCode.B, 4)],
+        ),
+        (
+            "Y1 Y2 Y3 Y4",
+            [(DefectCode.Y, 1), (DefectCode.Y, 2), (DefectCode.Y, 3), (DefectCode.Y, 4)],
+        ),
+        (
+            "E1 E2 E3 H H2",
+            [
+                (DefectCode.E, 1),
+                (DefectCode.E, 2),
+                (DefectCode.E, 3),
+                (DefectCode.H, None),
+                (DefectCode.H, 2),
+            ],
+        ),
+        ("BP BP2", [(DefectCode.BP, None), (DefectCode.BP, 2)]),
+        (
+            "O2 T1 L1 F2 M1",
+            [
+                (DefectCode.O, 2),
+                (DefectCode.T, 1),
+                (DefectCode.L, 1),
+                (DefectCode.F, 2),
+                (DefectCode.M, 1),
+            ],
+        ),
+        (
+            "A4 U4 X1 R2 XX1",
+            [
+                (DefectCode.A, 4),
+                (DefectCode.U, 4),
+                (DefectCode.X, 1),
+                (DefectCode.R, 2),
+                (DefectCode.XX, 1),
+            ],
+        ),
+        ("B小 A(中) U大", [(DefectCode.B, 1), (DefectCode.A, 2), (DefectCode.U, 3)]),
+        (
+            "B2-3 A1~2 AU1-2",
+            [(DefectCode.B, 3), (DefectCode.A, 2), (DefectCode.A, 2), (DefectCode.U, 2)],
+        ),
+        (
+            "A2U2 B2W1 BP2A1 AUW2",
+            [
+                (DefectCode.A, 2),
+                (DefectCode.U, 2),
+                (DefectCode.B, 2),
+                (DefectCode.W, 1),
+                (DefectCode.BP, 2),
+                (DefectCode.A, 1),
+                (DefectCode.A, 2),
+                (DefectCode.U, 2),
+                (DefectCode.W, 2),
+            ],
+        ),
+    )
+    for raw, expected in cases:
+        parsed, warnings = parse_defect_codes_with_warnings(raw)
+        assert warnings == [], f"Unexpected warnings for {raw}: {warnings}"
+        assert parsed == expected
+
+    # Invalid/unsupported tokens still warn cleanly.
+    bad_parsed, bad_warnings = parse_defect_codes_with_warnings("Z9 / A5 / Q2 / ??? / B2")
+    assert bad_parsed == [(DefectCode.B, 2)]
+    assert bad_warnings == [
+        "unknown_defect_code:Z9",
+        "unknown_defect_code:A5",
+        "unknown_defect_code:Q2",
+        "unknown_defect_code:???",
+    ]
+
+    assert "вмятина с царапиной, степень 2" in build_defect_description_ru("Дверь", DefectCode.B, 2)
+    assert "кузовной ремонт с окрасом, степень 2" in build_defect_description_ru(
+        "Крыло", DefectCode.BP, 2
+    )
+    assert "трещина/разрыв, степень 2" in build_defect_description_ru("Бампер", DefectCode.Y, 2)
+    assert "мелкая вмятина (тычок), степень 1" in build_defect_description_ru(
+        "Крыша", DefectCode.E, 1
+    )
+    assert "выгорание/облезание ЛКП, степень 2" in build_defect_description_ru(
+        "Капот", DefectCode.H, 2
+    )
+
+
 @pytest.mark.parametrize(
     ("raw", "is_future", "expected"),
     [

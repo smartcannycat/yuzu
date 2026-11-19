@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import unicodedata
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -19,7 +20,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_SEVERITY_DEFECT_CODES = frozenset({"A", "U", "W", "S", "C", "Y", "G", "P"})
+_SEVERITY_DEFECT_CODES = frozenset(
+    {"A", "U", "B", "E", "W", "S", "C", "Y", "G", "P", "H", "O", "T", "L", "F", "M", "BP"}
+)
+_SIZE_SUFFIX_MAP: tuple[tuple[str, str], ...] = (("小", "1"), ("中", "2"), ("大", "3"))
+_SEVERITY_RANGE_RE = re.compile(r"([A-Z]+)([1-4])\s*[-~～]\s*([1-4])")
+_MULTI_LETTER_CODE_RE = re.compile(r"^([A-Z]{2,})(\d*)$")
 
 # Each panel has a single query identity; fixed panels require restoration instead.
 PANELS = {
@@ -68,10 +74,34 @@ def _body_code(lot: Lot) -> str:
     )
 
 
+def _extract_raw_tokens(raw_code: str) -> list[str]:
+    text = unicodedata.normalize("NFKC", raw_code or "").strip().upper()
+    if not text:
+        return []
+    for jp_char, digit in _SIZE_SUFFIX_MAP:
+        text = re.sub(rf"([A-Z])\(?{jp_char}\)?", rf"\g<1>{digit}", text)
+    text = _SEVERITY_RANGE_RE.sub(
+        lambda m: f"{m.group(1)}{max(int(m.group(2)), int(m.group(3)))}",
+        text,
+    )
+    tokens: list[str] = []
+    for token in re.findall(r"XX\d*|BP\d*|[A-Z]+\d*", text):
+        if token.startswith(("XX", "BP")):
+            tokens.append(token)
+            continue
+        multi = _MULTI_LETTER_CODE_RE.match(token)
+        if multi:
+            letters, digits = multi.groups()
+            tokens.extend(f"{ch}{digits}" for ch in letters)
+        else:
+            tokens.append(token)
+    return tokens
+
+
 def _panel_codes(defects: list) -> dict[str, set[str]]:
     panels: dict[str, set[str]] = {}
     for defect in defects:
-        tokens = re.findall(r"XX|[A-Z]\d*", (defect.raw_code or "").upper())
+        tokens = _extract_raw_tokens(defect.raw_code or "")
         if not tokens:
             tokens = [
                 str(code).strip().upper() for code in defect.defect_types if str(code).strip()

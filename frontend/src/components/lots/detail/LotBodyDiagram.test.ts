@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick } from 'vue'
 
 import LotBodyDiagram from '@/components/lots/detail/LotBodyDiagram.vue'
+import { getDefectPriorityScore, getDefectTone } from '@/components/lots/detail/lotDefects'
 import type { NormalizedDefect } from '@/types/api'
 
 async function flushUi(): Promise<void> {
@@ -126,5 +127,40 @@ describe('LotBodyDiagram', () => {
     expect(unpinnedBtn).toBeTruthy()
     unpinnedBtn!.click()
     expect(onSelectPanel).toHaveBeenCalledWith('other')
+  })
+
+  it('classifies tones and priorities for B/Y/E/H/BP, C, and severity 4 marks', () => {
+    expect(getDefectTone(makeDefect({ raw_code: 'E1', defect_types: ['E'], severity: 1 }))).toBe(
+      'info',
+    )
+    expect(getDefectTone(makeDefect({ raw_code: 'B2', defect_types: ['B'], severity: 2 }))).toBe(
+      'warning',
+    )
+    expect(getDefectTone(makeDefect({ raw_code: 'BP2', defect_types: ['BP'], severity: 2 }))).toBe(
+      'warning',
+    )
+    expect(getDefectTone(makeDefect({ raw_code: 'Y2', defect_types: ['Y'], severity: 2 }))).toBe(
+      'warning',
+    )
+    expect(getDefectTone(makeDefect({ raw_code: 'H2', defect_types: ['H'], severity: 2 }))).toBe(
+      'warning',
+    )
+    expect(getDefectTone(makeDefect({ raw_code: 'B3', defect_types: ['B'], severity: 3 }))).toBe(
+      'danger',
+    )
+    expect(getDefectTone(makeDefect({ raw_code: 'B4', defect_types: ['B'], severity: 4 }))).toBe(
+      'danger',
+    )
+    expect(getDefectTone(makeDefect({ raw_code: 'A4', defect_types: ['A'], severity: 4 }))).toBe(
+      'danger',
+    )
+    expect(getDefectTone(makeDefect({ raw_code: 'C1', defect_types: ['C'], severity: 1 }))).toBe(
+      'danger',
+    )
+    expect(
+      getDefectPriorityScore(makeDefect({ raw_code: 'A4', defect_types: ['A'], severity: 4 })),
+    ).toBeGreaterThan(
+      getDefectPriorityScore(makeDefect({ raw_code: 'A3', defect_types: ['A'], severity: 3 })),
+    )
   })
 })
