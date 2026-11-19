@@ -1,7 +1,8 @@
-"""Offline tests for AsyncGeminiVisionClient and ChassisOcrClient using fake genai clients."""
+"""Offline tests for AsyncGeminiVisionClient, GeminiRunner, and ChassisOcrClient."""
 
+import asyncio
+import inspect
 import json
-import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -79,27 +80,48 @@ def _valid_extraction_json() -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
-class _FakeDecisions:
+class _FakeAsyncDecisions:
     def __init__(self, handler):
         self._handler = handler
 
-    def create(self, **kwargs):
-        return self._handler(**kwargs)
+    async def create(self, **kwargs):
+        result = self._handler(**kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        return result
 
 
-class _FakeModels:
+class _FakeAsyncModels:
     def __init__(self, handler):
         self._handler = handler
 
-    def generate_content(self, **kwargs):
-        return self._handler(**kwargs)
+    async def generate_content(self, **kwargs):
+        result = self._handler(**kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        return result
 
 
 class _FakeGenaiClient:
     def __init__(self, *, decisions_handler=None, models_handler=None) -> None:
-        if decisions_handler is not None:
-            self.decisions = _FakeDecisions(decisions_handler)
-        self.models = _FakeModels(models_handler or (lambda **_kw: SimpleNamespace(text="")))
+        self.closed = False
+        self.aclosed = False
+        fake_models = _FakeAsyncModels(models_handler or (lambda **_kw: SimpleNamespace(text="")))
+        fake_decisions = (
+            _FakeAsyncDecisions(decisions_handler) if decisions_handler is not None else None
+        )
+
+        async def _aclose() -> None:
+            self.aclosed = True
+
+        self.aio = SimpleNamespace(
+            models=fake_models,
+            decisions=fake_decisions,
+            aclose=_aclose,
+        )
+
+    def close(self) -> None:
+        self.closed = True
 
 
 @pytest.mark.asyncio
@@ -112,14 +134,17 @@ async def test_gatekeeper_disabled_accepted_and_fail_open() -> None:
     assert decision.complexity == LayoutComplexity.COMPLEX_OR_HANDWRITTEN
 
     ok_client = AsyncGeminiVisionClient(key_pool=pool, enable_gatekeeper=True)
-    ok_client._clients["k1"] = _FakeGenaiClient(
-        decisions_handler=lambda **_kw: SimpleNamespace(
-            answers={
-                "is_auction_sheet": SimpleNamespace(noul=0.95),
-                "is_readable": SimpleNamespace(noul=0.80),
-                "layout_complexity": SimpleNamespace(choice="clean_digital"),
-            }
-        )
+    ok_client.runner.set_client(
+        "k1",
+        _FakeGenaiClient(
+            decisions_handler=lambda **_kw: SimpleNamespace(
+                answers={
+                    "is_auction_sheet": SimpleNamespace(noul=0.95),
+                    "is_readable": SimpleNamespace(noul=0.80),
+                    "layout_complexity": SimpleNamespace(choice="clean_digital"),
+                }
+            )
+        ),
     )
     accepted = await ok_client.check_sheet(make_image_bytes(fmt="JPEG"))
     assert accepted.is_accepted is True
@@ -128,11 +153,12 @@ async def test_gatekeeper_disabled_accepted_and_fail_open() -> None:
     fail_open_client = AsyncGeminiVisionClient(
         key_pool=pool, enable_gatekeeper=True, gatekeeper_fail_open=True
     )
-    fail_open_client._clients["k1"] = _FakeGenaiClient(
+    failing_fake = _FakeGenaiClient(
         decisions_handler=lambda **_kw: (_ for _ in ()).throw(
             ServerError(503, {"error": {"message": "overloaded"}})
         )
     )
+    fail_open_client.runner.set_client("k1", failing_fake)
     fallback_decision = await fail_open_client.check_sheet(make_image_bytes(fmt="PNG"))
     assert fallback_decision.is_accepted is True
     assert fallback_decision.warning == "gatekeeper_unavailable:ServerError"
@@ -140,7 +166,7 @@ async def test_gatekeeper_disabled_accepted_and_fail_open() -> None:
     fail_closed_client = AsyncGeminiVisionClient(
         key_pool=pool, enable_gatekeeper=True, gatekeeper_fail_open=False
     )
-    fail_closed_client._clients["k1"] = fail_open_client._clients["k1"]
+    fail_closed_client.runner.set_client("k1", failing_fake)
     with pytest.raises(ServerError):
         await fail_closed_client.check_sheet(make_image_bytes(fmt="PNG"))
 
@@ -149,21 +175,24 @@ async def test_gatekeeper_disabled_accepted_and_fail_open() -> None:
 async def test_extract_fast_header_success_and_timeout() -> None:
     pool = GeminiKeyPool(["k1"], rpm_limit=2)
     client = AsyncGeminiVisionClient(key_pool=pool, fast_header_timeout_seconds=0.2)
-    client._clients["k1"] = _FakeGenaiClient(
-        models_handler=lambda **_kw: SimpleNamespace(
-            text=json.dumps({"make_en": "Toyota", "model_en": "Aqua", "lot_number": "101"})
-        )
+    client.runner.set_client(
+        "k1",
+        _FakeGenaiClient(
+            models_handler=lambda **_kw: SimpleNamespace(
+                text=json.dumps({"make_en": "Toyota", "model_en": "Aqua", "lot_number": "101"})
+            )
+        ),
     )
     preview = await client.extract_fast_header(make_sliced_sheet())
     assert preview is not None
     assert preview.preview_title == "Toyota Aqua #101"
 
-    def _slow(**_kw):
-        time.sleep(0.5)
+    async def _slow(**_kw):
+        await asyncio.sleep(0.5)
         return SimpleNamespace(text="{}")
 
     slow_client = AsyncGeminiVisionClient(key_pool=pool, fast_header_timeout_seconds=0.05)
-    slow_client._clients["k1"] = _FakeGenaiClient(models_handler=_slow)
+    slow_client.runner.set_client("k1", _FakeGenaiClient(models_handler=_slow))
     assert await slow_client.extract_fast_header(make_sliced_sheet()) is None
 
 
@@ -198,8 +227,8 @@ async def test_extract_sheet_downgrade_failover_and_hedging() -> None:
             raise ServerError(503, {"error": {"message": "Primary down"}})
         return SimpleNamespace(text=_valid_extraction_json())
 
-    client._clients["k1"] = _FakeGenaiClient(models_handler=_k1_handler)
-    client._clients["k2"] = _FakeGenaiClient(models_handler=_k2_handler)
+    client.runner.set_client("k1", _FakeGenaiClient(models_handler=_k1_handler))
+    client.runner.set_client("k2", _FakeGenaiClient(models_handler=_k2_handler))
 
     entity = await client.extract_sheet(make_sliced_sheet(), LayoutComplexity.CLEAN_DIGITAL)
     assert entity.model_used == "model-backup"
@@ -219,12 +248,12 @@ async def test_extract_sheet_hedged_winner_cancels_loser() -> None:
         request_deadline_seconds=5.0,
     )
 
-    def _handler(**kwargs):
+    async def _handler(**kwargs):
         if kwargs["model"] == "slow-primary":
-            time.sleep(0.35)
+            await asyncio.sleep(0.35)
         return SimpleNamespace(text=_valid_extraction_json())
 
-    client._clients["k1"] = _FakeGenaiClient(models_handler=_handler)
+    client.runner.set_client("k1", _FakeGenaiClient(models_handler=_handler))
     entity = await client.extract_sheet(make_sliced_sheet(), LayoutComplexity.CLEAN_DIGITAL)
     assert entity.model_used == "fast-backup"
     assert any(
@@ -242,10 +271,13 @@ async def test_extract_sheet_all_models_fail_raises_runtime_error() -> None:
         hedge_delay_seconds=5.0,
         request_deadline_seconds=5.0,
     )
-    client._clients["k1"] = _FakeGenaiClient(
-        models_handler=lambda **_kw: (_ for _ in ()).throw(
-            ServerError(503, {"error": {"message": "down"}})
-        )
+    client.runner.set_client(
+        "k1",
+        _FakeGenaiClient(
+            models_handler=lambda **_kw: (_ for _ in ()).throw(
+                ServerError(503, {"error": {"message": "down"}})
+            )
+        ),
     )
     with pytest.raises(RuntimeError, match="All Gemini models failed"):
         await client.extract_sheet(make_sliced_sheet(), LayoutComplexity.CLEAN_DIGITAL)
@@ -262,14 +294,17 @@ def test_sanitize_chassis_read() -> None:
 async def test_chassis_ocr_client_caches_success_but_not_transient_outage(tmp_path: Path) -> None:
     pool = GeminiKeyPool(["k1"], rpm_limit=2)
     vision = AsyncGeminiVisionClient(key_pool=pool, flash_model="m1", fallback_models=["m2"])
-    chassis_client = ChassisOcrClient(vision_client=vision, cache_dir=tmp_path / "cache")
+    chassis_client = ChassisOcrClient(runner=vision.runner, cache_dir=tmp_path / "cache")
     img = make_image_bytes(fmt="JPEG", size=(120, 40))
 
     # First: simulate transient outage across all models -> must NOT write poison cache
-    vision._clients["k1"] = _FakeGenaiClient(
-        models_handler=lambda **_kw: (_ for _ in ()).throw(
-            ServerError(503, {"error": {"message": "down"}})
-        )
+    vision.runner.set_client(
+        "k1",
+        _FakeGenaiClient(
+            models_handler=lambda **_kw: (_ for _ in ()).throw(
+                ServerError(503, {"error": {"message": "down"}})
+            )
+        ),
     )
     failed = await chassis_client.read_chassis_number(img, mime_type="image/jpeg")
     assert failed.frame_id is None
@@ -277,14 +312,14 @@ async def test_chassis_ocr_client_caches_success_but_not_transient_outage(tmp_pa
     assert list((tmp_path / "cache").glob("*.json")) == []
 
     # Next: model m2 succeeds -> writes cache; second call hits cache
-    vision._model_cooldown_until.clear()
+    vision.runner.clear_model_cooldowns()
 
     def _ok_on_m2(**kwargs):
         if kwargs["model"] == "m1":
             raise ServerError(503, {"error": {"message": "m1 down"}})
         return SimpleNamespace(text=json.dumps({"frame_id": "gb5-1025108", "confidence": "high"}))
 
-    vision._clients["k1"] = _FakeGenaiClient(models_handler=_ok_on_m2)
+    vision.runner.set_client("k1", _FakeGenaiClient(models_handler=_ok_on_m2))
     ok = await chassis_client.read_chassis_number(img, mime_type="image/jpeg")
     assert ok.frame_id == "GB5-1025108"
     assert ok.confidence == "high"
@@ -302,8 +337,8 @@ async def test_gatekeeper_decisions_none_429_and_unreadable_rejection() -> None:
     no_decisions_open = AsyncGeminiVisionClient(
         key_pool=pool, enable_gatekeeper=True, gatekeeper_fail_open=True
     )
-    no_decisions_open._clients["k1"] = _FakeGenaiClient(decisions_handler=None)
-    no_decisions_open._clients["k2"] = _FakeGenaiClient(decisions_handler=None)
+    no_decisions_open.runner.set_client("k1", _FakeGenaiClient(decisions_handler=None))
+    no_decisions_open.runner.set_client("k2", _FakeGenaiClient(decisions_handler=None))
     open_dec = await no_decisions_open.check_sheet(make_image_bytes(fmt="PNG"))
     assert open_dec.is_accepted is True
     assert open_dec.warning == "gatekeeper_unavailable:RuntimeError"
@@ -311,9 +346,9 @@ async def test_gatekeeper_decisions_none_429_and_unreadable_rejection() -> None:
     no_decisions_closed = AsyncGeminiVisionClient(
         key_pool=pool, enable_gatekeeper=True, gatekeeper_fail_open=False
     )
-    no_decisions_closed._clients["k1"] = _FakeGenaiClient(decisions_handler=None)
-    no_decisions_closed._clients["k2"] = _FakeGenaiClient(decisions_handler=None)
-    with pytest.raises(RuntimeError, match=r"client\.decisions"):
+    no_decisions_closed.runner.set_client("k1", _FakeGenaiClient(decisions_handler=None))
+    no_decisions_closed.runner.set_client("k2", _FakeGenaiClient(decisions_handler=None))
+    with pytest.raises(RuntimeError, match=r"decisions"):
         await no_decisions_closed.check_sheet(make_image_bytes(fmt="PNG"))
 
     rate_limited_open = AsyncGeminiVisionClient(
@@ -321,27 +356,33 @@ async def test_gatekeeper_decisions_none_429_and_unreadable_rejection() -> None:
         enable_gatekeeper=True,
         gatekeeper_fail_open=True,
     )
-    rate_limited_open._clients["k1"] = _FakeGenaiClient(
-        decisions_handler=lambda **_kw: (_ for _ in ()).throw(
-            ClientError(429, {"error": {"message": "rate limit"}})
-        )
+    rate_limited_open.runner.set_client(
+        "k1",
+        _FakeGenaiClient(
+            decisions_handler=lambda **_kw: (_ for _ in ()).throw(
+                ClientError(429, {"error": {"message": "rate limit"}})
+            )
+        ),
     )
     limited_dec = await rate_limited_open.check_sheet(make_image_bytes(fmt="PNG"))
     assert limited_dec.warning == "gatekeeper_unavailable:ClientError"
-    assert rate_limited_open.key_pool._key_cooldown_until["k1"] > time.monotonic()
+    assert rate_limited_open.key_pool.is_key_in_cooldown("k1") is True
 
     unreadable_client = AsyncGeminiVisionClient(
         key_pool=GeminiKeyPool(["k1"], rpm_limit=4),
         enable_gatekeeper=True,
     )
-    unreadable_client._clients["k1"] = _FakeGenaiClient(
-        decisions_handler=lambda **_kw: SimpleNamespace(
-            answers={
-                "is_auction_sheet": SimpleNamespace(noul=0.95),
-                "is_readable": SimpleNamespace(noul=0.10),
-                "layout_complexity": SimpleNamespace(choice="complex_or_handwritten"),
-            }
-        )
+    unreadable_client.runner.set_client(
+        "k1",
+        _FakeGenaiClient(
+            decisions_handler=lambda **_kw: SimpleNamespace(
+                answers={
+                    "is_auction_sheet": SimpleNamespace(noul=0.95),
+                    "is_readable": SimpleNamespace(noul=0.10),
+                    "layout_complexity": SimpleNamespace(choice="complex_or_handwritten"),
+                }
+            )
+        ),
     )
     rejected = await unreadable_client.check_sheet(make_image_bytes(fmt="PNG"))
     assert rejected.is_auction_sheet is True
@@ -351,7 +392,6 @@ async def test_gatekeeper_decisions_none_429_and_unreadable_rejection() -> None:
 
 @pytest.mark.asyncio
 async def test_extract_sheet_complex_parts_valueerror_failover_403_and_deadline() -> None:
-    # 1) COMPLEX_OR_HANDWRITTEN sends 11 contents (prompt + labeled full image + 4 labeled crops)
     pool = GeminiKeyPool(["k1"], rpm_limit=4)
     seen_contents_len: list[int] = []
     client = AsyncGeminiVisionClient(
@@ -368,15 +408,14 @@ async def test_extract_sheet_complex_parts_valueerror_failover_403_and_deadline(
             return SimpleNamespace(text="")
         return SimpleNamespace(text=_valid_extraction_json())
 
-    client._clients["k1"] = _FakeGenaiClient(models_handler=_failover_handler)
+    client.runner.set_client("k1", _FakeGenaiClient(models_handler=_failover_handler))
     entity = await client.extract_sheet(
         make_sliced_sheet(), LayoutComplexity.COMPLEX_OR_HANDWRITTEN
     )
     assert entity.model_used == "m-valid"
     assert seen_contents_len == [11, 11]
-    assert client._model_cooldown_until["m-empty"] > time.monotonic()
+    assert client.runner.is_model_cooled_down("m-empty") is True
 
-    # 2) All models raising ValueError (bad JSON) -> RuntimeError (503 path), not ValueError (400)
     bad_json_client = AsyncGeminiVisionClient(
         key_pool=GeminiKeyPool(["k1"], rpm_limit=4),
         flash_model="m1",
@@ -384,13 +423,13 @@ async def test_extract_sheet_complex_parts_valueerror_failover_403_and_deadline(
         hedge_delay_seconds=5.0,
         request_deadline_seconds=5.0,
     )
-    bad_json_client._clients["k1"] = _FakeGenaiClient(
-        models_handler=lambda **_kw: SimpleNamespace(text="{not-json")
+    bad_json_client.runner.set_client(
+        "k1",
+        _FakeGenaiClient(models_handler=lambda **_kw: SimpleNamespace(text="{not-json")),
     )
     with pytest.raises(RuntimeError, match="All Gemini models failed"):
         await bad_json_client.extract_sheet(make_sliced_sheet(), LayoutComplexity.CLEAN_DIGITAL)
 
-    # 3) Non-retryable ClientError (403) raises immediately without trying fallback model
     called_models: list[str] = []
     forbidden_client = AsyncGeminiVisionClient(
         key_pool=GeminiKeyPool(["k1"], rpm_limit=4),
@@ -404,12 +443,11 @@ async def test_extract_sheet_complex_parts_valueerror_failover_403_and_deadline(
         called_models.append(kwargs["model"])
         raise ClientError(403, {"error": {"message": "API key invalid"}})
 
-    forbidden_client._clients["k1"] = _FakeGenaiClient(models_handler=_forbidden)
+    forbidden_client.runner.set_client("k1", _FakeGenaiClient(models_handler=_forbidden))
     with pytest.raises(ClientError):
         await forbidden_client.extract_sheet(make_sliced_sheet(), LayoutComplexity.CLEAN_DIGITAL)
     assert called_models == ["m1"]
 
-    # 4) Request deadline exceeded raises TimeoutError
     timeout_client = AsyncGeminiVisionClient(
         key_pool=GeminiKeyPool(["k1"], rpm_limit=4),
         flash_model="m1",
@@ -417,11 +455,11 @@ async def test_extract_sheet_complex_parts_valueerror_failover_403_and_deadline(
         request_deadline_seconds=0.05,
     )
 
-    def _very_slow(**_kw):
-        time.sleep(0.25)
+    async def _very_slow(**_kw):
+        await asyncio.sleep(0.25)
         return SimpleNamespace(text=_valid_extraction_json())
 
-    timeout_client._clients["k1"] = _FakeGenaiClient(models_handler=_very_slow)
+    timeout_client.runner.set_client("k1", _FakeGenaiClient(models_handler=_very_slow))
     with pytest.raises(TimeoutError):
         await timeout_client.extract_sheet(make_sliced_sheet(), LayoutComplexity.CLEAN_DIGITAL)
 
@@ -435,7 +473,6 @@ async def test_chassis_ocr_429_does_not_cooldown_model_whitespace_and_corrupt_di
     chassis_client = ChassisOcrClient(vision_client=vision, cache_dir=tmp_path / "cache")
     img = make_image_bytes(fmt="JPEG", size=(120, 40))
 
-    # 429 on k1 must cool down key k1, NOT mark m1 on shared vision._model_cooldown_until
     def _429_then_whitespace(key: str):
         def _inner(**_kw):
             if key == "k1":
@@ -444,28 +481,29 @@ async def test_chassis_ocr_429_does_not_cooldown_model_whitespace_and_corrupt_di
 
         return _inner
 
-    vision._clients["k1"] = _FakeGenaiClient(models_handler=_429_then_whitespace("k1"))
-    vision._clients["k2"] = _FakeGenaiClient(models_handler=_429_then_whitespace("k2"))
+    vision.runner.set_client("k1", _FakeGenaiClient(models_handler=_429_then_whitespace("k1")))
+    vision.runner.set_client("k2", _FakeGenaiClient(models_handler=_429_then_whitespace("k2")))
 
     res = await chassis_client.read_chassis_number(img, mime_type="image/jpeg")
-    assert "m1" not in vision._model_cooldown_until
-    assert pool._key_cooldown_until["k1"] > time.monotonic()
+    assert vision.runner.is_model_cooled_down("m1") is False
+    assert pool.is_key_in_cooldown("k1") is True
     assert res.frame_id is None
     assert res.raw is None
 
-    # Unreadable/null frame_id is not cached permanently on disk
     cache_files = list((tmp_path / "cache").glob("*.json"))
     assert cache_files == []
 
-    # Corrupted disk cache file falls back cleanly to Gemini instead of crashing
     cache_path = chassis_client._cache_path(img)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text("{corrupt", encoding="utf-8")
 
-    vision._clients["k2"] = _FakeGenaiClient(
-        models_handler=lambda **_kw: SimpleNamespace(
-            text=json.dumps({"frame_id": "NRE210-1234567", "confidence": "high"})
-        )
+    vision.runner.set_client(
+        "k2",
+        _FakeGenaiClient(
+            models_handler=lambda **_kw: SimpleNamespace(
+                text=json.dumps({"frame_id": "NRE210-1234567", "confidence": "high"})
+            )
+        ),
     )
     recovered = await chassis_client.read_chassis_number(img, mime_type="image/jpeg")
     assert recovered.frame_id == "NRE210-1234567"

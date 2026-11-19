@@ -425,6 +425,6 @@ async def test_rate_limit_disabled_and_bucket_overflow_eviction(
     fake_app = SimpleNamespace(state=state)
     fake_request = SimpleNamespace(app=fake_app, client=SimpleNamespace(host="10.0.0.3"))
 
-    api_deps.rate_limit_dep(fake_request, settings)
+    await api_deps.rate_limit_dep(fake_request, settings)
     assert len(state._rate_limit_buckets) == 2
     assert "10.0.0.3" in state._rate_limit_buckets
