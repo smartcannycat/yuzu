@@ -25,6 +25,7 @@ from apps.integrations.drom.slugs.aliases import (
     _resolve_make_from_schema,
     _resolve_model_from_schema_dict,
 )
+from apps.integrations.shared.cache import bound_cache_key
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -169,7 +170,7 @@ class DromSlugResolver:
 
     def _get_sales_models(self, make_slug: str) -> tuple[list[str], dict[str, str]]:
         return self._load_or_fetch_directory(
-            cache_key=f"drom:models:{make_slug}",
+            cache_key=bound_cache_key(f"drom:models:{make_slug}", prefix="drom:models"),
             url=_BRAND_PAGE_URL.format(make_slug=make_slug),
             expected_path_parts=(f"/{make_slug.lower()}/",),
             extractor=lambda html: parse_brand_models_from_html(html, make_slug),
@@ -178,7 +179,9 @@ class DromSlugResolver:
 
     def _get_catalog_models(self, make_slug: str) -> tuple[list[str], dict[str, str]]:
         return self._load_or_fetch_directory(
-            cache_key=f"drom:catalog:models:{make_slug}",
+            cache_key=bound_cache_key(
+                f"drom:catalog:models:{make_slug}", prefix="drom:catalog:models"
+            ),
             url=_CATALOG_MODEL_LIST_URL.format(make_slug=make_slug),
             expected_path_parts=("/catalog/", f"/{make_slug.lower()}/"),
             extractor=lambda html: parse_catalog_models_from_html(html, make_slug),

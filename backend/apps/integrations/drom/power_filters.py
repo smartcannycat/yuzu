@@ -5,11 +5,11 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any
 
-from apps.integrations.drom.katashiki import (
+from apps.integrations.drom.schemas import DromCatalogSpec
+from apps.integrations.shared.katashiki import (
     matches_katashiki_token,
     normalize_katashiki_candidates,
 )
-from apps.integrations.drom.schemas import DromCatalogSpec
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -177,6 +177,15 @@ def serialize_spec(spec: DromCatalogSpec) -> dict[str, Any]:
     }
 
 
+def _safe_optional_int(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return None
+
+
 def deserialize_specs(raw_items: Any) -> list[DromCatalogSpec]:
     if not isinstance(raw_items, list):
         return []
@@ -184,15 +193,24 @@ def deserialize_specs(raw_items: Any) -> list[DromCatalogSpec]:
     for item in raw_items:
         if not isinstance(item, dict) or "power_hp" not in item or "model_code" not in item:
             continue
+        raw_hp = item["power_hp"]
+        if isinstance(raw_hp, bool):
+            continue
+        try:
+            power_hp = int(raw_hp)
+        except (ValueError, TypeError):
+            continue
+        if power_hp <= 0:
+            continue
         specs.append(
             DromCatalogSpec(
                 model_code=str(item["model_code"]),
-                power_hp=int(item["power_hp"]),
-                engine_cc=item.get("engine_cc"),
+                power_hp=power_hp,
+                engine_cc=_safe_optional_int(item.get("engine_cc")),
                 fuel_type=item.get("fuel_type"),
                 drive_type=item.get("drive_type"),
-                year_start=item.get("year_start"),
-                year_end=item.get("year_end"),
+                year_start=_safe_optional_int(item.get("year_start")),
+                year_end=_safe_optional_int(item.get("year_end")),
                 trim_text=item.get("trim_text"),
             )
         )

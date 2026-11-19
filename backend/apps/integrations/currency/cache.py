@@ -13,6 +13,7 @@ from apps.integrations.shared.cache import upsert_external_cache
 
 CACHE_KEY = "cbrf:currency_rates:v1"
 STALE_MAX_AGE = timedelta(days=7)
+_CLOCK_SKEW_TOLERANCE = timedelta(seconds=60)
 
 # Separate marker written after a failed source request so a broken upstream
 # does not turn every calculation into a live HTTP call.
@@ -138,7 +139,7 @@ class CurrencyCache:
         try:
             rates = parse_fallback_config(payload)
             fetched_at = datetime.fromisoformat(str(payload["fetched_at"]))
-            if timezone.is_naive(fetched_at) or fetched_at > timezone.now():
+            if timezone.is_naive(fetched_at) or fetched_at > timezone.now() + _CLOCK_SKEW_TOLERANCE:
                 return None
         except (KeyError, TypeError, ValueError):
             return None

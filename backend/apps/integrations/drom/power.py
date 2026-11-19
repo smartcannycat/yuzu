@@ -5,7 +5,6 @@ from datetime import timedelta
 from apps.core.enums import PowerHpSource
 from apps.integrations.drom.cache import fetch_with_drom_cache
 from apps.integrations.drom.client import DromHttpClient
-from apps.integrations.drom.katashiki import normalize_katashiki_candidates
 from apps.integrations.drom.parser import (
     parse_catalog_generations,
     parse_catalog_power_specs,
@@ -17,12 +16,15 @@ from apps.integrations.drom.power_filters import (
 )
 from apps.integrations.drom.schemas import (
     DromBlockedError,
+    DromBudgetExhaustedError,
     DromCatalogSpec,
     DromFetchError,
     DromNotFoundError,
     DromPowerResult,
 )
 from apps.integrations.drom.slugs import DromSlugResolver
+from apps.integrations.shared.cache import bound_cache_key
+from apps.integrations.shared.katashiki import normalize_katashiki_candidates
 
 _select_best_power_hp = select_best_power_hp
 _CATALOG_MODEL_URL = "https://www.drom.ru/catalog/{make_slug}/{model_slug}/"
@@ -127,7 +129,10 @@ class DromPowerResolver:
         code_key = (
             candidates[1] if len(candidates) > 1 else (candidates[0] if candidates else "all")
         )
-        cache_key = f"drom:catalog:{make_slug}:{model_slug}:{code_key}"[:512]
+        cache_key = bound_cache_key(
+            f"drom:catalog:{make_slug}:{model_slug}:{code_key}",
+            prefix="drom:catalog",
+        )
         partial_failure = False
 
         def _fetch_live() -> list[DromCatalogSpec]:
@@ -204,8 +209,10 @@ class DromPowerResolver:
                 gen_html = self._client.get_html(gen_url)
             except DromBlockedError:
                 raise
-            except DromFetchError:
+            except DromFetchError as exc:
                 complete = False
+                if isinstance(exc, DromBudgetExhaustedError) or "budget" in str(exc).lower():
+                    break
                 continue
             specs.extend(parse_catalog_power_specs(gen_html))
         return specs, complete

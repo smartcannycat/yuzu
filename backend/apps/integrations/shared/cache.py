@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from typing import TYPE_CHECKING, Any
 
 from django.db import IntegrityError, transaction
@@ -13,6 +14,15 @@ if TYPE_CHECKING:
 
     from apps.core.enums import ExternalCacheSource
     from apps.core.models import ExternalCache
+
+
+def bound_cache_key(key: str, *, prefix: str = "", max_length: int = 450) -> str:
+    """Keep cache keys within ExternalCache.key limits via collision-safe SHA-256."""
+    if len(key) <= max_length:
+        return key
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    head = f"{prefix}:hash:" if prefix else "hash:"
+    return f"{head}{digest}"[:512]
 
 
 def read_external_cache(

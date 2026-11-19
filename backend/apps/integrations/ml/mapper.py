@@ -5,6 +5,8 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Any
 
+from django.utils import timezone
+
 from apps.core.enums import (
     AuctionHouse,
     BodyPanel,
@@ -21,6 +23,14 @@ if TYPE_CHECKING:
     from apps.integrations.ml.schemas import Defect, NormalizedSheet, ParserResponse
 
 _DEFAULT_AUCTION_STRICTNESS = 0.65
+_PG_INT4_MAX = 2_147_483_647
+_MIN_REG_YEAR = 1950
+_MAX_ENGINE_CC = 20_000
+_MAX_MILEAGE_KM = 5_000_000
+_MAX_RECYCLING_FEE_YEN = 1_000_000
+_MIN_DEFECT_SEVERITY = 1
+_MAX_DEFECT_SEVERITY = 4
+
 _MISSING_AUCTION_HOUSE_WARNING = (
     "Аукционный дом не указан в листе — установлена площадка «Прочее» (OTHER)"
 )
@@ -72,12 +82,38 @@ def map_choice(
     return None
 
 
+def validate_int_range(
+    value: int | None,
+    field_name: str,
+    *,
+    min_val: int,
+    max_val: int,
+    ocr_warnings: list[str],
+    mapping_warnings: list[str],
+) -> int | None:
+    """Validate an OCR integer against PG int4 and domain bounds, resetting invalid values."""
+    if value is None:
+        return None
+    bounded_min = max(0, min_val)
+    bounded_max = min(_PG_INT4_MAX, max_val)
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not bounded_min <= value <= bounded_max
+    ):
+        message = f"Out-of-range {field_name} value from ML service: {value!r}; reset to None"
+        mapping_warnings.append(message)
+        ocr_warnings.append(message[:300])
+        return None
+    return value
+
+
 def _sheet_to_lot_fields(
     sheet: NormalizedSheet,
     response: ParserResponse,
     mapping_warnings: list[str],
 ) -> dict[str, Any]:
-    """Map a normalized sheet onto Lot column values (choices-safe)."""
+    """Map a normalized sheet onto Lot column values (choices-safe, int-safe)."""
     ocr_warnings = [
         *[str(w)[:300] for w in sheet.ocr_warnings],
         *[str(w)[:300] for w in response.warnings],
@@ -88,6 +124,18 @@ def _sheet_to_lot_fields(
         choices: type[TextChoices], value: str | None, field_name: str
     ) -> str | None:
         return map_choice(choices, value, field_name, ocr_warnings, mapping_warnings)
+
+    def resolve_int(
+        value: int | None, field_name: str, *, min_val: int, max_val: int
+    ) -> int | None:
+        return validate_int_range(
+            value,
+            field_name,
+            min_val=min_val,
+            max_val=max_val,
+            ocr_warnings=ocr_warnings,
+            mapping_warnings=mapping_warnings,
+        )
 
     auction_house = resolve_choice(AuctionHouse, sheet.auction_house, "auction_house")
     if auction_house is None:
@@ -101,11 +149,26 @@ def _sheet_to_lot_fields(
         else _DEFAULT_AUCTION_STRICTNESS
     )
     first_reg_month = sheet.first_reg_month
-    if first_reg_month is not None and not 1 <= first_reg_month <= 12:
+    if first_reg_month is not None and (
+        isinstance(first_reg_month, bool) or not 1 <= first_reg_month <= 12
+    ):
         ocr_warnings.append(
             f"Некорректный месяц первой регистрации '{first_reg_month}' от OCR — сброшен"
         )
         first_reg_month = None
+
+    max_reg_year = timezone.now().year + 2
+    first_reg_year = resolve_int(
+        sheet.first_reg_year, "first_reg_year", min_val=_MIN_REG_YEAR, max_val=max_reg_year
+    )
+    engine_cc = resolve_int(sheet.engine_cc, "engine_cc", min_val=0, max_val=_MAX_ENGINE_CC)
+    mileage_km = resolve_int(sheet.mileage_km, "mileage_km", min_val=0, max_val=_MAX_MILEAGE_KM)
+    recycling_fee_yen = resolve_int(
+        sheet.recycling_fee_yen,
+        "recycling_fee_yen",
+        min_val=0,
+        max_val=_MAX_RECYCLING_FEE_YEN,
+    )
 
     return {
         "lot_number": clip_field(sheet.lot_number, "lot_number"),
@@ -121,12 +184,12 @@ def _sheet_to_lot_fields(
         "frame_id_confidence": resolve_choice(
             FrameIdConfidence, sheet.frame_id_confidence, "frame_id_confidence"
         ),
-        "first_reg_year": sheet.first_reg_year,
+        "first_reg_year": first_reg_year,
         "first_reg_month": first_reg_month,
         "first_reg_date_str": clip_field(sheet.first_reg_date_str, "first_reg_date_str"),
         "is_pass_corridor_3_5": sheet.is_pass_corridor_3_5,
-        "engine_cc": sheet.engine_cc,
-        "mileage_km": sheet.mileage_km,
+        "engine_cc": engine_cc,
+        "mileage_km": mileage_km,
         "odometer_status": resolve_choice(OdometerStatus, sheet.odometer_status, "odometer_status"),
         "transmission": clip_field(sheet.transmission, "transmission"),
         "drive_type": resolve_choice(DriveType, sheet.drive_type, "drive_type"),
@@ -137,7 +200,7 @@ def _sheet_to_lot_fields(
         "exterior_grade": clip_field(sheet.exterior_grade, "exterior_grade"),
         "interior_grade": clip_field(sheet.interior_grade, "interior_grade"),
         "shaken_until": clip_field(sheet.shaken_until, "shaken_until"),
-        "recycling_fee_yen": sheet.recycling_fee_yen,
+        "recycling_fee_yen": recycling_fee_yen,
         "recycling_fee_paid": sheet.recycling_fee_paid,
         "equipment_ru": [entry[:200] for entry in sheet.equipment_ru],
         "inspector_notes_raw": list(sheet.inspector_notes_raw),
@@ -146,21 +209,53 @@ def _sheet_to_lot_fields(
         "extra_ru": list(sheet.extra_ru),
         "ocr_warnings": ocr_warnings,
         "low_confidence_fields": [entry[:100] for entry in response.low_confidence_fields],
-        "year": sheet.first_reg_year,
+        "year": first_reg_year,
     }
 
 
+def _sanitize_severity(
+    severity: int | None,
+    panel_id: str,
+    warnings: list[str],
+) -> int | None:
+    if severity is None:
+        return None
+    if (
+        isinstance(severity, bool)
+        or not isinstance(severity, int)
+        or not _MIN_DEFECT_SEVERITY <= severity <= _MAX_DEFECT_SEVERITY
+    ):
+        warnings.append(
+            f"Out-of-range severity value from ML service for {panel_id!r}: "
+            f"{severity!r}; reset to None"
+        )
+        return None
+    return severity
+
+
+def _collect_defect_warnings(defects: list[Defect]) -> list[str]:
+    valid_panels = set(BodyPanel.values)
+    warnings: list[str] = []
+    for defect in defects:
+        if defect.panel_id not in valid_panels:
+            warnings.append(_unknown_panel_warning(defect))
+        else:
+            _sanitize_severity(defect.severity, defect.panel_id, warnings)
+    return warnings
+
+
 def _replace_defects(lot: Lot, defects: list[Defect]) -> None:
-    """Replace stored defects with the canonical-zone subset."""
+    """Replace stored defects with the canonical-zone subset (including BodyPanel.OTHER)."""
     lot.defects.all().delete()
     valid_panels = set(BodyPanel.values)
+    discarded_warnings: list[str] = []
     rows = [
         LotDefect(
             lot=lot,
             panel_id=defect.panel_id,
             panel_ru=defect.panel_ru[:100],
             defect_types=[code[:10] for code in defect.defect_types],
-            severity=defect.severity,
+            severity=_sanitize_severity(defect.severity, defect.panel_id, discarded_warnings),
             raw_code=defect.raw_code[:20],
             description_ru=defect.description_ru[:300],
         )
@@ -184,7 +279,7 @@ def _unknown_panel_warning(defect: Defect) -> str:
 
 
 def _unmatched_defect_notes(defects: list[Defect]) -> list[str]:
-    """Russian notes for defects whose panel_id is outside the 16 zones."""
+    """Russian notes for defects whose panel_id is outside BodyPanel choices."""
     valid_panels = set(BodyPanel.values)
     notes: list[str] = []
     for defect in defects:
