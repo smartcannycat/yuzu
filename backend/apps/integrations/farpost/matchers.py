@@ -5,12 +5,13 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-from apps.integrations.farpost.aliases import (
-    _MAKE_ALIASES,
-    _MAKE_CONFLICT_PATTERNS,
-    _MODEL_ALIASES,
-    _SISTER_MAKES,
-)
+from apps.integrations.shared import aliases as _shared_aliases
+
+_MAKE_ALIASES = _shared_aliases.MAKE_ALIASES
+_MAKE_CONFLICT_PATTERNS = _shared_aliases.MAKE_CONFLICT_PATTERNS
+_MODEL_ALIASES = _shared_aliases.MODEL_ALIASES
+_SISTER_MAKES = _shared_aliases.SISTER_MAKES
+_compact = _shared_aliases.compact_alnum
 
 if TYPE_CHECKING:
     from apps.integrations.farpost.parser import PartCriteria
@@ -69,10 +70,6 @@ _TAILGATE_RE = re.compile(
 def strip_liter_tokens(value: str) -> str:
     """Remove engine displacement tokens (e.g. '1.5 л') so 'л' is not misread as 'левая'."""
     return _LITER_TOKEN_RE.sub(" ", value)
-
-
-def _compact(value: str) -> str:
-    return re.sub(r"[^a-zа-я0-9]", "", value.casefold().replace("ё", "е"))
 
 
 def contains_code(text: str, code: str) -> bool:

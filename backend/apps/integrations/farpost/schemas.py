@@ -1,5 +1,7 @@
 """Domain result schemas for the Farpost repair estimator."""
 
+from pydantic import Field
+
 from apps.core.enums import BodyPanel, PartSourceKind, WorkType
 from apps.core.schemas import StrictBaseModel
 
@@ -23,8 +25,8 @@ class ServiceWorkEstimate(StrictBaseModel):
 
 
 class FarpostRepairEstimate(StrictBaseModel):
-    parts: list[DamagedPartEstimate] = []
-    service_works: list[ServiceWorkEstimate] = []
+    parts: list[DamagedPartEstimate] = Field(default_factory=list)
+    service_works: list[ServiceWorkEstimate] = Field(default_factory=list)
     total_parts_from_rub: int
     total_works_rub: int
     grand_total_repair_rub: int

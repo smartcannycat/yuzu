@@ -4,11 +4,11 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
-from apps.integrations.drom.katashiki import (
+from apps.integrations.drom.schemas import DromCatalogSpec
+from apps.integrations.shared.katashiki import (
     matches_katashiki_token,
     normalize_katashiki_candidates,
 )
-from apps.integrations.drom.schemas import DromCatalogSpec
 from apps.integrations.shared.url_guard import UnsafeExternalUrlError, validate_external_url
 
 _DROM_CATALOG_BASE = "https://www.drom.ru"
