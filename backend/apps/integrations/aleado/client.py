@@ -18,6 +18,7 @@ from urllib.parse import urljoin
 import httpx
 
 from apps.core.redis_utils import acquire_distributed_interval_slot
+from apps.integrations.aleado import session as aleado_session
 from apps.integrations.aleado.parser import (
     AleadoLotDetail,
     AleadoLotRow,
@@ -38,34 +39,7 @@ from apps.integrations.shared.url_guard import UnsafeExternalUrlError, validate_
 logger = logging.getLogger(__name__)
 
 DEFAULT_ALEADO_BASE_URL = "https://auc.aleado.com"
-
-_SEARCH_PARAMS: dict[str, str] = {
-    "p": "project/findlots",
-    "ld": "",
-    "s": "",
-    "o": "d",
-    "vs": "20",
-    "pg": "1",
-    "rows": "20",
-    "date_check": "1",
-    "auction_check": "1",
-    "photo_check": "1",
-    "company_check": "1",
-    "model_check": "1",
-    "grade_check": "1",
-    "year_check": "1",
-    "transmission_check": "1",
-    "displacement_check": "1",
-    "mileage_check": "1",
-    "model_type_check": "1",
-    "start_price_check": "1",
-    "end_price_check": "1",
-    "result_check": "1",
-    "scores_check": "1",
-    "mrk": "2",
-    "exch": "jpy",
-    "type_pos": "contains",
-}
+_SEARCH_PARAMS = aleado_session.FINDLOTS_SEARCH_PARAMS
 
 
 class AleadoAuthError(RuntimeError):
@@ -104,6 +78,7 @@ class AleadoClient:
         request_interval_sec: float = 1.0,
         transport: httpx.BaseTransport | None = None,
         sleep_fn: Any = None,
+        share_session: bool | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.username = username
@@ -112,6 +87,9 @@ class AleadoClient:
         self.request_interval_sec = request_interval_sec
         self._sleep = sleep_fn or time.sleep
         self._uses_custom_transport = transport is not None
+        self._share_session = (transport is None) if share_session is None else bool(share_session)
+        self._session_key = (self.base_url, self.username)
+        self._cookie_generation = 0
         self._logged_in = False
         self._client = httpx.Client(
             base_url=self.base_url,
@@ -120,6 +98,19 @@ class AleadoClient:
             follow_redirects=False,
             headers={"User-Agent": "Mozilla/5.0 (compatible; AuctionCalc/1.0)"},
         )
+        if self._use_shared_session():
+            self._cookie_generation = aleado_session.init_client_cookies(
+                self._session_key,
+                self._client.cookies,
+            )
+
+    @classmethod
+    def clear_shared_sessions(cls) -> None:
+        """Reset cached process-local Aleado sessions (primarily for test isolation)."""
+        aleado_session.clear_shared_sessions()
+
+    def _use_shared_session(self) -> bool:
+        return self._share_session and bool(self.username and self.password)
 
     def close(self) -> None:
         self._client.close()
@@ -291,10 +282,25 @@ class AleadoClient:
         logger.info("Aleado login succeeded")
 
     def _get(self, url: str, **kwargs: Any) -> httpx.Response:
+        if self._use_shared_session():
+            self._cookie_generation = aleado_session.ensure_session(
+                self._session_key,
+                self._cookie_generation,
+                self._client.cookies,
+                self._login,
+            )
         response = self._request("GET", url, **kwargs)
         if not self._is_authenticated(response):
             self._logged_in = False
-            self._login()
+            if self._use_shared_session():
+                self._cookie_generation = aleado_session.reauthenticate(
+                    self._session_key,
+                    self._cookie_generation,
+                    self._client.cookies,
+                    self._login,
+                )
+            else:
+                self._login()
             response = self._request("GET", url, **kwargs)
             if not self._is_authenticated(response):
                 self._logged_in = False

@@ -21,6 +21,7 @@ def _recover_interrupted_batches(**_kwargs: object) -> None:
     from datetime import timedelta
 
     from django.conf import settings
+    from django.db import connection
     from django.utils import timezone
 
     if getattr(settings, "CELERY_TASK_ALWAYS_EAGER", False):
@@ -33,3 +34,6 @@ def _recover_interrupted_batches(**_kwargs: object) -> None:
         recover_batches_on_startup(stale_before=stale_before, use_startup_lock=True)
     except Exception:
         logger.exception("Failed to recover interrupted batches on worker startup")
+    finally:
+        if not connection.in_atomic_block:
+            connection.close()

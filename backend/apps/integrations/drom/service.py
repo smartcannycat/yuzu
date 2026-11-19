@@ -1,12 +1,19 @@
 """Drom market evaluation facade orchestrating power lookup, cache, and regional cascade."""
 
+from __future__ import annotations
+
 import contextlib
 import logging
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import replace
 from datetime import timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from django.conf import settings
+from django.db import connection
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from apps.integrations.drom.cache import fetch_with_drom_cache, write_drom_cache
 from apps.integrations.drom.cascade import (
@@ -38,21 +45,66 @@ __all__ = [
 ]
 
 
+def _build_drom_client() -> DromHttpClient:
+    return DromHttpClient(
+        timeout_sec=float(getattr(settings, "SCRAPER_TIMEOUT_SEC", 10.0)),
+        request_interval_sec=float(getattr(settings, "SCRAPER_REQUEST_INTERVAL_SEC", 1.2)),
+        request_jitter_sec=float(getattr(settings, "SCRAPER_REQUEST_JITTER_SEC", 0.4)),
+        proxy_ban_sec=float(getattr(settings, "SCRAPER_PROXY_BAN_SEC", 120)),
+        proxy_urls=getattr(settings, "SCRAPER_PROXY_URLS", ()),
+    )
+
+
+def _resolve_power_isolated(
+    factory: Callable[[], DromHttpClient],
+    criteria: DromSearchCriteria,
+    budget_sec: float,
+) -> DromPowerResult:
+    power_client = factory()
+    try:
+        with contextlib.ExitStack() as stack:
+            if hasattr(power_client, "budget"):
+                stack.enter_context(power_client.budget(budget_sec))
+            if hasattr(type(power_client), "__enter__"):
+                stack.enter_context(power_client)
+            slug_resolver = DromSlugResolver(power_client)
+            return DromPowerResolver(power_client, slug_resolver).resolve(
+                make=criteria.make,
+                model=criteria.model,
+                model_code=criteria.model_code,
+                engine_cc=criteria.engine_cc,
+                fuel_type=criteria.fuel_type,
+                drive_type=criteria.drive_type,
+                year=criteria.year,
+                trim=criteria.trim,
+            )
+    finally:
+        if not connection.in_atomic_block:
+            connection.close()
+
+
 class DromMarketService:
     """Orchestrates Drom analog search, read-through caching, and power_hp lookup."""
 
-    def __init__(self, client: DromHttpClient | None = None) -> None:
+    def __init__(
+        self,
+        client: DromHttpClient | None = None,
+        *,
+        power_client_factory: Callable[[], DromHttpClient] | None = None,
+    ) -> None:
         self._managed_client = client is None
-        self._client = client or DromHttpClient(
-            timeout_sec=float(getattr(settings, "SCRAPER_TIMEOUT_SEC", 10.0)),
-            request_interval_sec=float(getattr(settings, "SCRAPER_REQUEST_INTERVAL_SEC", 1.2)),
-            request_jitter_sec=float(getattr(settings, "SCRAPER_REQUEST_JITTER_SEC", 0.4)),
-            proxy_ban_sec=float(getattr(settings, "SCRAPER_PROXY_BAN_SEC", 120)),
-            proxy_urls=getattr(settings, "SCRAPER_PROXY_URLS", ()),
-        )
+        self._client = client or _build_drom_client()
+        self._power_client_factory = power_client_factory
         self._slug_resolver = DromSlugResolver(self._client)
         self._power_resolver = DromPowerResolver(self._client, self._slug_resolver)
         self._cascade = DromCascadeExecutor(self._client, self._slug_resolver)
+
+    def _can_parallelize_power(self) -> bool:
+        if self._power_client_factory is not None:
+            return True
+        if not self._managed_client:
+            return False
+        return len(getattr(settings, "SCRAPER_PROXY_URLS", ())) > 1
 
     def evaluate(self, criteria: DromSearchCriteria) -> DromMarketResult:
         """Fetch Drom market analogs and engine power_hp for a parsed auction lot."""
@@ -65,21 +117,10 @@ class DromMarketService:
         with budget_ctx:
             if self._managed_client and hasattr(type(self._client), "__enter__"):
                 with self._client:
-                    return self._evaluate_with_client(criteria)
-            return self._evaluate_with_client(criteria)
+                    return self._evaluate_with_client(criteria, budget_sec=budget_sec)
+            return self._evaluate_with_client(criteria, budget_sec=budget_sec)
 
-    def _evaluate_with_client(self, criteria: DromSearchCriteria) -> DromMarketResult:
-        power = self._power_resolver.resolve(
-            make=criteria.make,
-            model=criteria.model,
-            model_code=criteria.model_code,
-            engine_cc=criteria.engine_cc,
-            fuel_type=criteria.fuel_type,
-            drive_type=criteria.drive_type,
-            year=criteria.year,
-            trim=criteria.trim,
-        )
-
+    def _evaluate_market_only(self, criteria: DromSearchCriteria) -> DromMarketResult:
         initial_slug = self._slug_resolver.resolve(criteria.make, criteria.model)
         current_slug = initial_slug
         cache_key = _build_market_cache_key(criteria, initial_slug)
@@ -106,14 +147,37 @@ class DromMarketService:
                 write_drom_cache(
                     resolved_key, _serialize_market_result(result), ttl=_MARKET_CACHE_TTL
                 )
-        if result is not None:
-            if is_stale:
-                result = _mark_stale_fallback(result)
-            return _with_power(result, power)
+        if result is None:
+            raise DromFetchError(
+                f"Не удалось получить рыночные аналоги Drom для {criteria.make} {criteria.model}"
+            )
+        return _mark_stale_fallback(result) if is_stale else result
 
-        raise DromFetchError(
-            f"Не удалось получить рыночные аналоги Drom для {criteria.make} {criteria.model}"
+    def _evaluate_with_client(
+        self, criteria: DromSearchCriteria, *, budget_sec: float = 45.0
+    ) -> DromMarketResult:
+        if self._can_parallelize_power():
+            factory = self._power_client_factory or _build_drom_client
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                power_future: Future[DromPowerResult] = pool.submit(
+                    _resolve_power_isolated, factory, criteria, budget_sec
+                )
+                market_result = self._evaluate_market_only(criteria)
+                power = power_future.result()
+            return _with_power(market_result, power)
+
+        power = self._power_resolver.resolve(
+            make=criteria.make,
+            model=criteria.model,
+            model_code=criteria.model_code,
+            engine_cc=criteria.engine_cc,
+            fuel_type=criteria.fuel_type,
+            drive_type=criteria.drive_type,
+            year=criteria.year,
+            trim=criteria.trim,
         )
+        market_result = self._evaluate_market_only(criteria)
+        return _with_power(market_result, power)
 
     def _search_live_cascade(
         self,

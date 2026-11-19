@@ -4,8 +4,8 @@
 
 [service]
 default_auction_strictness = 0.65
-rate_limit_requests_per_minute = 120
-pre_auth_rate_limit_requests_per_minute = 300
+rate_limit_requests_per_minute = 600
+pre_auth_rate_limit_requests_per_minute = 1200
 enable_docs = false
 cors_allowed_origins = []
 max_image_size_mb = 15

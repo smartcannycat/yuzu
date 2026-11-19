@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from typing import TYPE_CHECKING
 
+from django.conf import settings
 from django.db import connection, transaction
 from django.utils import timezone
 
@@ -22,6 +24,7 @@ from apps.lots.pipeline.stages import (
     _advance_step,
     _claim_next_queued_item,
     _complete_item,
+    _fail_item,
     _step_cross_audit,
     _step_customs_calc,
     _step_drom_market,
@@ -37,10 +40,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _close_idle_db_connection() -> None:
+    if not connection.in_atomic_block:
+        connection.close()
+
+
 def _process_item(item: BatchItem) -> None:
     if not _step_gatekeeper(item) or not _run_ocr_stage(item):
         return
     _advance_step(item, TaskStep.CROSS_AUDIT)
+    _close_idle_db_connection()
     if not _run_parallel_steps(
         item,
         [_step_cross_audit, _step_drom_market, _step_farpost_parts],
@@ -53,6 +62,24 @@ def _process_item(item: BatchItem) -> None:
     if not _validate_ready_lot(item):
         return
     _complete_item(item)
+
+
+def _run_item_in_worker(item: BatchItem) -> None:
+    try:
+        _process_item(item)
+    except Exception:
+        logger.exception("Pipeline item %s crashed unexpectedly", item.pk)
+        try:
+            already_failed = BatchItem.objects.filter(
+                pk=item.pk,
+                status=ItemProcessingStatus.FAILED,
+            ).exists()
+            if not already_failed:
+                _fail_item(item, TaskStep.FAILED, "Не удалось обработать аукционный лист")
+        except Exception:
+            logger.exception("Failed to mark crashed item %s as FAILED", item.pk)
+    finally:
+        _close_idle_db_connection()
 
 
 def _finalize_batch_locked(batch: Batch) -> None:
@@ -109,35 +136,63 @@ def _mark_batch_failed_safely(batch_id: uuid.UUID) -> None:
         logger.exception("Failed to mark batch %s as FAILED after pipeline crash", batch_id)
 
 
+def _submit_available_items(
+    batch_id: uuid.UUID,
+    pool: ThreadPoolExecutor,
+    active: set[Future[None]],
+    max_workers: int,
+) -> None:
+    while len(active) < max_workers:
+        item = _claim_next_queued_item(batch_id)
+        if item is None:
+            break
+        active.add(pool.submit(_run_item_in_worker, item))
+
+
+def _finalize_if_drained(batch_id: uuid.UUID) -> bool:
+    with transaction.atomic():
+        batch = Batch.objects.select_for_update().filter(id=batch_id).first()
+        if batch is None:
+            return True
+        if batch.items.filter(status=ItemProcessingStatus.QUEUED).exists():
+            return False
+        _finalize_batch_locked(batch)
+        return True
+
+
+def _drain_batch_items(batch_id: uuid.UUID, max_workers: int) -> None:
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        active: set[Future[None]] = set()
+        while True:
+            _submit_available_items(batch_id, pool, active, max_workers)
+            if not active:
+                if _finalize_if_drained(batch_id):
+                    break
+                continue
+            _close_idle_db_connection()
+            done, active = wait(active, return_when=FIRST_COMPLETED)
+            for future in done:
+                future.result()
+            Batch.objects.filter(pk=batch_id).update(updated_at=timezone.now())
+            renew_batch_lease(batch_id)
+
+
 def run_batch_pipeline(batch_id: uuid.UUID) -> None:
-    """Process all queued items in a batch sequentially and finalize batch status."""
+    """Process all queued items in a batch concurrently and finalize batch status."""
     if not acquire_batch_lease(batch_id):
         logger.info("Skipping batch %s: active lease held or Redis lock unavailable", batch_id)
         return
+    max_workers = max(1, int(getattr(settings, "PIPELINE_BATCH_ITEM_CONCURRENCY", 4)))
     try:
         if not _claim_batch_for_processing(batch_id):
             return
-        while True:
-            item = _claim_next_queued_item(batch_id)
-            if item is not None:
-                _process_item(item)
-                Batch.objects.filter(pk=batch_id).update(updated_at=timezone.now())
-                renew_batch_lease(batch_id)
-                continue
-            with transaction.atomic():
-                batch = Batch.objects.select_for_update().filter(id=batch_id).first()
-                if batch is None:
-                    break
-                if batch.items.filter(status=ItemProcessingStatus.QUEUED).exists():
-                    continue
-                _finalize_batch_locked(batch)
-                break
+        _drain_batch_items(batch_id, max_workers)
     except Exception:
         logger.exception("Batch pipeline failed for %s", batch_id)
         _mark_batch_failed_safely(batch_id)
     finally:
         release_batch_lease(batch_id)
-        connection.close()
+        _close_idle_db_connection()
 
 
 def _acquire_startup_recovery_lock() -> bool:

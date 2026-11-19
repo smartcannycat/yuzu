@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from django.conf import settings
-from django.db import transaction
+from django.db import connection, transaction
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from apps.core.enums import BodyPanel, PartSourceKind, WorkType
 from apps.integrations.captcha import (
@@ -105,37 +112,42 @@ def _describe_part_source(
     return subtitle, source_kind
 
 
+@dataclass(frozen=True, slots=True)
+class _RepairContext:
+    search_make: str
+    search_model: str
+    body_code: str
+    paint_code: str
+    deadline: float
+    matrix: dict
+
+
 def _estimate_replacement_panel(
     *,
     active_client: FarpostClient,
     panel: str,
     codes: set[str],
     name: str,
-    search_make: str,
-    search_model: str,
-    body_code: str,
-    paint_code: str,
-    deadline: float,
-    matrix: dict,
+    ctx: _RepairContext,
 ) -> tuple[dict, bool, dict[WorkType, int]]:
     _, part_name, side, position = PANELS[panel]
     criteria = PartCriteria(
-        search_make, search_model, body_code, panel, part_name, side, position, ""
+        ctx.search_make, ctx.search_model, ctx.body_code, panel, part_name, side, position, ""
     )
     offers, stale, reason = [], False, PartSourceKind.MISSING_IDENTITY.value
     if criteria.make and criteria.model and criteria.body_code:
         offers, stale, reason = _search_cached_with_reason(
-            active_client, criteria, deadline=deadline
+            active_client, criteria, deadline=ctx.deadline
         )
     offer, matched = _select_best_offer(
         offers,
-        paint_code=paint_code,
-        paint_cost_rub=matrix["paint"],
+        paint_code=ctx.paint_code,
+        paint_cost_rub=ctx.matrix["paint"],
         panel=panel,
         stale=stale,
     )
     subtitle, source_kind = _describe_part_source(
-        offer, matched=matched, stale=stale, paint_code=paint_code, reason=reason
+        offer, matched=matched, stale=stale, paint_code=ctx.paint_code, reason=reason
     )
     part_payload = {
         "panel_id": panel,
@@ -145,68 +157,115 @@ def _estimate_replacement_panel(
         "source_kind": source_kind,
         "price_from_rub": offer.price_rub
         if offer
-        else matrix["parts"].get(panel, matrix["parts"]["default"]),
+        else ctx.matrix["parts"].get(panel, ctx.matrix["parts"]["default"]),
         "in_stock_vladivostok": bool(offer and not stale),
         "is_statistical_fallback": not bool(offer) or stale,
     }
-    operations: dict[WorkType, int] = {WorkType.MOUNT_DISMOUNT: matrix["mount_dismount"]}
+    operations: dict[WorkType, int] = {WorkType.MOUNT_DISMOUNT: ctx.matrix["mount_dismount"]}
     if panel != "windshield":
-        operations[WorkType.PAINT] = 0 if matched else matrix["paint"]
+        operations[WorkType.PAINT] = 0 if matched else ctx.matrix["paint"]
     return part_payload, matched, operations
 
 
-def estimate_repair(lot: Lot, *, client: FarpostClient | None = None) -> RepairSchema:
-    managed = client is None
-    active_client = client or _build_farpost_client()
-    deadline = time.monotonic() + float(getattr(settings, "FARPOST_BUDGET_SEC", 30.0))
-    matrix = repair_matrix()
-    parts, works = [], []
-    has_color_matched_parts = False
-    search_make = (lot.make or "").strip()
-    search_model = _search_model(lot.model or "")
-    body_code = _body_code(lot)
-    paint_code = (lot.paint_code or "").strip().upper()
-    if managed and hasattr(type(active_client), "__enter__"):
-        active_client.__enter__()
+def _estimate_panel_isolated(
+    factory: Callable[[], FarpostClient],
+    *,
+    panel: str,
+    codes: set[str],
+    name: str,
+    ctx: _RepairContext,
+) -> tuple[dict, bool, dict[WorkType, int]]:
     try:
-        for panel, codes in sorted(_panel_codes(list(lot.defects.all())).items()):
-            if panel == BodyPanel.OTHER:
-                continue
-            name = FIXED_PANELS.get(panel, PANELS.get(panel, (panel,))[0])
-            is_replacement = bool(codes & {"X", "XX"})
-            if is_replacement and panel in FIXED_PANELS:
-                operations = {WorkType.BODYWORK: matrix["bodywork"]}
-            elif is_replacement and panel in PANELS:
-                part_payload, matched, operations = _estimate_replacement_panel(
-                    active_client=active_client,
+        with contextlib.ExitStack() as stack:
+            worker_client = factory()
+            if hasattr(type(worker_client), "__enter__"):
+                stack.enter_context(worker_client)
+            elif callable(getattr(worker_client, "close", None)):
+                stack.callback(worker_client.close)
+            return _estimate_replacement_panel(
+                active_client=worker_client,
+                panel=panel,
+                codes=codes,
+                name=name,
+                ctx=ctx,
+            )
+    finally:
+        if not connection.in_atomic_block:
+            connection.close()
+
+
+def _resolve_replacement_panels(
+    *,
+    targets: list[tuple[str, set[str], str]],
+    client: FarpostClient | None,
+    client_factory: Callable[[], FarpostClient] | None,
+    proxy_urls: object,
+    ctx: _RepairContext,
+) -> dict[str, tuple[dict, bool, dict[WorkType, int]]]:
+    managed = client is None
+    proxy_count = len(proxy_urls) if isinstance(proxy_urls, (list, tuple, set)) else 0
+    if len(targets) > 1 and (client_factory is not None or (managed and proxy_count > 1)):
+        factory = client_factory or _build_farpost_client
+        max_workers = min(len(targets), max(2, proxy_count), 4)
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {
+                panel: pool.submit(
+                    _estimate_panel_isolated,
+                    factory,
                     panel=panel,
                     codes=codes,
                     name=name,
-                    search_make=search_make,
-                    search_model=search_model,
-                    body_code=body_code,
-                    paint_code=paint_code,
-                    deadline=deadline,
-                    matrix=matrix,
+                    ctx=ctx,
                 )
-                has_color_matched_parts |= matched
-                parts.append(part_payload)
-            else:
-                operations = _operations(codes, matrix)
-            for kind, amount in operations.items():
-                works.append(
-                    {
-                        "work_type": kind,
-                        "label_ru": _work_label(kind, name, panel),
-                        "amount_rub": amount,
-                        "zero_cost_reason_ru": "не требуется"
-                        if kind == WorkType.PAINT and amount == 0
-                        else None,
-                    }
-                )
-    finally:
+                for panel, codes, name in targets
+            }
+            return {panel: future.result() for panel, future in futures.items()}
+
+    active_client = client or _build_farpost_client()
+    results: dict[str, tuple[dict, bool, dict[WorkType, int]]] = {}
+    with contextlib.ExitStack() as stack:
         if managed and hasattr(type(active_client), "__enter__"):
-            active_client.__exit__(None, None, None)
+            stack.enter_context(active_client)
+        for panel, codes, name in targets:
+            results[panel] = _estimate_replacement_panel(
+                active_client=active_client,
+                panel=panel,
+                codes=codes,
+                name=name,
+                ctx=ctx,
+            )
+    return results
+
+
+def _assemble_repair_schema(
+    ordered_panels: list[tuple[str, set[str]]],
+    panel_results: dict[str, tuple[dict, bool, dict[WorkType, int]]],
+    matrix: dict,
+) -> RepairSchema:
+    parts, works = [], []
+    has_color_matched_parts = False
+    for panel, codes in ordered_panels:
+        name = FIXED_PANELS.get(panel, PANELS.get(panel, (panel,))[0])
+        is_replacement = bool(codes & {"X", "XX"})
+        if is_replacement and panel in FIXED_PANELS:
+            operations = {WorkType.BODYWORK: matrix["bodywork"]}
+        elif is_replacement and panel in PANELS:
+            part_payload, matched, operations = panel_results[panel]
+            has_color_matched_parts |= matched
+            parts.append(part_payload)
+        else:
+            operations = _operations(codes, matrix)
+        for kind, amount in operations.items():
+            works.append(
+                {
+                    "work_type": kind,
+                    "label_ru": _work_label(kind, name, panel),
+                    "amount_rub": amount,
+                    "zero_cost_reason_ru": "не требуется"
+                    if kind == WorkType.PAINT and amount == 0
+                    else None,
+                }
+            )
     total_parts = sum(part["price_from_rub"] for part in parts)
     total_works = sum(work["amount_rub"] for work in works)
     return RepairSchema(
@@ -220,6 +279,41 @@ def estimate_repair(lot: Lot, *, client: FarpostClient | None = None) -> RepairS
             "Оценка ремонта; включение в стоимость под ключ определяется расчётом экономики"
         ),
     )
+
+
+def estimate_repair(
+    lot: Lot,
+    *,
+    client: FarpostClient | None = None,
+    client_factory: Callable[[], FarpostClient] | None = None,
+) -> RepairSchema:
+    matrix = repair_matrix()
+    ctx = _RepairContext(
+        search_make=(lot.make or "").strip(),
+        search_model=_search_model(lot.model or ""),
+        body_code=_body_code(lot),
+        paint_code=(lot.paint_code or "").strip().upper(),
+        deadline=time.monotonic() + float(getattr(settings, "FARPOST_BUDGET_SEC", 30.0)),
+        matrix=matrix,
+    )
+    ordered_panels = [
+        (panel, codes)
+        for panel, codes in sorted(_panel_codes(list(lot.defects.all())).items())
+        if panel != BodyPanel.OTHER
+    ]
+    replacement_targets = [
+        (panel, codes, PANELS[panel][0])
+        for panel, codes in ordered_panels
+        if bool(codes & {"X", "XX"}) and panel not in FIXED_PANELS and panel in PANELS
+    ]
+    panel_results = _resolve_replacement_panels(
+        targets=replacement_targets,
+        client=client,
+        client_factory=client_factory,
+        proxy_urls=getattr(settings, "SCRAPER_PROXY_URLS", ()),
+        ctx=ctx,
+    )
+    return _assemble_repair_schema(ordered_panels, panel_results, matrix)
 
 
 def save_repair_estimate(lot: Lot, *, client: FarpostClient | None = None) -> FarpostRepairSummary:
