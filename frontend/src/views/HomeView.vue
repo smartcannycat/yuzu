@@ -17,7 +17,7 @@ import { BaseButton } from '@/components/ui'
 import { useLotFeedActions } from '@/composables/useLotFeedActions'
 import { useAuthStore } from '@/stores/auth'
 import { useBatchesStore } from '@/stores/batches'
-import { useLotsStore } from '@/stores/lots'
+import { useLotFeedStore } from '@/stores/lotFeed'
 import type { InProgressItemPreview, LotSummary, TrafficLightColor } from '@/types/api'
 
 const HOME_IN_PROGRESS_POLL_MS = 2000
@@ -25,7 +25,7 @@ const IN_PROGRESS_AUTO_EXPAND_LIMIT = 4
 
 const router = useRouter()
 const authStore = useAuthStore()
-const lotsStore = useLotsStore()
+const lotsStore = useLotFeedStore()
 const batchesStore = useBatchesStore()
 const isDesktop = useMediaQuery('(min-width: 768px)')
 

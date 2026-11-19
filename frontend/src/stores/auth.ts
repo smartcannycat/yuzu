@@ -2,13 +2,12 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
 import { apiClient, tokenStorage } from '@/api'
-import { useBatchesStore } from '@/stores/batches'
-import { useLotsStore } from '@/stores/lots'
-import type {
-  AuthTokensResponse,
-  UserLoginRequest,
-  UserProfileResponse,
-  UserRegisterRequest,
+import {
+  ApiError,
+  type AuthTokensResponse,
+  type UserLoginRequest,
+  type UserProfileResponse,
+  type UserRegisterRequest,
 } from '@/types/api'
 
 export const useAuthStore = defineStore('auth', () => {
@@ -17,6 +16,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   let initPromise: Promise<void> | null = null
   let sessionEpoch = 0
+  let authActionSeq = 0
 
   const user = computed<UserProfileResponse | null>(() => tokenStorage.session.value?.user ?? null)
 
@@ -42,18 +42,15 @@ export const useAuthStore = defineStore('auth', () => {
 
   function applyAuthTokens(response: AuthTokensResponse): UserProfileResponse {
     sessionEpoch += 1
-    useLotsStore().clear()
-    useBatchesStore().clear()
-    tokenStorage.setFromAuthResponse(response)
+    tokenStorage.resetSession()
+    tokenStorage.setFromAuthResponse(response, { isNewSession: true })
     isInitialized.value = true
     return response.user
   }
 
-  function clearSession(): void {
+  function clearSession(options: { broadcastLogout?: boolean } = {}): void {
     sessionEpoch += 1
-    tokenStorage.clear()
-    useLotsStore().clear()
-    useBatchesStore().clear()
+    tokenStorage.resetSession(options)
   }
 
   async function initialize(): Promise<void> {
@@ -62,22 +59,29 @@ export const useAuthStore = defineStore('auth', () => {
 
     initPromise = (async () => {
       const epochAtStart = sessionEpoch
+      const genAtStart = tokenStorage.getSessionGen()
+
       try {
-        const hasToken = Boolean(tokenStorage.getAccessToken() || tokenStorage.getRefreshToken())
-        if (!hasToken) {
-          if (sessionEpoch === epochAtStart) {
-            clearSession()
+        if (!tokenStorage.getAccessToken()) {
+          const refreshed = await apiClient.auth.refresh()
+          if (sessionEpoch !== epochAtStart || tokenStorage.getSessionGen() !== genAtStart) {
+            return
           }
-          return
+          tokenStorage.setFromAuthResponse(refreshed)
         }
 
         const profile = await apiClient.auth.me()
-        if (sessionEpoch !== epochAtStart) return
+        if (sessionEpoch !== epochAtStart || tokenStorage.getSessionGen() !== genAtStart) {
+          return
+        }
 
         tokenStorage.setUser(profile)
-      } catch {
-        if (sessionEpoch === epochAtStart) {
-          clearSession()
+      } catch (error: unknown) {
+        if (sessionEpoch === epochAtStart && tokenStorage.getSessionGen() === genAtStart) {
+          const status = error instanceof ApiError ? error.status : 0
+          if (status === 401 || status === 403) {
+            clearSession()
+          }
         }
       } finally {
         isInitialized.value = true
@@ -89,9 +93,22 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function login(payload: UserLoginRequest): Promise<UserProfileResponse> {
+    if (isSubmitting.value) {
+      throw new ApiError({
+        type: 'about:blank',
+        title: 'Запрос уже выполняется',
+        status: 409,
+        detail: 'Дождитесь завершения текущей авторизации.',
+      })
+    }
+
+    const actionSeq = ++authActionSeq
     isSubmitting.value = true
     try {
       const response = await apiClient.auth.login(payload)
+      if (actionSeq !== authActionSeq) {
+        return response.user
+      }
       return applyAuthTokens(response)
     } finally {
       isSubmitting.value = false
@@ -99,18 +116,37 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function register(payload: UserRegisterRequest): Promise<UserProfileResponse> {
+    if (isSubmitting.value) {
+      throw new ApiError({
+        type: 'about:blank',
+        title: 'Запрос уже выполняется',
+        status: 409,
+        detail: 'Дождитесь завершения текущей регистрации.',
+      })
+    }
+
+    const actionSeq = ++authActionSeq
     isSubmitting.value = true
     try {
       const response = await apiClient.auth.register(payload)
+      if (actionSeq !== authActionSeq) {
+        return response.user
+      }
       return applyAuthTokens(response)
     } finally {
       isSubmitting.value = false
     }
   }
 
-  function logout(): void {
-    clearSession()
+  async function logout(): Promise<void> {
+    authActionSeq += 1
+    clearSession({ broadcastLogout: true })
     isInitialized.value = true
+    try {
+      await apiClient.auth.logout()
+    } catch {
+      // Local state is already cleared; ignore transient network failure during logout.
+    }
   }
 
   return {

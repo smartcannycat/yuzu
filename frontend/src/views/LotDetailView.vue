@@ -29,7 +29,7 @@ import {
   SegmentedControl,
   type SegmentOption,
 } from '@/components/ui'
-import { useLotsStore } from '@/stores/lots'
+import { useLotDetailStore } from '@/stores/lotDetail'
 import type { RecalculateRequest } from '@/types/api'
 import { getErrorMessage } from '@/utils/errors'
 import { formatArchiveBadgeLabelRu } from '@/utils/formatters'
@@ -53,7 +53,7 @@ function parseLotIdParam(raw: unknown): string {
 
 const route = useRoute()
 const router = useRouter()
-const lotsStore = useLotsStore()
+const lotsStore = useLotDetailStore()
 
 const lotId = computed(() => parseLotIdParam(route.params.lotId))
 const activeTab = ref<LotDetailTab>(parseTabQuery(route.query.tab))

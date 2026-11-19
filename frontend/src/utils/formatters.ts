@@ -1,4 +1,5 @@
 import type { LotArchiveReason, TaskStep, TrafficLightColor } from '@/types/api'
+import { TRAFFIC_LIGHT_META } from '@/utils/lotPresentation'
 
 const rubNumberFormatter = new Intl.NumberFormat('ru-RU')
 const shortDateFormatter = new Intl.DateTimeFormat('ru-RU', {
@@ -19,16 +20,13 @@ const TASK_STEP_LABELS_RU: Record<TaskStep, string> = {
   failed: 'Ошибка анализа',
 }
 
-const VERDICT_LABELS_RU: Record<TrafficLightColor, string> = {
-  green: 'Можно брать',
-  yellow: 'Под вопросом',
-  red: 'Высокий риск',
-}
-
 /**
  * Formats integer amounts in Russian rubles using non-breaking space grouping.
  */
 export function formatRub(amount: number, options?: { signed?: boolean }): string {
+  if (!Number.isFinite(amount)) {
+    return '—'
+  }
   const rounded = Math.round(amount)
   const absFormatted = rubNumberFormatter.format(Math.abs(rounded))
 
@@ -57,7 +55,7 @@ export function formatJpy(amount: number): string {
  * Formats mileage in kilometers (e.g. "62 000 км") or returns an em-dash if unknown.
  */
 export function formatMileageKm(mileageKm: number | null): string {
-  if (mileageKm === null || Number.isNaN(mileageKm)) {
+  if (mileageKm === null || !Number.isFinite(mileageKm)) {
     return '—'
   }
   return `${rubNumberFormatter.format(Math.round(mileageKm))} км`
@@ -67,7 +65,7 @@ export function formatMileageKm(mileageKm: number | null): string {
  * Formats engine displacement in liters (e.g. 1797 -> "1.8 л") or falls back to em-dash.
  */
 export function formatEngineLiters(engineCc: number | null): string {
-  if (engineCc === null || engineCc <= 0 || Number.isNaN(engineCc)) {
+  if (engineCc === null || !Number.isFinite(engineCc) || engineCc <= 0) {
     return '—'
   }
   return `${(engineCc / 1000).toFixed(1)} л`
@@ -84,7 +82,7 @@ export function formatTaskStepRu(step: TaskStep): string {
  * Maps traffic light verdict colors to short Russian labels.
  */
 export function formatVerdictLabelRu(verdict: TrafficLightColor): string {
-  return VERDICT_LABELS_RU[verdict]
+  return TRAFFIC_LIGHT_META[verdict].label
 }
 
 /**
@@ -126,14 +124,15 @@ export function formatArchiveBadgeLabelRu(
 }
 
 /**
- * Strips leading traffic-light emoji glyphs or decorative bullets that backend strings may include.
+ * Normalizes verdict headline text (backend emits plain text per BE-OOP-01).
  */
 export function cleanVerdictText(headline: string): string {
-  return headline.replace(/^[\p{Extended_Pictographic}\uFE0F\u200D\s]+/u, '').trim()
+  return headline.trim()
 }
 
 function pluralizeRu(count: number, forms: readonly [string, string, string]): string {
-  const abs = Math.abs(Math.trunc(count))
+  const safeCount = Number.isFinite(count) ? count : 0
+  const abs = Math.abs(Math.trunc(safeCount))
   const mod100 = abs % 100
   const mod10 = abs % 10
 
