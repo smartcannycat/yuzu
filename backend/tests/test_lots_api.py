@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pillow_heif
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.test import Client, override_settings
 from PIL import Image
 
@@ -18,6 +18,7 @@ from apps.integrations.ml.parser import MlServiceParser
 from apps.lots.media import render_browser_scan_and_thumbnail
 from apps.lots.models import Batch, BatchItem, DamagedPartItem, Lot
 from apps.lots.pipeline import run_batch_pipeline
+from apps.lots.pipeline.batches import append_items_to_batch, enqueue_batch
 
 
 def _register_and_auth(
@@ -431,6 +432,58 @@ def test_batch_upload_cleans_saved_files_on_rollback(api_client: Client, setting
     assert BatchItem.objects.count() == 0
     private_files = [p for p in Path(settings.PRIVATE_INTAKE_ROOT).rglob("*") if p.is_file()]
     assert private_files == []
+
+
+@pytest.mark.django_db(transaction=True)
+def test_batch_upload_cleans_saved_files_on_outer_atomic_rollback(
+    user_factory,
+    settings,
+) -> None:
+    user = user_factory(email="outer-rollback@example.com")
+    png_bytes = _make_png_bytes((128, 128), mode="RGB")
+
+    with (
+        patch("apps.lots.pipeline._schedule_batch_pipeline"),
+        pytest.raises(RuntimeError, match="outer enqueue rollback"),
+        transaction.atomic(),
+    ):
+        enqueue_batch(
+            user,
+            [
+                SimpleUploadedFile("a.png", png_bytes, content_type="image/png"),
+                SimpleUploadedFile("b.png", png_bytes, content_type="image/png"),
+            ],
+        )
+        saved_during_tx = [p for p in Path(settings.PRIVATE_INTAKE_ROOT).rglob("*") if p.is_file()]
+        assert len(saved_during_tx) == 2
+        raise RuntimeError("outer enqueue rollback")
+
+    assert Batch.objects.filter(user=user).count() == 0
+    assert [p for p in Path(settings.PRIVATE_INTAKE_ROOT).rglob("*") if p.is_file()] == []
+
+    # Committed batch stays on disk; a subsequent rolled-back append cleans only the new upload.
+    with patch("apps.lots.pipeline._schedule_batch_pipeline"):
+        committed_batch = enqueue_batch(
+            user,
+            [SimpleUploadedFile("kept.png", png_bytes, content_type="image/png")],
+        )
+    kept_path = Path(committed_batch.items.get().original_file.path)
+    assert kept_path.is_file()
+
+    with (
+        patch("apps.lots.pipeline._schedule_batch_pipeline"),
+        pytest.raises(RuntimeError, match="outer append rollback"),
+        transaction.atomic(),
+    ):
+        append_items_to_batch(
+            user,
+            committed_batch.id,
+            [SimpleUploadedFile("reverted.png", png_bytes, content_type="image/png")],
+        )
+        raise RuntimeError("outer append rollback")
+
+    remaining = [p for p in Path(settings.PRIVATE_INTAKE_ROOT).rglob("*") if p.is_file()]
+    assert remaining == [kept_path]
 
 
 @pytest.mark.django_db(transaction=True)

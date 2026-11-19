@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+import weakref
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -126,13 +127,36 @@ def _next_file_index(batch: Batch) -> int:
     return (max_index if max_index is not None else -1) + 1
 
 
-def _cleanup_saved_files(saved_files: list[tuple[Any, str]]) -> None:
-    for storage, name in saved_files:
-        try:
-            if name and storage.exists(name):
-                storage.delete(name)
-        except OSError:
-            logger.warning("Failed to remove rolled-back batch upload %s", name, exc_info=True)
+def _delete_storage_file(storage: Any, name: str) -> None:
+    try:
+        if name and storage.exists(name):
+            storage.delete(name)
+    except OSError:
+        logger.warning("Failed to remove rolled-back batch upload %s", name, exc_info=True)
+
+
+class _RollbackSentinel:
+    """Reference-counted sentinel used to trigger cleanup on transaction rollback."""
+
+
+def _register_file_rollback_cleanup(storage: Any, name: str) -> weakref.finalize:
+    """Register per-file cleanup that executes if any enclosing atomic block rolls back."""
+    sentinel = _RollbackSentinel()
+    finalizer = weakref.finalize(sentinel, _delete_storage_file, storage, name)
+
+    def _on_commit() -> None:
+        finalizer.detach()
+        # Keep sentinel referenced by the on_commit closure until commit or rollback drops it.
+        _ = sentinel
+
+    transaction.on_commit(_on_commit)
+    return finalizer
+
+
+def _cleanup_saved_files(saved_files: list[tuple[Any, str, weakref.finalize]]) -> None:
+    for storage, name, finalizer in saved_files:
+        finalizer.detach()
+        _delete_storage_file(storage, name)
 
 
 def _create_batch_items(
@@ -141,24 +165,31 @@ def _create_batch_items(
     validated_files: list[tuple[UploadedFile, str, str]],
     *,
     start_index: int = 0,
-    saved_files: list[tuple[Any, str]] | None = None,
 ) -> None:
-    tracked_files = saved_files if saved_files is not None else []
-    for offset, (upload, safe_name, ext) in enumerate(validated_files):
-        upload.seek(0)
-        lot = Lot.objects.create(user=user)
-        item = BatchItem.objects.create(
-            batch=batch,
-            lot=lot,
-            file_index=start_index + offset,
-            original_filename=safe_name,
-            status=ItemProcessingStatus.QUEUED,
-            current_step=TaskStep.GATEKEEPER,
-        )
-        storage_name = f"{uuid.uuid4().hex}{ext}"
-        item.original_file.save(storage_name, upload, save=False)
-        tracked_files.append((item.original_file.storage, item.original_file.name))
-        item.save(update_fields=["original_file", "updated_at"])
+    saved_files: list[tuple[Any, str, weakref.finalize]] = []
+    try:
+        for offset, (upload, safe_name, ext) in enumerate(validated_files):
+            upload.seek(0)
+            lot = Lot.objects.create(user=user)
+            item = BatchItem.objects.create(
+                batch=batch,
+                lot=lot,
+                file_index=start_index + offset,
+                original_filename=safe_name,
+                status=ItemProcessingStatus.QUEUED,
+                current_step=TaskStep.GATEKEEPER,
+            )
+            storage_name = f"{uuid.uuid4().hex}{ext}"
+            item.original_file.save(storage_name, upload, save=False)
+            finalizer = _register_file_rollback_cleanup(
+                item.original_file.storage,
+                item.original_file.name,
+            )
+            saved_files.append((item.original_file.storage, item.original_file.name, finalizer))
+            item.save(update_fields=["original_file", "updated_at"])
+    except BaseException:
+        _cleanup_saved_files(saved_files)
+        raise
 
 
 def _schedule_batch_pipeline(batch_id: uuid.UUID) -> None:
@@ -173,20 +204,9 @@ def enqueue_batch(user: User, files: list[UploadedFile]) -> Batch:
     from apps.lots import pipeline as pipeline_pkg
 
     validated_files = _validate_upload_files(files)
-    saved_files: list[tuple[Any, str]] = []
-    try:
-        batch = Batch.objects.create(user=user, status=BatchStatus.QUEUED)
-        _create_batch_items(
-            batch,
-            user,
-            validated_files,
-            start_index=0,
-            saved_files=saved_files,
-        )
-        pipeline_pkg._schedule_batch_pipeline(batch.id)
-    except BaseException:
-        _cleanup_saved_files(saved_files)
-        raise
+    batch = Batch.objects.create(user=user, status=BatchStatus.QUEUED)
+    _create_batch_items(batch, user, validated_files, start_index=0)
+    pipeline_pkg._schedule_batch_pipeline(batch.id)
     return batch
 
 
@@ -214,22 +234,11 @@ def append_items_to_batch(
             f"В одной пачке может быть не более {_MAX_FILES_PER_BATCH} файлов",
             title="Превышен лимит файлов в пачке",
         )
-    saved_files: list[tuple[Any, str]] = []
-    try:
-        _create_batch_items(
-            batch,
-            user,
-            validated_files,
-            start_index=_next_file_index(batch),
-            saved_files=saved_files,
-        )
-        if batch.status == BatchStatus.PARTIAL_FAILED:
-            batch.status = BatchStatus.QUEUED
-            batch.save(update_fields=["status", "updated_at"])
-            pipeline_pkg._schedule_batch_pipeline(batch.id)
-    except BaseException:
-        _cleanup_saved_files(saved_files)
-        raise
+    _create_batch_items(batch, user, validated_files, start_index=_next_file_index(batch))
+    if batch.status == BatchStatus.PARTIAL_FAILED:
+        batch.status = BatchStatus.QUEUED
+        batch.save(update_fields=["status", "updated_at"])
+        pipeline_pkg._schedule_batch_pipeline(batch.id)
     return batch
 
 
