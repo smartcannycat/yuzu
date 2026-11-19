@@ -1,10 +1,21 @@
 from uuid import UUID
 
 import pytest
-from django.test import Client
+from django.conf import settings
+from django.test import Client, override_settings
 from ninja_jwt.tokens import AccessToken
 
 from apps.users.models import User
+
+
+class _FakeRateLimitRedis:
+    def __init__(self) -> None:
+        self.counters: dict[str, int] = {}
+
+    def eval(self, _script: str, _numkeys: int, key: str, *_args) -> int:
+        next_val = self.counters.get(key, 0) + 1
+        self.counters[key] = next_val
+        return next_val
 
 
 @pytest.mark.django_db
@@ -24,7 +35,14 @@ def test_register_success(api_client: Client) -> None:
     assert data["token_type"] == "bearer"
     assert data["expires_in_sec"] == 3600
     assert isinstance(data["access_token"], str)
-    assert isinstance(data["refresh_token"], str)
+    assert "refresh_token" not in data
+
+    cookie = response.cookies[settings.JWT_REFRESH_COOKIE_NAME]
+    assert cookie.value
+    assert cookie["httponly"] is True
+    assert cookie["path"] == settings.JWT_REFRESH_COOKIE_PATH
+    assert cookie["samesite"] == "Lax"
+    assert bool(cookie["secure"]) is (not settings.DEBUG)
 
     user_data = data["user"]
     UUID(user_data["user_id"])
@@ -208,23 +226,26 @@ def test_refresh_token_flow_and_replay_blacklist(api_client: Client, user_factor
         {"email": "refresh@example.com", "password": "Password123!"},
         content_type="application/json",
     )
-    initial_tokens = login_response.json()
+    assert login_response.status_code == 200
+    assert "refresh_token" not in login_response.json()
+    initial_refresh = login_response.cookies[settings.JWT_REFRESH_COOKIE_NAME].value
 
     refresh_response = api_client.post(
         "/api/v1/auth/refresh",
-        {"refresh_token": initial_tokens["refresh_token"]},
-        content_type="application/json",
+        HTTP_ORIGIN="http://localhost:5173",
     )
     assert refresh_response.status_code == 200
     refreshed = refresh_response.json()
     assert refreshed["token_type"] == "bearer"
     assert refreshed["user"]["user_id"] == str(user.id)
-    assert refreshed["refresh_token"] != initial_tokens["refresh_token"]
+    assert "refresh_token" not in refreshed
+    rotated_refresh = refresh_response.cookies[settings.JWT_REFRESH_COOKIE_NAME].value
+    assert rotated_refresh != initial_refresh
 
+    api_client.cookies[settings.JWT_REFRESH_COOKIE_NAME] = initial_refresh
     replay_response = api_client.post(
         "/api/v1/auth/refresh",
-        {"refresh_token": initial_tokens["refresh_token"]},
-        content_type="application/json",
+        HTTP_X_REQUESTED_WITH="YuzuSPA",
     )
     assert replay_response.status_code == 401
     assert replay_response.headers["Content-Type"].startswith("application/problem+json")
@@ -246,31 +267,210 @@ def test_token_type_confusion_rejected(api_client: Client, user_factory) -> None
         content_type="application/json",
     )
     tokens = login_response.json()
+    refresh_cookie = login_response.cookies[settings.JWT_REFRESH_COOKIE_NAME].value
 
+    api_client.cookies[settings.JWT_REFRESH_COOKIE_NAME] = tokens["access_token"]
     refresh_with_access = api_client.post(
         "/api/v1/auth/refresh",
-        {"refresh_token": tokens["access_token"]},
-        content_type="application/json",
+        HTTP_X_REQUESTED_WITH="YuzuSPA",
     )
     assert refresh_with_access.status_code == 401
 
     me_with_refresh = api_client.get(
         "/api/v1/auth/me",
-        HTTP_AUTHORIZATION=f"Bearer {tokens['refresh_token']}",
+        HTTP_AUTHORIZATION=f"Bearer {refresh_cookie}",
     )
     assert me_with_refresh.status_code == 401
 
 
 @pytest.mark.django_db
-def test_refresh_invalid_token_returns_401_problem(api_client: Client) -> None:
+def test_refresh_invalid_or_missing_cookie_returns_401_problem(api_client: Client) -> None:
+    missing_resp = api_client.post(
+        "/api/v1/auth/refresh",
+        HTTP_X_REQUESTED_WITH="YuzuSPA",
+    )
+    assert missing_resp.status_code == 401
+    assert missing_resp.headers["Content-Type"].startswith("application/problem+json")
+
+    api_client.cookies[settings.JWT_REFRESH_COOKIE_NAME] = "not.a.valid.jwt"
     response = api_client.post(
         "/api/v1/auth/refresh",
-        {"refresh_token": "not.a.valid.jwt"},
-        content_type="application/json",
+        HTTP_X_REQUESTED_WITH="YuzuSPA",
     )
     assert response.status_code == 401
     assert response.headers["Content-Type"].startswith("application/problem+json")
     assert response.json()["status"] == 401
+
+
+@pytest.mark.django_db
+def test_refresh_and_logout_enforce_csrf_origin_protection(
+    api_client: Client,
+    user_factory,
+) -> None:
+    user_factory(email="csrf@example.com", password="Password123!")
+    login_response = api_client.post(
+        "/api/v1/auth/login",
+        {"email": "csrf@example.com", "password": "Password123!"},
+        content_type="application/json",
+    )
+    assert login_response.status_code == 200
+
+    for endpoint in ("/api/v1/auth/refresh", "/api/v1/auth/logout"):
+        missing_headers = api_client.post(endpoint)
+        assert missing_headers.status_code == 403
+        assert missing_headers.headers["Content-Type"].startswith("application/problem+json")
+
+        evil_origin = api_client.post(endpoint, HTTP_ORIGIN="https://evil.example.com")
+        assert evil_origin.status_code == 403
+
+        evil_origin_with_header = api_client.post(
+            endpoint,
+            HTTP_ORIGIN="https://evil.example.com",
+            HTTP_X_REQUESTED_WITH="YuzuSPA",
+        )
+        assert evil_origin_with_header.status_code == 403
+
+        null_origin = api_client.post(endpoint, HTTP_ORIGIN="null")
+        assert null_origin.status_code == 403
+
+        evil_referer = api_client.post(endpoint, HTTP_REFERER="https://evil.example.com/form")
+        assert evil_referer.status_code == 403
+
+    assert (
+        api_client.post(
+            "/api/v1/auth/refresh",
+            HTTP_REFERER="http://localhost:5173/dashboard",
+        ).status_code
+        == 200
+    )
+    assert (
+        api_client.post(
+            "/api/v1/auth/refresh",
+            HTTP_ORIGIN="http://testserver",
+        ).status_code
+        == 200
+    )
+
+
+@pytest.mark.django_db
+def test_logout_blacklists_refresh_cookie_clears_cookie_and_is_idempotent(
+    api_client: Client,
+    user_factory,
+) -> None:
+    user_factory(email="logout@example.com", password="Password123!")
+    login_response = api_client.post(
+        "/api/v1/auth/login",
+        {"email": "logout@example.com", "password": "Password123!"},
+        content_type="application/json",
+    )
+    refresh_val = login_response.cookies[settings.JWT_REFRESH_COOKIE_NAME].value
+
+    logout_response = api_client.post(
+        "/api/v1/auth/logout",
+        HTTP_ORIGIN="http://localhost:5173",
+    )
+    assert logout_response.status_code == 204
+    cleared_cookie = logout_response.cookies[settings.JWT_REFRESH_COOKIE_NAME]
+    assert cleared_cookie.value == ""
+    assert cleared_cookie["max-age"] == 0
+    assert cleared_cookie["path"] == settings.JWT_REFRESH_COOKIE_PATH
+
+    # Blacklisted refresh cookie cannot be replayed after logout.
+    api_client.cookies[settings.JWT_REFRESH_COOKIE_NAME] = refresh_val
+    after_logout_refresh = api_client.post(
+        "/api/v1/auth/refresh",
+        HTTP_X_REQUESTED_WITH="YuzuSPA",
+    )
+    assert after_logout_refresh.status_code == 401
+
+    # Logout remains idempotent when cookie is absent or invalid.
+    api_client.cookies.pop(settings.JWT_REFRESH_COOKIE_NAME, None)
+    assert (
+        api_client.post("/api/v1/auth/logout", HTTP_X_REQUESTED_WITH="YuzuSPA").status_code == 204
+    )
+    api_client.cookies[settings.JWT_REFRESH_COOKIE_NAME] = "garbage.jwt"
+    assert (
+        api_client.post("/api/v1/auth/logout", HTTP_X_REQUESTED_WITH="YuzuSPA").status_code == 204
+    )
+
+
+@pytest.mark.django_db
+def test_refresh_cookie_sets_secure_flag_when_not_debug(
+    api_client: Client,
+    user_factory,
+) -> None:
+    user_factory(email="secure@example.com", password="Password123!")
+
+    with override_settings(DEBUG=True):
+        dev_resp = api_client.post(
+            "/api/v1/auth/login",
+            {"email": "secure@example.com", "password": "Password123!"},
+            content_type="application/json",
+        )
+        assert dev_resp.status_code == 200
+        assert not dev_resp.cookies[settings.JWT_REFRESH_COOKIE_NAME]["secure"]
+
+    with override_settings(DEBUG=False):
+        login_resp = api_client.post(
+            "/api/v1/auth/login",
+            {"email": "secure@example.com", "password": "Password123!"},
+            content_type="application/json",
+        )
+        assert login_resp.status_code == 200
+        assert bool(login_resp.cookies[settings.JWT_REFRESH_COOKIE_NAME]["secure"]) is True
+
+        refresh_resp = api_client.post(
+            "/api/v1/auth/refresh",
+            HTTP_X_REQUESTED_WITH="YuzuSPA",
+        )
+        assert refresh_resp.status_code == 200
+        assert bool(refresh_resp.cookies[settings.JWT_REFRESH_COOKIE_NAME]["secure"]) is True
+
+
+@pytest.mark.django_db
+def test_login_per_account_rate_limit_independent_of_ip(
+    api_client: Client,
+    user_factory,
+    settings,
+    monkeypatch,
+) -> None:
+    import hashlib
+
+    user_factory(email="target@example.com", password="Password123!")
+    fake_redis = _FakeRateLimitRedis()
+    settings.RATE_LIMIT_ENABLED = True
+    monkeypatch.setattr("apps.core.redis_utils.get_redis_client", lambda: fake_redis)
+
+    for idx in range(10):
+        resp = api_client.post(
+            "/api/v1/auth/login",
+            {"email": "Target@Example.com", "password": "WrongPassword!"},
+            content_type="application/json",
+            REMOTE_ADDR=f"198.51.100.{idx + 1}",
+        )
+        assert resp.status_code == 401
+
+    blocked = api_client.post(
+        "/api/v1/auth/login",
+        {"email": "target@example.com", "password": "Password123!"},
+        content_type="application/json",
+        REMOTE_ADDR="198.51.100.99",
+    )
+    assert blocked.status_code == 429
+    assert blocked.headers["Content-Type"].startswith("application/problem+json")
+
+    expected_hash = hashlib.sha256(b"target@example.com").hexdigest()
+    assert f"yuzu:rl:auth:login:email:{expected_hash}" in fake_redis.counters
+    assert all("target@example.com" not in key for key in fake_redis.counters)
+
+    # Another account is not affected by target's per-account throttle.
+    other = api_client.post(
+        "/api/v1/auth/login",
+        {"email": "other@example.com", "password": "WrongPassword!"},
+        content_type="application/json",
+        REMOTE_ADDR="198.51.100.100",
+    )
+    assert other.status_code == 401
 
 
 @pytest.mark.django_db

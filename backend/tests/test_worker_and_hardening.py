@@ -144,6 +144,68 @@ def test_purge_stale_media_cleans_only_expired_deleted_lots_and_old_uploads(sett
     call_command("purge_media", "--deleted-days=7", "--originals-hours=24")
 
 
+@pytest.mark.django_db
+def test_purge_stale_media_cleans_orphan_incomplete_failed_lot_media() -> None:
+    from apps.users.models import User
+
+    user = User.objects.create_user(email="orphan-purge@example.com", password="StrongPassword123")
+    failed_batch = Batch.objects.create(user=user, status=BatchStatus.FAILED)
+    failed_lot = Lot.objects.create(
+        user=user,
+        completed_at=None,
+        deleted_at=None,
+        sheet_scan=SimpleUploadedFile(
+            "orphan_scan.jpg", _make_jpeg_bytes(), content_type="image/jpeg"
+        ),
+        sheet_thumbnail=SimpleUploadedFile(
+            "orphan_thumb.jpg", _make_jpeg_bytes(), content_type="image/jpeg"
+        ),
+    )
+    BatchItem.objects.create(
+        batch=failed_batch,
+        lot=failed_lot,
+        file_index=0,
+        original_filename="orphan.jpg",
+        original_file=SimpleUploadedFile(
+            "orphan.jpg", _make_jpeg_bytes(), content_type="image/jpeg"
+        ),
+        status=ItemProcessingStatus.FAILED,
+        current_step=TaskStep.FAILED,
+    )
+
+    active_batch = Batch.objects.create(user=user, status=BatchStatus.PROCESSING)
+    processing_lot = Lot.objects.create(
+        user=user,
+        completed_at=None,
+        deleted_at=None,
+        sheet_scan=SimpleUploadedFile(
+            "active_scan.jpg", _make_jpeg_bytes(), content_type="image/jpeg"
+        ),
+    )
+    BatchItem.objects.create(
+        batch=active_batch,
+        lot=processing_lot,
+        file_index=0,
+        original_filename="active.jpg",
+        original_file=SimpleUploadedFile(
+            "active.jpg", _make_jpeg_bytes(), content_type="image/jpeg"
+        ),
+        status=ItemProcessingStatus.PROCESSING,
+        current_step=TaskStep.SCORING,
+    )
+
+    orphan_scan_path = Path(failed_lot.sheet_scan.path)
+    orphan_thumb_path = Path(failed_lot.sheet_thumbnail.path)
+    active_scan_path = Path(processing_lot.sheet_scan.path)
+    assert orphan_scan_path.exists() and orphan_thumb_path.exists() and active_scan_path.exists()
+
+    res = purge_stale_media(deleted_after_days=7, originals_after_hours=24)
+    assert res["deleted_lots_files"] == 2
+    assert not orphan_scan_path.exists()
+    assert not orphan_thumb_path.exists()
+    assert active_scan_path.exists()
+
+
 def test_redis_rate_limiter_and_distributed_aleado_slot(settings) -> None:
     fake = _FakeRedis()
     settings.RATE_LIMIT_ENABLED = True
