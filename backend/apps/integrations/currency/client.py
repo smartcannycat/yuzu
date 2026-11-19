@@ -1,5 +1,6 @@
 """HTTP client and payload validation for cbr-xml-daily.ru daily_json.js."""
 
+import json
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -7,9 +8,11 @@ from typing import Any
 import httpx
 
 from apps.integrations.currency.domain import BaseRates, normalize_unit_rate
+from apps.integrations.shared.http.transport import read_bounded_httpx_response
 
 _REQUIRED_CURRENCIES = ("EUR", "USD", "JPY")
 DEFAULT_CBRF_API_URL = "https://www.cbr-xml-daily.ru/daily_json.js"
+_MAX_CBRF_BYTES = 1 * 1024 * 1024
 
 
 class CbrfFetchError(RuntimeError):
@@ -38,9 +41,8 @@ class CbrfClient:
     def fetch_rates(self) -> tuple[BaseRates, datetime]:
         """Fetch the payload and return normalized base rates plus fetch time (UTC)."""
         try:
-            response = self._request()
-            response.raise_for_status()
-            payload = response.json()
+            content = self._request_bytes()
+            payload = json.loads(content)
         except CbrfFetchError:
             raise
         except (httpx.HTTPError, ValueError) as exc:
@@ -48,13 +50,22 @@ class CbrfClient:
         rates = self._parse_payload(payload)
         return rates, datetime.now(UTC)
 
-    def _request(self) -> httpx.Response:
-        with httpx.Client(
-            timeout=self._timeout_sec,
-            transport=self._transport,
-            headers={"Accept": "application/json"},
-        ) as client:
-            return client.get(self._api_url)
+    def _request_bytes(self) -> bytes:
+        with (
+            httpx.Client(
+                timeout=self._timeout_sec,
+                transport=self._transport,
+                headers={"Accept": "application/json"},
+                follow_redirects=False,
+            ) as client,
+            client.stream("GET", self._api_url) as response,
+        ):
+            response.raise_for_status()
+            return read_bounded_httpx_response(
+                response,
+                _MAX_CBRF_BYTES,
+                error_factory=CbrfFetchError,
+            )
 
     def _parse_payload(self, payload: Any) -> BaseRates:
         if not isinstance(payload, dict):
