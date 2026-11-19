@@ -31,7 +31,7 @@ from apps.integrations.drom.schemas import (
 from apps.integrations.drom.service import DromMarketService, _build_market_cache_key
 from apps.integrations.drom.slugs import DromSlugResolver
 from apps.lots.models import Batch, BatchItem, Lot, MarketComparisonInfo
-from apps.lots.services import _step_drom_market
+from apps.lots.pipeline.stages import _step_drom_market
 
 
 def _make_ssr_json_html(bulls: list[dict]) -> bytes:

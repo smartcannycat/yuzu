@@ -48,6 +48,7 @@ from apps.integrations.drom.schemas import (
 from apps.integrations.drom.service import DromMarketService, _build_market_cache_key
 from apps.integrations.drom.slugs import DromSlugResolver, normalize_slug
 from apps.lots.api import schemas
+from apps.lots.api.queries.detail import _build_lot_detail
 from apps.lots.models import (
     Batch,
     BatchItem,
@@ -64,7 +65,7 @@ from apps.lots.models import (
     WiseCostLadder,
     WiseCostStep,
 )
-from apps.lots.services import _build_lot_detail, _step_drom_market
+from apps.lots.pipeline.stages import _step_drom_market
 
 
 def _make_ssr_html(bulls: list[dict], *, charset: str = "utf-8") -> bytes:
