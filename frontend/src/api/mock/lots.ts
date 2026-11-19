@@ -1,15 +1,12 @@
 import { delay } from '@/api/mock/helpers'
 import { buildMockLotDetail, recalculateMockLotDetail } from '@/api/mock/lotDetails'
-import { createMockLotsWorkspace } from '@/api/mock/lotsBatches'
-import { MOCK_IN_PROGRESS_SUMMARY, SEEDED_MOCK_LOTS } from '@/api/mock/lotsSeed'
+import { queryMockLots } from '@/api/mock/lotFilters'
+import { createMockLotsWorkspace, type MockLotsWorkspace } from '@/api/mock/lotsBatches'
 import type { LotsApi } from '@/api/types'
 import {
   ApiError,
-  type AvailableFilters,
   type BatchCreateResponse,
   type BatchProgressResponse,
-  type FilterCountItem,
-  type InProgressSummary,
   type LotBulkDeleteRequest,
   type LotBulkDeleteResponse,
   type LotDetailResponse,
@@ -19,206 +16,86 @@ import {
   type LotSummary,
   type RecalculateRequest,
   type RecalculateResponse,
-  type TrafficLightColor,
 } from '@/types/api'
 
-type FilterFacet = 'make' | 'model' | 'verdict'
+export { queryMockLots }
 
-interface NormalizedFilters {
-  query: string
-  make: string
-  model: string
-  verdict?: TrafficLightColor
-  hasAnomaly?: boolean
-}
-
-function normalizeFilters(params: LotListQueryParams): NormalizedFilters {
+export function applyRecalculateToDetail(
+  current: LotDetailResponse,
+  response: RecalculateResponse,
+): LotDetailResponse {
   return {
-    query: params.query?.trim().toLowerCase() ?? '',
-    make: params.make?.trim().toLowerCase() ?? '',
-    model: params.model?.trim().toLowerCase() ?? '',
-    verdict: params.verdict,
-    hasAnomaly: params.has_anomaly,
-  }
-}
-
-function matchesLotFilters(
-  lot: LotSummary,
-  filters: NormalizedFilters,
-  excludedFacets: ReadonlySet<FilterFacet> = new Set(),
-): boolean {
-  if (filters.query) {
-    const searchable = [
-      lot.make,
-      lot.model,
-      lot.frame_id,
-      lot.lot_number,
-      lot.auction_house,
-      lot.verdict_headline,
-    ]
-      .join(' ')
-      .toLowerCase()
-    if (!searchable.includes(filters.query)) {
-      return false
-    }
-  }
-
-  if (!excludedFacets.has('make') && filters.make && lot.make.toLowerCase() !== filters.make) {
-    return false
-  }
-
-  if (!excludedFacets.has('model') && filters.model && lot.model.toLowerCase() !== filters.model) {
-    return false
-  }
-
-  if (!excludedFacets.has('verdict') && filters.verdict && lot.verdict !== filters.verdict) {
-    return false
-  }
-
-  if (typeof filters.hasAnomaly === 'boolean' && lot.has_anomaly !== filters.hasAnomaly) {
-    return false
-  }
-
-  return true
-}
-
-function buildFilterCounts(lots: readonly LotSummary[], key: 'make' | 'model'): FilterCountItem[] {
-  const counts = new Map<string, number>()
-  for (const lot of lots) {
-    const val = lot[key]
-    counts.set(val, (counts.get(val) ?? 0) + 1)
-  }
-  return Array.from(counts.entries())
-    .map(([value, count]) => ({ value, count }))
-    .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value, 'ru'))
-}
-
-function buildAvailableFilters(
-  scopedLots: readonly LotSummary[],
-  filters: NormalizedFilters,
-  archivedLotsCount: number,
-): AvailableFilters {
-  const makeFacetLots = scopedLots.filter((lot) =>
-    matchesLotFilters(lot, filters, new Set<FilterFacet>(['make', 'model'])),
-  )
-  const makeCounts = new Map<string, number>()
-  for (const lot of scopedLots) {
-    if (!makeCounts.has(lot.make)) {
-      makeCounts.set(lot.make, 0)
-    }
-  }
-  for (const lot of makeFacetLots) {
-    makeCounts.set(lot.make, (makeCounts.get(lot.make) ?? 0) + 1)
-  }
-  const makes: FilterCountItem[] = Array.from(makeCounts.entries())
-    .map(([value, count]) => ({ value, count }))
-    .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value, 'ru'))
-
-  const modelFacetLots = scopedLots.filter((lot) =>
-    matchesLotFilters(lot, filters, new Set<FilterFacet>(['model'])),
-  )
-  const models = buildFilterCounts(modelFacetLots, 'model')
-
-  if (filters.model && !models.some((item) => item.value.toLowerCase() === filters.model)) {
-    const activeModelLot = scopedLots.find(
-      (lot) =>
-        lot.model.toLowerCase() === filters.model &&
-        (!filters.make || lot.make.toLowerCase() === filters.make),
-    )
-    if (activeModelLot) {
-      models.push({ value: activeModelLot.model, count: 0 })
-    }
-  }
-
-  const verdictFacetLots = scopedLots.filter((lot) =>
-    matchesLotFilters(lot, filters, new Set<FilterFacet>(['verdict'])),
-  )
-  const countsByVerdict: Partial<Record<TrafficLightColor, number>> = {
-    green: 0,
-    yellow: 0,
-    red: 0,
-  }
-  for (const lot of verdictFacetLots) {
-    countsByVerdict[lot.verdict] = (countsByVerdict[lot.verdict] ?? 0) + 1
-  }
-
-  return {
-    total_lots_count: makeFacetLots.length,
-    archived_lots_count: archivedLotsCount,
-    makes,
-    models,
-    counts_by_verdict: countsByVerdict,
-  }
-}
-
-export function queryMockLots(
-  params: LotListQueryParams = {},
-  sourceLots: readonly LotSummary[] = SEEDED_MOCK_LOTS,
-  inProgress: InProgressSummary = MOCK_IN_PROGRESS_SUMMARY,
-): LotListResponse {
-  const filters = normalizeFilters(params)
-  const lifecycle = params.lifecycle ?? 'active'
-  const archivedLotsCount = sourceLots.filter((lot) => lot.is_archived).length
-  const scopedLots =
-    lifecycle === 'archived'
-      ? sourceLots.filter((lot) => lot.is_archived)
-      : lifecycle === 'all'
-        ? sourceLots
-        : sourceLots.filter((lot) => !lot.is_archived)
-
-  const filtered = scopedLots.filter((lot) => matchesLotFilters(lot, filters))
-
-  const sortBy = params.sort_by ?? 'created_at'
-  const sortOrder = params.sort_order ?? 'desc'
-  const direction = sortOrder === 'asc' ? 1 : -1
-
-  const sorted = [...filtered].sort((a, b) => {
-    if (sortBy === 'net_benefit') {
-      return (a.net_benefit_rub - b.net_benefit_rub) * direction
-    }
-    if (sortBy === 'turnkey_cost') {
-      return (a.turnkey_cost_rub - b.turnkey_cost_rub) * direction
-    }
-    return (Date.parse(a.created_at) - Date.parse(b.created_at)) * direction
-  })
-
-  const page = Math.max(1, params.page ?? 1)
-  const pageSize = Math.max(1, Math.min(100, params.page_size ?? 20))
-  const totalItems = sorted.length
-  const totalPages = Math.ceil(totalItems / pageSize)
-  const offset = (page - 1) * pageSize
-
-  return {
-    items: sorted.slice(offset, offset + pageSize),
-    in_progress: inProgress,
-    pagination: {
-      total_items: totalItems,
-      page,
-      page_size: pageSize,
-      total_pages: totalPages,
+    ...current,
+    updated_at: response.recalculated_at,
+    passport: {
+      ...current.passport,
+      ...(response.power_hp !== undefined ? { power_hp: response.power_hp } : {}),
+      ...(response.power_hp_source !== undefined
+        ? { power_hp_source: response.power_hp_source }
+        : {}),
+      ...(response.is_under_160_hp !== undefined
+        ? { is_under_160_hp: response.is_under_160_hp }
+        : {}),
+      ...(response.ocr_warnings !== undefined ? { ocr_warnings: response.ocr_warnings } : {}),
     },
-    available_filters: buildAvailableFilters(scopedLots, filters, archivedLotsCount),
+    verdict: response.verdict,
+    economics: {
+      ...current.economics,
+      ...(response.bid_slider_min_jpy !== undefined
+        ? { bid_slider_min_jpy: response.bid_slider_min_jpy }
+        : {}),
+      is_repairs_included: response.include_repairs,
+      is_simulation_modified: response.is_simulation_modified ?? false,
+      customs: response.customs,
+      wise_cost_ladder: response.wise_cost_ladder,
+    },
   }
+}
+
+export function persistMockDetail(
+  current: LotDetailResponse,
+  response: RecalculateResponse,
+  detailCache: Map<string, LotDetailResponse>,
+  workspace: MockLotsWorkspace,
+): LotDetailResponse {
+  const updated = applyRecalculateToDetail(current, response)
+  detailCache.set(current.lot_id, updated)
+  workspace.updateLotEconomics(current.lot_id, response)
+  return updated
+}
+
+function syncDetailLifecycle(detail: LotDetailResponse, summary: LotSummary): LotDetailResponse {
+  return {
+    ...detail,
+    is_archived: summary.is_archived,
+    archived_at: summary.archived_at,
+    archived_reason: summary.archived_reason,
+    expires_at: summary.expires_at,
+    passport: {
+      ...detail.passport,
+      auction_date: summary.auction_date,
+    },
+  }
+}
+
+function isModifiedAgainstBaseline(
+  baseline: LotDetailResponse,
+  response: RecalculateResponse,
+): boolean {
+  return (
+    response.applied_bid_jpy !== baseline.economics.wise_cost_ladder.car_bid_jpy ||
+    response.is_commercial_util !== baseline.economics.customs.is_commercial_util ||
+    response.include_repairs !== baseline.economics.is_repairs_included ||
+    response.customs.freight_vladivostok_rub !==
+      baseline.economics.customs.freight_vladivostok_rub ||
+    (response.power_hp !== undefined && response.power_hp !== baseline.passport.power_hp)
+  )
 }
 
 export function createMockLotsApi(defaultDelay: number, persistState = false): LotsApi {
   const workspace = createMockLotsWorkspace({ persistState })
   const detailCache = new Map<string, LotDetailResponse>()
   const baselineCache = new Map<string, LotDetailResponse>()
-
-  function syncDetailLifecycle(detail: LotDetailResponse, summary: LotSummary): LotDetailResponse {
-    return {
-      ...detail,
-      is_archived: summary.is_archived,
-      archived_at: summary.archived_at,
-      archived_reason: summary.archived_reason,
-      expires_at: summary.expires_at,
-      passport: {
-        ...detail.passport,
-        auction_date: summary.auction_date,
-      },
-    }
-  }
 
   function resolveLotDetail(lotId: string): LotDetailResponse {
     const snapshot = workspace.getFeedSnapshot()
@@ -246,34 +123,6 @@ export function createMockLotsApi(defaultDelay: number, persistState = false): L
     return detail
   }
 
-  function isModifiedAgainstBaseline(
-    baseline: LotDetailResponse,
-    response: RecalculateResponse,
-  ): boolean {
-    return (
-      response.applied_bid_jpy !== baseline.economics.wise_cost_ladder.car_bid_jpy ||
-      response.is_commercial_util !== baseline.economics.customs.is_commercial_util ||
-      response.include_repairs !== baseline.economics.is_repairs_included ||
-      response.customs.freight_vladivostok_rub !==
-        baseline.economics.customs.freight_vladivostok_rub
-    )
-  }
-
-  function persistMockDetail(current: LotDetailResponse, response: RecalculateResponse): void {
-    detailCache.set(current.lot_id, {
-      ...current,
-      updated_at: response.recalculated_at,
-      verdict: response.verdict,
-      economics: {
-        ...current.economics,
-        is_repairs_included: response.include_repairs,
-        is_simulation_modified: response.is_simulation_modified ?? false,
-        customs: response.customs,
-        wise_cost_ladder: response.wise_cost_ladder,
-      },
-    })
-  }
-
   return {
     async list(params?: LotListQueryParams): Promise<LotListResponse> {
       await delay(Math.min(defaultDelay, 160))
@@ -295,7 +144,7 @@ export function createMockLotsApi(defaultDelay: number, persistState = false): L
         ...raw,
         is_simulation_modified: isModifiedAgainstBaseline(baseline, raw),
       }
-      persistMockDetail(current, response)
+      persistMockDetail(current, response, detailCache, workspace)
       return response
     },
 
@@ -305,7 +154,7 @@ export function createMockLotsApi(defaultDelay: number, persistState = false): L
       const baseline = structuredClone(baselineCache.get(lotId) ?? current)
       detailCache.set(lotId, structuredClone(baseline))
       const ladder = baseline.economics.wise_cost_ladder
-      return {
+      const response: RecalculateResponse = {
         lot_id: baseline.lot_id,
         recalculated_at: new Date().toISOString(),
         applied_bid_jpy: ladder.car_bid_jpy,
@@ -318,10 +167,16 @@ export function createMockLotsApi(defaultDelay: number, persistState = false): L
         market_price_rf_rub: ladder.market_price_rf_rub,
         net_benefit_rub: ladder.net_benefit_rub,
         benefit_percentage: ladder.benefit_percentage,
+        power_hp: baseline.passport.power_hp,
+        power_hp_source: baseline.passport.power_hp_source,
+        is_under_160_hp: baseline.passport.is_under_160_hp,
+        ocr_warnings: baseline.passport.ocr_warnings,
         verdict: baseline.verdict,
         is_simulation_modified: false,
         pdf_report_stale: false,
       }
+      workspace.updateLotEconomics(lotId, response)
+      return response
     },
 
     async updateLifecycle(lotId: string, payload: LotLifecyclePatchRequest): Promise<LotSummary> {
