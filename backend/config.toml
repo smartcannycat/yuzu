@@ -9,6 +9,9 @@ debug = true
 lot_parser_backend = "ml"   # Allowed: "ml" | "" (disabled) | "dotted.module.ClassName"
 rate_limit_enabled = true
 celery_task_always_eager = false
+django_admin_url = "admin/"
+admin_allowed_ips = []
+private_intake_root = "private_intake"
 
 [jwt]
 access_token_lifetime_minutes = 60
@@ -22,7 +25,7 @@ purge_batch_originals_after_hours = 24
 
 [ml_service]
 url = "http://127.0.0.1:8001"  # Env-dependent ML service origin (Docker: http://ml:8001)
-timeout_sec = 30.0
+timeout_sec = 65.0
 
 [scraper]
 proxy_ban_sec = 120

@@ -40,6 +40,12 @@ class UnauthorizedProblemError(ApiProblemError):
     default_title = "Ошибка авторизации"
 
 
+class ForbiddenProblemError(ApiProblemError):
+    status_code = 403
+    default_type = f"{ERROR_TYPE_BASE}/forbidden"
+    default_title = "Доступ запрещен"
+
+
 class NotFoundProblemError(ApiProblemError):
     status_code = 404
     default_type = f"{ERROR_TYPE_BASE}/not-found"

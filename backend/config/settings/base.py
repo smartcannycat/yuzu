@@ -23,6 +23,8 @@ DEBUG = app_settings.DEBUG
 ALLOWED_HOSTS = list(app_settings.ALLOWED_HOSTS)
 if (app_settings.DEBUG or app_settings.is_testing) and "testserver" not in ALLOWED_HOSTS:
     ALLOWED_HOSTS.append("testserver")
+DJANGO_ADMIN_URL = app_settings.DJANGO_ADMIN_URL
+ADMIN_ALLOWED_IPS = list(app_settings.ADMIN_ALLOWED_IPS)
 
 DJANGO_APPS = [
     "django.contrib.admin",
@@ -54,15 +56,16 @@ AUTH_USER_MODEL = "users.User"
 
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
+    "apps.core.middleware.ApiProblemDetailsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
+    "apps.core.middleware.AdminHardeningMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    "apps.core.middleware.ApiProblemDetailsMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -142,16 +145,46 @@ media_root_path = Path(app_settings.MEDIA_ROOT)
 MEDIA_URL = app_settings.MEDIA_URL
 MEDIA_ROOT = media_root_path if media_root_path.is_absolute() else BASE_DIR / media_root_path
 
+private_intake_path = Path(app_settings.PRIVATE_INTAKE_ROOT)
+PRIVATE_INTAKE_ROOT = (
+    private_intake_path if private_intake_path.is_absolute() else BASE_DIR / private_intake_path
+)
+
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+        "OPTIONS": {
+            "location": MEDIA_ROOT,
+        },
+    },
+    "private_intake": {
+        "BACKEND": "apps.core.storage.PrivateIntakeStorage",
+        "OPTIONS": {
+            "location": PRIVATE_INTAKE_ROOT,
+            "base_url": None,
+        },
+    },
+    "staticfiles": {
+        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+    },
+}
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # CORS & CSRF
 CORS_ALLOWED_ORIGINS = app_settings.CORS_ALLOWED_ORIGINS
 CORS_ALLOW_ALL_ORIGINS = app_settings.CORS_ALLOW_ALL_ORIGINS
+CORS_ALLOW_CREDENTIALS = True
 CSRF_TRUSTED_ORIGINS = list(app_settings.CSRF_TRUSTED_ORIGINS) or [
     origin
     for origin in app_settings.CORS_ALLOWED_ORIGINS
     if origin.startswith(("http://", "https://"))
 ]
+
+# Refresh cookie settings
+JWT_REFRESH_COOKIE_NAME = "yuzu_refresh_token"
+JWT_REFRESH_COOKIE_PATH = "/api/v1/auth/"
+JWT_REFRESH_COOKIE_SAMESITE = "Lax"
 
 # Production reverse-proxy and cookie hardening
 if app_settings.is_production:

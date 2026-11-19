@@ -38,6 +38,34 @@ def _stabilize_operation_ids(schema: dict[str, Any]) -> None:
             operation["operationId"] = candidate
 
 
+def _rewrite_problem_detail_media_types(schema: dict[str, Any]) -> None:
+    """Use RFC 7807 application/problem+json media type for 4xx/5xx ProblemDetail responses."""
+    for path_item in schema.get("paths", {}).values():
+        if not isinstance(path_item, dict):
+            continue
+        for operation in path_item.values():
+            if not isinstance(operation, dict):
+                continue
+            responses = operation.get("responses")
+            if not isinstance(responses, dict):
+                continue
+            for status_code, response_spec in responses.items():
+                if not str(status_code).startswith(("4", "5")) or not isinstance(
+                    response_spec, dict
+                ):
+                    continue
+                content = response_spec.get("content")
+                if not isinstance(content, dict) or "application/json" not in content:
+                    continue
+                json_media = content["application/json"]
+                if (
+                    isinstance(json_media, dict)
+                    and json_media.get("schema", {}).get("$ref")
+                    == "#/components/schemas/ProblemDetail"
+                ):
+                    content["application/problem+json"] = content.pop("application/json")
+
+
 def render_openapi_json() -> str:
     """Bootstrap Django settings and serialize the current Ninja OpenAPI schema."""
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.base")
@@ -48,6 +76,7 @@ def render_openapi_json() -> str:
 
     schema = api.get_openapi_schema()
     _stabilize_operation_ids(schema)
+    _rewrite_problem_detail_media_types(schema)
     return json.dumps(schema, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
 
 
