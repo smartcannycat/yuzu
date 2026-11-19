@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from django.db import transaction
 from django.utils import timezone
 
-from apps.core.exceptions import BadRequestProblemError, NotFoundProblemError
+from apps.core.math_utils import round_half_up_int, to_decimal
 from apps.lots.calculator.baseline import (
     MAX_DYNAMIC_BID_SLIDER_MAX_JPY,
     ensure_lot_baseline,
@@ -18,6 +18,7 @@ from apps.lots.calculator.baseline import (
 )
 from apps.lots.calculator.economics import recompute_lot_economics
 from apps.lots.calculator.scoring import compute_verdict
+from apps.lots.exceptions import LotNotFoundDomainError, RecalcDomainError
 from apps.lots.models import (
     CustomsCalculation,
     Lot,
@@ -46,18 +47,9 @@ class RecalcOutcome:
 
 
 def _get_ready_user_lot(user: User, lot_id) -> Lot:
-    lot = (
-        Lot.objects.select_for_update()
-        .filter(
-            pk=lot_id,
-            user=user,
-            completed_at__isnull=False,
-            deleted_at__isnull=True,
-        )
-        .first()
-    )
+    lot = Lot.objects.ready_for_user(user).select_for_update().filter(pk=lot_id).first()
     if lot is None:
-        raise NotFoundProblemError("Лот не найден", title="Лот не найден")
+        raise LotNotFoundDomainError("Лот не найден", title="Лот не найден")
     return lot
 
 
@@ -71,7 +63,7 @@ def _load_recalc_outcome(
     customs_model = CustomsCalculation.objects.select_related("rates_snapshot").get(lot=lot)
     ladder = WiseCostLadder.objects.select_related("lot").get(lot=lot)
     rates_model = customs_model.rates_snapshot
-    applied_bid_rub = math.floor(ladder.car_bid_jpy * rates_model.jpy_rub_bank + 0.5)
+    applied_bid_rub = round_half_up_int(ladder.car_bid_jpy, rates_model.jpy_rub_bank)
     return RecalcOutcome(
         lot=lot,
         customs=customs_model,
@@ -82,6 +74,38 @@ def _load_recalc_outcome(
         pdf_report_stale=pdf_report_stale,
         recalculated_at=timezone.now(),
     )
+
+
+def _resolve_bid_jpy_from_rub(
+    lot: Lot,
+    customs_model: CustomsCalculation | None,
+    bid_rub: int,
+) -> int:
+    rates_data, _ = extract_rates(lot, customs_model)
+    if rates_data is None:
+        raise RecalcDomainError(
+            "Для пересчёта по ставке в рублях требуется снимок курсов валют",
+            title="Курсы валют недоступны",
+        )
+    if not math.isfinite(rates_data.jpy_rub_bank) or rates_data.jpy_rub_bank <= 0:
+        raise RecalcDomainError(
+            "Некорректный курс JPY/RUB в снимке курсов",
+            title="Курсы валют недоступны",
+        )
+    resolved_bid_jpy = round_half_up_int(to_decimal(bid_rub) / to_decimal(rates_data.jpy_rub_bank))
+    if resolved_bid_jpy < 100_000:
+        raise RecalcDomainError(
+            "Ставка в йенах не может быть меньше 100 000 ¥",
+            title="Некорректная ставка",
+        )
+    if resolved_bid_jpy > MAX_DYNAMIC_BID_SLIDER_MAX_JPY:
+        raise RecalcDomainError(
+            f"Ставка в йенах не может превышать {MAX_DYNAMIC_BID_SLIDER_MAX_JPY:,} ¥".replace(
+                ",", " "
+            ),
+            title="Некорректная ставка",
+        )
+    return resolved_bid_jpy
 
 
 @transaction.atomic
@@ -104,30 +128,7 @@ def execute_recalculate(
 
     resolved_bid_jpy = bid_jpy
     if resolved_bid_jpy is None and bid_rub is not None:
-        rates_data, _ = extract_rates(lot, customs_model)
-        if rates_data is None:
-            raise BadRequestProblemError(
-                "Для пересчёта по ставке в рублях требуется снимок курсов валют",
-                title="Курсы валют недоступны",
-            )
-        if rates_data.jpy_rub_bank <= 0:
-            raise BadRequestProblemError(
-                "Некорректный курс JPY/RUB в снимке курсов",
-                title="Курсы валют недоступны",
-            )
-        resolved_bid_jpy = math.floor(bid_rub / rates_data.jpy_rub_bank + 0.5)
-        if resolved_bid_jpy < 100_000:
-            raise BadRequestProblemError(
-                "Ставка в йенах не может быть меньше 100 000 ¥",
-                title="Некорректная ставка",
-            )
-        if resolved_bid_jpy > MAX_DYNAMIC_BID_SLIDER_MAX_JPY:
-            raise BadRequestProblemError(
-                f"Ставка в йенах не может превышать {MAX_DYNAMIC_BID_SLIDER_MAX_JPY:,} ¥".replace(
-                    ",", " "
-                ),
-                title="Некорректная ставка",
-            )
+        resolved_bid_jpy = _resolve_bid_jpy_from_rub(lot, customs_model, bid_rub)
 
     try:
         recompute_lot_economics(
@@ -139,7 +140,7 @@ def execute_recalculate(
             custom_freight_rub=custom_freight_rub,
         )
     except ValueError as exc:
-        raise BadRequestProblemError(
+        raise RecalcDomainError(
             str(exc),
             title="Недостаточно данных для расчёта",
         ) from exc
@@ -156,7 +157,7 @@ def execute_reset_simulation(user: User, lot_id) -> RecalcOutcome:
     customs_model = CustomsCalculation.objects.filter(lot=lot).first()
     ladder_model = WiseCostLadder.objects.filter(lot=lot).first()
     if customs_model is None or ladder_model is None:
-        raise BadRequestProblemError(
+        raise RecalcDomainError(
             "Отсутствует базовый расчёт экономики лота",
             title="Недостаточно данных для расчёта",
         )
@@ -178,7 +179,7 @@ def execute_reset_simulation(user: User, lot_id) -> RecalcOutcome:
             custom_freight_rub=int(freight_base) if freight_base is not None else None,
         )
     except ValueError as exc:
-        raise BadRequestProblemError(
+        raise RecalcDomainError(
             str(exc),
             title="Недостаточно данных для расчёта",
         ) from exc

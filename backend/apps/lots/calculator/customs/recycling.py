@@ -92,7 +92,8 @@ def calculate_utilization_fee(
     else:
         if engine_cc <= 0:
             raise ValueError("engine_cc must be positive for the utilization fee")
-        fee = 0
+        _, last_under_3, last_older = UTIL_COMMERCIAL_2026_RUB[-1]
+        fee = last_older if is_three_years_or_older else last_under_3
         for upper_bound, under_3_fee, older_fee in UTIL_COMMERCIAL_2026_RUB:
             if engine_cc <= upper_bound:
                 fee = older_fee if is_three_years_or_older else under_3_fee
@@ -107,4 +108,4 @@ def calculate_excise(power_hp: int) -> int:
     for upper_bound, rate in EXCISE_2026_RUB_PER_HP:
         if power_hp <= upper_bound:
             return power_hp * rate
-    raise ValueError("unreachable excise bracket")  # pragma: no cover
+    return power_hp * EXCISE_2026_RUB_PER_HP[-1][1]

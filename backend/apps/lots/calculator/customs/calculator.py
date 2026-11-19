@@ -6,6 +6,7 @@ import math
 from typing import TYPE_CHECKING
 
 from apps.core.enums import AgeCorridor, DutyCalculationMode, FuelType, UtilFeeType
+from apps.core.math_utils import round_half_up_int
 from apps.lots.calculator.customs.recycling import (
     calculate_excise,
     calculate_utilization_fee,
@@ -47,14 +48,24 @@ if TYPE_CHECKING:
 
 def round_eur_to_rub(amount_eur: float, eur_rub: float) -> int:
     """Convert EUR to integer RUB (half-up, zero-float currency rule)."""
-    return math.floor(amount_eur * eur_rub + 0.5)
+    return round_half_up_int(amount_eur, eur_rub)
 
 
 def _tier_rate(grid: tuple[tuple[int, float], ...], engine_cc: int) -> float:
     for upper_bound, rate in grid:
         if engine_cc <= upper_bound:
             return rate
-    raise ValueError("unreachable duty grid tier")  # pragma: no cover
+    return grid[-1][1]
+
+
+def _resolve_under_3_band(customs_value_eur: float) -> tuple[float, float]:
+    if not math.isfinite(customs_value_eur) or customs_value_eur < 0:
+        raise ValueError("customs_value_eur must be non-negative and finite")
+    for upper_bound, pct, min_eur_per_cc in DUTY_COMBINED_UNDER_3_YEARS:
+        if customs_value_eur <= upper_bound:
+            return pct, min_eur_per_cc
+    _, pct, min_eur_per_cc = DUTY_COMBINED_UNDER_3_YEARS[-1]
+    return pct, min_eur_per_cc
 
 
 def calculate_duty(
@@ -70,22 +81,19 @@ def calculate_duty(
     if age_corridor == AgeCorridor.UNDER_3_YEARS:
         if customs_value_eur is None:
             raise ValueError("customs_value_eur is required for the under-3-years corridor")
-        for upper_bound, pct, min_eur_per_cc in DUTY_COMBINED_UNDER_3_YEARS:
-            if customs_value_eur <= upper_bound:
-                ad_valorem = customs_value_eur * pct
-                specific = float(engine_cc) * min_eur_per_cc
-                duty_eur = round(max(ad_valorem, specific), 2)
-                basis = (
-                    DutyBasis.AD_VALOREM if ad_valorem >= specific else DutyBasis.SPECIFIC_MINIMUM
-                )
-                return DutyResult(
-                    mode=DutyCalculationMode.PCT_OF_VALUE,
-                    rate_eur_per_cc=None,
-                    effective_duty_pct=pct * 100,
-                    basis=basis,
-                    duty_eur=duty_eur,
-                    duty_rub=round_eur_to_rub(duty_eur, rates.eur_rub),
-                )
+        pct, min_eur_per_cc = _resolve_under_3_band(customs_value_eur)
+        ad_valorem = customs_value_eur * pct
+        specific = float(engine_cc) * min_eur_per_cc
+        duty_eur = round(max(ad_valorem, specific), 2)
+        basis = DutyBasis.AD_VALOREM if ad_valorem >= specific else DutyBasis.SPECIFIC_MINIMUM
+        return DutyResult(
+            mode=DutyCalculationMode.PCT_OF_VALUE,
+            rate_eur_per_cc=None,
+            effective_duty_pct=pct * 100,
+            basis=basis,
+            duty_eur=duty_eur,
+            duty_rub=round_eur_to_rub(duty_eur, rates.eur_rub),
+        )
 
     grid = (
         DUTY_EUR_PER_CC_OVER_5_YEARS
@@ -111,10 +119,17 @@ def calculate_clearance_fee(customs_value_rub: int) -> int:
     for upper_bound, fee in CLEARANCE_FEE_GRID_RUB:
         if customs_value_rub <= upper_bound:
             return fee
-    raise ValueError("unreachable clearance fee band")  # pragma: no cover
+    return CLEARANCE_FEE_GRID_RUB[-1][1]
 
 
 def _resolve_customs_values(params: CustomsInput, rates: CurrencyRatesInput) -> tuple[float, int]:
+    if params.customs_value_eur is not None and (
+        not math.isfinite(params.customs_value_eur) or params.customs_value_eur < 0
+    ):
+        raise ValueError("customs_value_eur must be non-negative and finite")
+    if params.customs_value_rub is not None and params.customs_value_rub < 0:
+        raise ValueError("customs_value_rub must not be negative")
+
     if params.customs_value_eur is None:
         if params.customs_value_rub is None:
             raise ValueError("customs_value_eur or customs_value_rub is required for the duty")
@@ -123,7 +138,7 @@ def _resolve_customs_values(params: CustomsInput, rates: CurrencyRatesInput) -> 
         customs_value_eur = params.customs_value_eur
 
     if params.customs_value_rub is None:
-        customs_value_rub = math.floor(customs_value_eur * rates.eur_rub + 0.5)
+        customs_value_rub = round_half_up_int(customs_value_eur, rates.eur_rub)
     else:
         customs_value_rub = params.customs_value_rub
     return customs_value_eur, customs_value_rub
@@ -142,7 +157,7 @@ def calculate_customs(
     freight_rub = (
         params.freight_rub
         if params.freight_rub is not None
-        else math.floor(DEFAULT_FREIGHT_USD * rates.usd_rub + 0.5)
+        else round_half_up_int(DEFAULT_FREIGHT_USD, rates.usd_rub)
     )
     customs_value_eur, customs_value_rub = _resolve_customs_values(params, rates)
 
@@ -161,8 +176,9 @@ def calculate_customs(
             duty_rub=duty_rub,
         )
         excise_rub = calculate_excise(params.power_hp) if params.power_hp is not None else 0
-        import_vat_rub = math.floor(
-            (customs_value_rub + duty_rub + excise_rub) * IMPORT_VAT_PCT + 0.5
+        import_vat_rub = round_half_up_int(
+            customs_value_rub + duty_rub + excise_rub,
+            IMPORT_VAT_PCT,
         )
     else:
         duty = calculate_duty(age_corridor, params.engine_cc, customs_value_eur, rates)
@@ -206,8 +222,8 @@ def build_wise_cost_ladder(params: LadderInput) -> LadderResult:
     validate_rates(rates)
     customs = params.customs
 
-    bid_rub = math.floor(params.bid_jpy * rates.jpy_rub + 0.5)
-    fob_rub = math.floor(params.japan_fob_jpy * rates.jpy_rub + 0.5)
+    bid_rub = round_half_up_int(params.bid_jpy, rates.jpy_rub)
+    fob_rub = round_half_up_int(params.japan_fob_jpy, rates.jpy_rub)
     freight_rub = customs.freight_vladivostok_rub
     duty_step_rub = (
         customs.customs_duty_rub

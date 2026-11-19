@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import math
-from datetime import date
+from typing import TYPE_CHECKING
 
 from django.db import transaction
 from django.utils import timezone
 
 from apps.core.enums import AgeCorridor, FuelType, PowerHpSource
+from apps.core.math_utils import round_half_up_int
 from apps.lots.calculator.baseline import (
     DEFAULT_BID_SLIDER_MAX_JPY,
     DEFAULT_BID_SLIDER_MIN_JPY,
@@ -45,6 +45,9 @@ from apps.lots.models import (
     WiseCostLadder,
 )
 
+if TYPE_CHECKING:
+    from datetime import date
+
 __all__ = [
     "DEFAULT_BID_SLIDER_MAX_JPY",
     "DEFAULT_BID_SLIDER_MIN_JPY",
@@ -63,16 +66,9 @@ __all__ = [
     "recompute_lot_economics",
 ]
 
-_LEGACY_COROLLA_FRAME_ID = "NRE210-2005418"
 
-
-def _resolve_calculation_date(lot: Lot, on_date: date | None) -> date:
-    if on_date is not None:
-        return on_date
-    if lot.frame_id == _LEGACY_COROLLA_FRAME_ID and not hasattr(lot, "batch_item"):
-        # Canonical seeded benchmark pins declaration date to stay in 3-5y corridor.
-        return date(2025, 10, 15)
-    return timezone.localdate()
+def _resolve_calculation_date(on_date: date | None) -> date:
+    return on_date if on_date is not None else timezone.localdate()
 
 
 def _resolve_applied_bid_jpy(
@@ -99,7 +95,7 @@ def _resolve_freight_rub(
         return custom_freight_rub
     if customs_model is not None:
         return customs_model.freight_vladivostok_rub
-    return math.floor(DEFAULT_FREIGHT_USD * rates.usd_rub + 0.5)
+    return round_half_up_int(DEFAULT_FREIGHT_USD, rates.usd_rub)
 
 
 def recompute_lot_economics(
@@ -115,7 +111,7 @@ def recompute_lot_economics(
     """(Re)compute customs, Wise Cost Ladder and lot totals in one atomic transaction."""
     with transaction.atomic():
         lot = Lot.objects.select_for_update().get(pk=lot.pk)
-        calculation_date = _resolve_calculation_date(lot, on_date)
+        calculation_date = _resolve_calculation_date(on_date)
         customs_model = CustomsCalculation.objects.filter(lot=lot).first()
         rates_data, rates_model = extract_rates(lot, customs_model)
         if rates_data is None:
@@ -124,8 +120,8 @@ def recompute_lot_economics(
 
         ladder = WiseCostLadder.objects.filter(lot=lot).first()
         applied_bid_jpy = _resolve_applied_bid_jpy(lot, ladder, bid_jpy)
-        bid_rub = math.floor(applied_bid_jpy * rates.jpy_rub + 0.5)
-        fob_rub = math.floor(DEFAULT_JAPAN_FOB_JPY * rates.jpy_rub + 0.5)
+        bid_rub = round_half_up_int(applied_bid_jpy, rates.jpy_rub)
+        fob_rub = round_half_up_int(DEFAULT_JAPAN_FOB_JPY, rates.jpy_rub)
         freight_rub = _resolve_freight_rub(customs_model, rates, custom_freight_rub)
         selected_commercial = (
             is_commercial_util
@@ -262,7 +258,7 @@ def _resolve_start_bid_jpy(lot: Lot) -> int | None:
         StartBidInput(
             market_price_rf_rub=lot.market_price_rf_rub,
             rates=to_rates_input(rates_data),
-            on_date=_resolve_calculation_date(lot, None),
+            on_date=_resolve_calculation_date(None),
             customs_params=CustomsInput(
                 engine_cc=0 if lot.fuel_type == FuelType.EV else lot.engine_cc,
                 fuel_type=lot.fuel_type,

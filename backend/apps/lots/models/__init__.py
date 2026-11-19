@@ -40,7 +40,14 @@ from apps.lots.models.customs import (  # noqa: E402
     WiseCostLadder,
     WiseCostStep,
 )
-from apps.lots.models.lot import Lot, LotDefect, LotRiskFlags, TrafficLightVerdict  # noqa: E402
+from apps.lots.models.lot import (  # noqa: E402
+    Lot,
+    LotDefect,
+    LotQuerySet,
+    LotRiskFlags,
+    TrafficLightVerdict,
+    has_full_detail,
+)
 from apps.lots.models.repairs import (  # noqa: E402
     DamagedPartItem,
     FarpostRepairSummary,
@@ -58,6 +65,7 @@ __all__ = [
     "FarpostRepairSummary",
     "Lot",
     "LotDefect",
+    "LotQuerySet",
     "LotRiskFlags",
     "MarketComparisonInfo",
     "PastAuctionRecord",
@@ -70,4 +78,5 @@ __all__ = [
     "_batch_item_upload_to",
     "_lot_scan_upload_to",
     "_lot_thumb_upload_to",
+    "has_full_detail",
 ]

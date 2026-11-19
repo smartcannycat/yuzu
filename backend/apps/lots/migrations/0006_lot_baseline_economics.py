@@ -3,9 +3,35 @@
 from django.db import migrations, models
 
 
-def backfill_baseline_economics(apps, schema_editor):
-    from apps.lots.starter_lots import _STARTER_FIXTURES
+_STARTER_BASELINE_ECONOMICS: dict[tuple[str, str], dict[str, object]] = {
+    ("Honda", "Vezel"): {
+        "bid_jpy": 2500000,
+        "power_hp": 118,
+        "freight_rub": 94474,
+        "include_repairs": True,
+        "power_hp_source": "drom_catalog",
+        "is_commercial_util": False,
+    },
+    ("Honda", "Freed"): {
+        "bid_jpy": 1040000,
+        "power_hp": 129,
+        "freight_rub": 94474,
+        "include_repairs": True,
+        "power_hp_source": "drom_catalog",
+        "is_commercial_util": False,
+    },
+    ("Honda", "Accord HV"): {
+        "bid_jpy": 2500000,
+        "power_hp": 145,
+        "freight_rub": 94474,
+        "include_repairs": True,
+        "power_hp_source": "drom_catalog",
+        "is_commercial_util": False,
+    },
+}
 
+
+def backfill_baseline_economics(apps, schema_editor):
     Lot = apps.get_model("lots", "Lot")
     CustomsCalculation = apps.get_model("lots", "CustomsCalculation")
     WiseCostLadder = apps.get_model("lots", "WiseCostLadder")
@@ -16,9 +42,11 @@ def backfill_baseline_economics(apps, schema_editor):
         baseline_economics__isnull=True,
     ).iterator():
         is_batch_lot = BatchItem.objects.filter(lot_id=lot.id).exists()
-        fixture = _STARTER_FIXTURES.get((lot.make, lot.model)) if not is_batch_lot else None
-        if fixture and isinstance(fixture.get("baseline_economics"), dict):
-            base = dict(fixture["baseline_economics"])
+        snapshot = (
+            _STARTER_BASELINE_ECONOMICS.get((lot.make, lot.model)) if not is_batch_lot else None
+        )
+        if snapshot is not None:
+            base = dict(snapshot)
             update_fields = ["baseline_economics"]
             if not lot.auction_bid_jpy and "bid_jpy" in base:
                 lot.auction_bid_jpy = int(base["bid_jpy"])

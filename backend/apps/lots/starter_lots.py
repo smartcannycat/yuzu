@@ -42,6 +42,21 @@ def _parse_iso_date(value: str | date | None) -> date | None:
     return date.fromisoformat(value)
 
 
+def _normalize_lot_auction_date(value: str | date | None) -> str | None:
+    """Normalize ``Lot.auction_date`` to a ``DD.MM.YYYY`` string (never ``datetime.date``)."""
+    if value is None:
+        return None
+    if isinstance(value, date):
+        return value.strftime("%d.%m.%Y")
+    cleaned = str(value).strip()
+    if not cleaned:
+        return None
+    try:
+        return date.fromisoformat(cleaned).strftime("%d.%m.%Y")
+    except ValueError:
+        return cleaned[:20]
+
+
 @lru_cache
 def _load_starter_fixtures() -> dict[tuple[str, str], dict[str, Any]]:
     raw: dict[str, dict[str, Any]] = json.loads(_STARTER_DATA_PATH.read_text(encoding="utf-8"))
@@ -49,14 +64,11 @@ def _load_starter_fixtures() -> dict[tuple[str, str], dict[str, Any]]:
     for entry in raw.values():
         item = deepcopy(entry)
         lot_fields = item["lot_fields"]
-        lot_fields["auction_date"] = _parse_iso_date(lot_fields.get("auction_date"))
+        lot_fields["auction_date"] = _normalize_lot_auction_date(lot_fields.get("auction_date"))
         for record in item.get("audit_history") or []:
             record["auction_date"] = _parse_iso_date(record.get("auction_date"))
         fixtures[(lot_fields["make"], lot_fields["model"])] = item
     return fixtures
-
-
-_STARTER_FIXTURES: dict[tuple[str, str], dict[str, Any]] = _load_starter_fixtures()
 
 
 def _create_lot_relations(

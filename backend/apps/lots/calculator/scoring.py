@@ -123,8 +123,9 @@ def compute_verdict(lot: Lot) -> TrafficLightVerdict:
     bullets += [f"Стоп-фактор: {label}" for label in critical]
 
     with transaction.atomic():
+        locked_lot = Lot.objects.select_for_update().get(pk=lot.pk)
         verdict_model = TrafficLightVerdict.objects.update_or_create(
-            lot=lot,
+            lot=locked_lot,
             defaults={
                 "verdict": color,
                 "headline": headline,
@@ -137,8 +138,10 @@ def compute_verdict(lot: Lot) -> TrafficLightVerdict:
                 "reasoning_bullets": bullets,
             },
         )[0]
+        locked_lot.verdict = color
+        locked_lot.verdict_headline = headline
+        locked_lot.save(update_fields=["verdict", "verdict_headline", "updated_at"])
 
     lot.verdict = color
     lot.verdict_headline = headline
-    lot.save(update_fields=["verdict", "verdict_headline", "updated_at"])
     return verdict_model

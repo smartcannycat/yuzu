@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING
@@ -264,9 +265,11 @@ class StartBidResult:
 
 
 def validate_rates(rates: CurrencyRatesInput) -> None:
-    if rates.jpy_rub <= 0:
-        raise ValueError("jpy_rub must be positive")
-    if rates.eur_rub <= 0:
-        raise ValueError("eur_rub must be positive")
-    if rates.usd_rub <= 0:
-        raise ValueError("usd_rub must be positive")
+    """Reject non-finite (NaN/Inf) or non-positive currency exchange rates."""
+    for field_name, val in (
+        ("jpy_rub", rates.jpy_rub),
+        ("eur_rub", rates.eur_rub),
+        ("usd_rub", rates.usd_rub),
+    ):
+        if not math.isfinite(val) or val <= 0:
+            raise ValueError(f"{field_name} must be positive and finite")
