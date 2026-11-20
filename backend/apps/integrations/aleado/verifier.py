@@ -108,6 +108,8 @@ def _fetch_candidate_image(
         )
         if timed_out or detail is None:
             return None, None, True
+        if detail.chassis_number:
+            return detail, None, False
         if not detail.chassis_image_url:
             return None, None, False
         if _budget_expired(deadline):
@@ -203,6 +205,14 @@ def verify_candidates(
             if timed_out:
                 logger.info("Aleado candidate verification budget reached for lot %s", lot_pk)
                 break
+            if detail is not None and detail.chassis_number:
+                normalized_text = _normalize_frame_id(detail.chassis_number)
+                if normalized_text:
+                    if cache is not None and candidate.internal_id:
+                        cache.set_chassis(candidate.internal_id, normalized_text)
+                    if normalized_text == expected_frame_id:
+                        results_by_index[idx] = _VerifiedRow(candidate, detail)
+                continue
             if detail is not None and image_bytes is not None:
                 pending_ocr.append(
                     (idx, candidate, detail, ocr_pool.submit(ml_client.read_chassis, image_bytes))

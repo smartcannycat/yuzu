@@ -33,6 +33,7 @@ class _FakeVisionClient:
         self.accepted = accepted
         self.fail_extract = fail_extract
         self.check_calls = 0
+        self.fast_header_calls = 0
         self.extract_calls = 0
 
     @property
@@ -50,6 +51,7 @@ class _FakeVisionClient:
         )
 
     async def extract_fast_header(self, _sliced) -> FastHeaderPreviewEntity | None:
+        self.fast_header_calls += 1
         return FastHeaderPreviewEntity(
             make="Toyota", model="Corolla Touring", lot_number="3142", duration_ms=15
         )
@@ -138,6 +140,40 @@ async def test_sheet_parser_service_parse_url(tmp_path: Path, sample_jpeg_bytes:
     assert result.status == ParseStatus.OK
     assert result.sheet is not None
     assert result.sheet.lot_number == "3142"
+    assert _vision.fast_header_calls == 0
+    await loader.http_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_sheet_parser_skips_fast_header_when_disabled(
+    tmp_path: Path, sample_png_bytes: bytes
+) -> None:
+    vision = _FakeVisionClient()
+    http_client = httpx.AsyncClient()
+    loader = AsyncImageLoader(
+        http_client=http_client,
+        max_bytes=5 * 1024 * 1024,
+        dns_resolver=lambda _host: ["93.184.216.34"],
+    )
+    service = SheetParserService(
+        image_loader=loader,
+        cropper=PillowImageCropper(min_px=400, max_px=600, image_format="JPEG"),
+        vision_client=vision,
+        factory=SheetFactory(),
+        cache=ResultCache(cache_dir=tmp_path / "cache"),
+        enable_fast_header=False,
+    )
+    previews: list[str] = []
+
+    async def on_preview(title: str) -> None:
+        previews.append(title)
+
+    res = await service.parse_bytes(
+        sample_png_bytes, filename="no_header.png", on_preview=on_preview
+    )
+    assert res.status == ParseStatus.OK
+    assert vision.fast_header_calls == 0
+    assert previews == []
     await loader.http_client.aclose()
 
 

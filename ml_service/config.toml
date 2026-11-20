@@ -26,6 +26,7 @@ fallback_models = [
   "gemini-3.5-flash-lite",
 ]
 enable_gatekeeper = true
+enable_fast_header = false
 gatekeeper_fail_open = true
 gatekeeper_sheet_threshold = 0.60
 gatekeeper_readable_threshold = 0.50
@@ -54,3 +55,9 @@ format = "JPEG"                   # Allowed: "JPEG" | "PNG" | "WEBP"
 quality = 88
 min_px = 1000
 max_px = 1400
+
+[chassis_ocr]
+local_enabled = true
+local_command = "tesseract"
+local_min_confidence = 80.0
+local_timeout_seconds = 5.0

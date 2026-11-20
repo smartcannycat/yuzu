@@ -24,10 +24,12 @@ _TOML_SECTION_PREFIXES: dict[str, str] = {
     "gemini": "gemini_",
     "batch": "batch_",
     "crop": "crop_",
+    "chassis_ocr": "chassis_ocr_",
 }
 
 _TOML_KEY_OVERRIDES: dict[tuple[str, str], str] = {
     ("gemini", "enable_gatekeeper"): "enable_gatekeeper",
+    ("gemini", "enable_fast_header"): "enable_fast_header",
     ("gemini", "fallback_models"): "gemini_fallback_models_raw",
 }
 
@@ -135,6 +137,7 @@ class Settings(BaseSettings):
         validation_alias="GEMINI_FALLBACK_MODELS",
     )
     enable_gatekeeper: bool = Field(default=True)
+    enable_fast_header: bool = Field(default=False)
     gemini_gatekeeper_fail_open: bool = Field(default=True)
     gemini_gatekeeper_sheet_threshold: float = Field(default=0.60, ge=0.0, le=1.0)
     gemini_gatekeeper_readable_threshold: float = Field(default=0.50, ge=0.0, le=1.0)
@@ -166,6 +169,11 @@ class Settings(BaseSettings):
     crop_quality: int = Field(default=88, ge=50, le=100)
     crop_min_px: int = Field(default=1000, ge=400, le=2400)
     crop_max_px: int = Field(default=1400, ge=600, le=2400)
+
+    chassis_ocr_local_enabled: bool = Field(default=True)
+    chassis_ocr_local_command: str = Field(default="tesseract")
+    chassis_ocr_local_min_confidence: float = Field(default=80.0, ge=0.0, le=100.0)
+    chassis_ocr_local_timeout_seconds: float = Field(default=5.0, ge=0.5, le=30.0)
 
     max_image_size_mb: int = Field(default=15, ge=1, le=50)
     http_timeout_seconds: float = Field(default=20.0, gt=0)

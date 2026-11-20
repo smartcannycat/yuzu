@@ -508,3 +508,112 @@ async def test_chassis_ocr_429_does_not_cooldown_model_whitespace_and_corrupt_di
     recovered = await chassis_client.read_chassis_number(img, mime_type="image/jpeg")
     assert recovered.frame_id == "NRE210-1234567"
     assert recovered.cached is False
+
+
+def _make_plaque_jpeg_bytes() -> bytes:
+    import io
+
+    from PIL import Image, ImageDraw
+
+    img = Image.new("L", (240, 80), 255)
+    draw = ImageDraw.Draw(img)
+    draw.line([(0, 4), (239, 4)], fill=0, width=2)
+    draw.line([(0, 29), (239, 29)], fill=0, width=2)
+    draw.text((40, 10), "FL4-1001524", fill=0)
+    buf = io.BytesIO()
+    img.convert("RGB").save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_local_chassis_ocr_fast_path_skips_gemini_and_falls_back_on_low_conf(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ml_service.infrastructure.chassis_local_ocr import LocalChassisOcrReader
+
+    plaque_bytes = _make_plaque_jpeg_bytes()
+    gemini_calls = 0
+
+    def _never_called(**_kw):
+        nonlocal gemini_calls
+        gemini_calls += 1
+        return SimpleNamespace(text=json.dumps({"frame_id": "GB5-3108038", "confidence": "high"}))
+
+    pool = GeminiKeyPool(["k1"], rpm_limit=2)
+    vision = AsyncGeminiVisionClient(key_pool=pool, flash_model="m1", fallback_models=["m2"])
+    vision.runner.set_client("k1", _FakeGenaiClient(models_handler=_never_called))
+
+    reader = LocalChassisOcrReader(enabled=True, min_confidence=80.0)
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/tesseract")
+    monkeypatch.setattr(
+        reader,
+        "_run_tesseract_tsv",
+        lambda _band: (
+            "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n"
+            "5\t1\t1\t1\t1\t1\t10\t10\t100\t20\t91.4\tFL4-1001524\n"
+        ),
+    )
+
+    chassis_client = ChassisOcrClient(
+        vision_client=vision, local_ocr=reader, cache_dir=tmp_path / "cache"
+    )
+    fast = await chassis_client.read_chassis_number(plaque_bytes, mime_type="image/jpeg")
+    assert fast.frame_id == "FL4-1001524"
+    assert fast.confidence == "high"
+    assert fast.cached is False
+    assert gemini_calls == 0
+
+    cached = await chassis_client.read_chassis_number(plaque_bytes, mime_type="image/jpeg")
+    assert cached.frame_id == "FL4-1001524"
+    assert cached.cached is True
+    assert gemini_calls == 0
+
+    # Low-confidence handwritten/noisy output falls back to Gemini seamlessly.
+    monkeypatch.setattr(
+        reader,
+        "_run_tesseract_tsv",
+        lambda _band: (
+            "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n"
+            "5\t1\t1\t1\t1\t1\t10\t10\t100\t20\t35.0\tZLEFQJJT5\n"
+        ),
+    )
+    noisy_bytes = _make_plaque_jpeg_bytes() + b"\x00"
+    fallback = await chassis_client.read_chassis_number(noisy_bytes, mime_type="image/jpeg")
+    assert fallback.frame_id == "GB5-3108038"
+    assert gemini_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_chassis_ocr_downgrades_minimal_thinking_level_and_cools_down_bad_models(
+    tmp_path: Path,
+) -> None:
+    seen_levels: list[tuple[str, types.ThinkingLevel | None]] = []
+
+    def _handler(**kw):
+        model = kw["model"]
+        level = kw["config"].thinking_config.thinking_level
+        seen_levels.append((model, level))
+        if model == "m-bad":
+            raise ClientError(404, {"error": {"message": "Not found"}})
+        if level == types.ThinkingLevel.MINIMAL:
+            raise ClientError(
+                400,
+                {"error": {"message": "Thinking level MINIMAL is not supported for this model."}},
+            )
+        return SimpleNamespace(text=json.dumps({"frame_id": "RV3-1005521", "confidence": "high"}))
+
+    pool = GeminiKeyPool(["k1"], rpm_limit=5)
+    vision = AsyncGeminiVisionClient(
+        key_pool=pool,
+        flash_model="m-bad",
+        fallback_models=["m-low-only"],
+        client_error_cooldown_seconds=120.0,
+    )
+    vision.runner.set_client("k1", _FakeGenaiClient(models_handler=_handler))
+    chassis_client = ChassisOcrClient(vision_client=vision, cache_dir=tmp_path / "cache")
+
+    res = await chassis_client.read_chassis_number(make_image_bytes(fmt="JPEG", size=(120, 40)))
+    assert res.frame_id == "RV3-1005521"
+    assert vision.runner.is_model_cooled_down("m-bad") is False
+    assert ("m-low-only", types.ThinkingLevel.MINIMAL) in seen_levels
+    assert ("m-low-only", types.ThinkingLevel.LOW) in seen_levels

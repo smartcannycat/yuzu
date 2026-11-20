@@ -60,6 +60,7 @@ class AleadoLotDetail:
     result: str | None
     equipment: str | None
     condition: str | None
+    chassis_number: str | None = None
 
 
 def _strip_tags(fragment: str) -> str:
@@ -153,6 +154,7 @@ _DETAIL_CELL_RE = re.compile(
 )
 _BREADCRUMB_RE = re.compile(r"<strong>([^<]*&gt;[^<]*)</strong>")
 _CHASSIS_IMG_RE = re.compile(r'<img[^>]+src="([^"]*chassis[^"]*)"')
+_CHASSIS_TEXT_RE = re.compile(r"^[A-Z0-9]{2,8}-[A-Z0-9]{4,10}$|^\d{4,12}$")
 
 
 def _detail_fields(html: str) -> dict[str, str]:
@@ -169,8 +171,19 @@ def _detail_fields(html: str) -> dict[str, str]:
         if "chassis" in label:
             img = _CHASSIS_IMG_RE.search(value_html)
             if img is not None:
-                fields[label] = html_lib.unescape(img.group(1))
+                fields["chassis_image_url"] = html_lib.unescape(img.group(1)).strip()
+                fields[label] = fields["chassis_image_url"]
                 continue
+            plain_text = _strip_tags(value_html)
+            if plain_text.startswith(("http://", "https://")):
+                fields["chassis_image_url"] = plain_text
+                fields[label] = plain_text
+                continue
+            compact = re.sub(r"\s+", "", plain_text).upper()
+            if _CHASSIS_TEXT_RE.fullmatch(compact):
+                fields["chassis_number"] = compact
+            fields[label] = ""
+            continue
         fields[label] = _strip_tags(value_html)
     return fields
 
@@ -202,7 +215,8 @@ def parse_lot_detail(html: str) -> AleadoLotDetail:
         scores=grade,
         start_price_jpy=_parse_int(fields.get("start price", "")),
         mileage_km=_parse_int(fields.get("mileage, km.", "")),
-        chassis_image_url=fields.get("chassis number"),
+        chassis_image_url=fields.get("chassis_image_url") or None,
+        chassis_number=fields.get("chassis_number") or None,
         model_type=fields.get("type") or None,
         year=year,
         auction_house=auction_house,

@@ -179,38 +179,46 @@ class AsyncGeminiVisionClient:
         candidates = self.runner.ordered_candidate_models()
         model_name = candidates[0] if candidates else self.flash_model
 
+        async def _invoke_header(
+            model: str, api_key: str, level: types.ThinkingLevel
+        ) -> FastHeaderPreviewEntity:
+            contents = [
+                (
+                    "Быстро извлеки из шапки аукционного листа марку на латинице (make_en), "
+                    "модель на латинице (model_en) и номер лота (lot_number)."
+                ),
+                image_part(
+                    target_bytes, types.PartMediaResolutionLevel.MEDIA_RESOLUTION_LOW, mime_type
+                ),
+            ]
+            config = types.GenerateContentConfig(
+                thinking_config=types.ThinkingConfig(thinking_level=level),
+                response_mime_type="application/json",
+                response_json_schema=FastHeaderPreviewSchema.model_json_schema(),
+            )
+            response = await self.runner.generate_content(
+                api_key=api_key,
+                model_name=model,
+                contents=contents,
+                config=config,
+            )
+            if not response.text:
+                raise ValueError("Empty fast header response.")
+            parsed = FastHeaderPreviewSchema.model_validate_json(response.text)
+            return FastHeaderPreviewEntity(
+                make=parsed.make_en,
+                model=parsed.model_en,
+                lot_number=parsed.lot_number,
+                duration_ms=int((time.perf_counter() - t0) * 1000),
+            )
+
         async def _call_header() -> FastHeaderPreviewEntity:
             async with self.runner.key_pool.acquire() as api_key:
-                contents = [
-                    (
-                        "Быстро извлеки из шапки аукционного листа марку на латинице (make_en), "
-                        "модель на латинице (model_en) и номер лота (lot_number)."
-                    ),
-                    image_part(
-                        target_bytes, types.PartMediaResolutionLevel.MEDIA_RESOLUTION_LOW, mime_type
-                    ),
-                ]
-                config = types.GenerateContentConfig(
-                    thinking_config=types.ThinkingConfig(
-                        thinking_level=types.ThinkingLevel.MINIMAL
-                    ),
-                    response_mime_type="application/json",
-                    response_json_schema=FastHeaderPreviewSchema.model_json_schema(),
-                )
-                response = await self.runner.generate_content(
-                    api_key=api_key,
+                return await self.runner.call_with_thinking_downgrade(
                     model_name=model_name,
-                    contents=contents,
-                    config=config,
-                )
-                if not response.text:
-                    raise ValueError("Empty fast header response.")
-                parsed = FastHeaderPreviewSchema.model_validate_json(response.text)
-                return FastHeaderPreviewEntity(
-                    make=parsed.make_en,
-                    model=parsed.model_en,
-                    lot_number=parsed.lot_number,
-                    duration_ms=int((time.perf_counter() - t0) * 1000),
+                    api_key=api_key,
+                    configured_level=types.ThinkingLevel.MINIMAL,
+                    invoke=_invoke_header,
                 )
 
         try:

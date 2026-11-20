@@ -1,9 +1,8 @@
-"""Gemini-based OCR reader for Aleado chassis-number images."""
+"""Hybrid local Tesseract + Gemini Vision OCR reader for Aleado chassis images."""
 
 import asyncio
 import hashlib
 import logging
-import re
 import time
 from pathlib import Path
 from typing import Literal
@@ -15,17 +14,19 @@ from pydantic import BaseModel, ValidationError
 
 from ml_service.domains.entities import ChassisOcrEntity
 from ml_service.infrastructure.atomic_io import atomic_write_json, enforce_cache_limits
+from ml_service.infrastructure.chassis_local_ocr import (
+    LocalChassisOcrReader,
+    sanitize_chassis_read,
+)
 from ml_service.infrastructure.gemini_runner import GeminiRunner
 from ml_service.infrastructure.gemini_schemas import ChassisRead
 from ml_service.infrastructure.gemini_vision_client import AsyncGeminiVisionClient
 
 logger = logging.getLogger(__name__)
 
-# Valid chassis reads: MODEL-CODE-SERIAL (GB5-1025108) or a bare serial
-# number. Anything else is passed through as raw for the caller to judge.
-_CHASSIS_FORMAT_RE = re.compile(r"^[A-Z0-9]{2,8}-[A-Z0-9]{4,8}$|^\d{4,12}$")
-_INTERNAL_SPACE_RE = re.compile(r"\s+")
 _CACHE_NAMESPACE = "chassis"
+
+__all__ = ["ChassisOcrClient", "sanitize_chassis_read"]
 
 
 class _CachedChassisRecord(BaseModel):
@@ -35,18 +36,8 @@ class _CachedChassisRecord(BaseModel):
     duration_ms: int = 0
 
 
-def sanitize_chassis_read(value: str | None) -> tuple[str | None, str | None]:
-    """Normalize a raw model output into (frame_id, raw)."""
-    raw = _INTERNAL_SPACE_RE.sub("", (value or "").strip().upper()) or None
-    if raw is None:
-        return None, None
-    if _CHASSIS_FORMAT_RE.fullmatch(raw):
-        return raw, raw
-    return None, raw
-
-
 class ChassisOcrClient:
-    """Reads chassis numbers from images via GeminiRunner and bounded disk cache."""
+    """Reads chassis numbers via local Tesseract fast-path, Gemini fallback, and disk cache."""
 
     def __init__(
         self,
@@ -55,6 +46,7 @@ class ChassisOcrClient:
         request_timeout_seconds: float = 15.0,
         *,
         runner: GeminiRunner | None = None,
+        local_ocr: LocalChassisOcrReader | None = None,
         ttl_seconds: float | None = 604800.0,
         max_disk_bytes: int | None = 512 * 1024 * 1024,
     ) -> None:
@@ -63,6 +55,7 @@ class ChassisOcrClient:
                 raise ValueError("Either runner or vision_client must be provided.")
             runner = vision_client.runner
         self._runner = runner
+        self._local_ocr = local_ocr
         self._cache_dir = Path(cache_dir)
         self._request_timeout_seconds = request_timeout_seconds
         self._ttl_seconds = ttl_seconds
@@ -123,11 +116,24 @@ class ChassisOcrClient:
     async def read_chassis_number(
         self, image_bytes: bytes, mime_type: str = "image/jpeg"
     ) -> ChassisOcrEntity:
-        """Read the chassis number printed in the image (with disk cache)."""
+        """Read the chassis number printed in the image (local OCR fast-path + Gemini fallback)."""
         cache_path = self._cache_path(image_bytes)
         cached = await self._read_cached(cache_path)
         if cached is not None:
             return cached
+
+        if self._local_ocr is not None and self._local_ocr.available:
+            local_result = await asyncio.to_thread(self._local_ocr.read, image_bytes)
+            if local_result is not None and local_result.frame_id:
+                entity = ChassisOcrEntity(
+                    frame_id=local_result.frame_id,
+                    raw=local_result.raw,
+                    confidence="high",
+                    cached=False,
+                    duration_ms=local_result.duration_ms,
+                )
+                await self._write_cached(cache_path, entity)
+                return entity
 
         entity, should_cache = await self._read_via_gemini(image_bytes, mime_type)
         if should_cache:
@@ -135,7 +141,7 @@ class ChassisOcrClient:
         return entity
 
     def _build_request(
-        self, image_bytes: bytes, mime_type: str
+        self, image_bytes: bytes, mime_type: str, level: types.ThinkingLevel
     ) -> tuple[list[object], types.GenerateContentConfig]:
         contents: list[object] = [
             (
@@ -152,7 +158,7 @@ class ChassisOcrClient:
             ),
         ]
         config = types.GenerateContentConfig(
-            thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL),
+            thinking_config=types.ThinkingConfig(thinking_level=level),
             response_mime_type="application/json",
             response_json_schema=ChassisRead.model_json_schema(),
         )
@@ -161,8 +167,8 @@ class ChassisOcrClient:
     async def _try_model(
         self,
         model_name: str,
-        contents: list[object],
-        config: types.GenerateContentConfig,
+        image_bytes: bytes,
+        mime_type: str,
         started_at: float,
     ) -> tuple[ChassisOcrEntity | None, bool, Exception | None, bool]:
         """Try one model across healthy keys. Returns (entity, should_cache, exc, abort_all)."""
@@ -170,17 +176,26 @@ class ChassisOcrClient:
         max_tries = max(1, min(key_count, self._runner.max_key_tries)) if key_count > 1 else 1
         last_exc: Exception | None = None
 
+        async def _invoke(model: str, key: str, level: types.ThinkingLevel):
+            contents, config = self._build_request(image_bytes, mime_type, level)
+            return await asyncio.wait_for(
+                self._runner.generate_content(
+                    api_key=key,
+                    model_name=model,
+                    contents=contents,
+                    config=config,
+                ),
+                timeout=self._request_timeout_seconds,
+            )
+
         for _ in range(max_tries):
             async with self._runner.key_pool.acquire() as api_key:
                 try:
-                    response = await asyncio.wait_for(
-                        self._runner.generate_content(
-                            api_key=api_key,
-                            model_name=model_name,
-                            contents=contents,
-                            config=config,
-                        ),
-                        timeout=self._request_timeout_seconds,
+                    response = await self._runner.call_with_thinking_downgrade(
+                        model_name=model_name,
+                        api_key=api_key,
+                        configured_level=types.ThinkingLevel.MINIMAL,
+                        invoke=_invoke,
                     )
                 except ClientError as exc:
                     last_exc = exc
@@ -250,11 +265,10 @@ class ChassisOcrClient:
         candidates = self._runner.ordered_candidate_models()
         t0 = time.perf_counter()
         last_exc: Exception | None = None
-        contents, config = self._build_request(image_bytes, mime_type)
 
         for model_name in candidates:
             entity, should_cache, exc, abort_all = await self._try_model(
-                model_name, contents, config, t0
+                model_name, image_bytes, mime_type, t0
             )
             if entity is not None:
                 return entity, should_cache

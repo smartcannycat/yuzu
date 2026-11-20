@@ -960,3 +960,61 @@ def test_photo_url_from_untrusted_host_is_dropped() -> None:
         includes_own_lot=False,
     )
     assert outcome.history[0].sheet_archive_url == "https://p3.aleado.com/image/auto/1.jpg"
+
+
+def test_parse_lot_detail_and_verifier_support_plain_text_chassis() -> None:
+    from unittest.mock import MagicMock
+
+    from apps.integrations.aleado.parser import AleadoLotRow
+    from apps.integrations.aleado.verifier import verify_candidates
+
+    html_text = """
+    <strong>2026-11-10 &gt; MIRIVE &gt; 2006</strong>
+    <table>
+      <tr><td class="ColorCell_1">Scores</td><td class="ColorCell_2">4</td></tr>
+      <tr><td class="ColorCell_1">Year</td><td class="ColorCell_2">2022</td></tr>
+      <tr><td class="ColorCell_1">Mileage, km.</td><td class="ColorCell_2">41 000</td></tr>
+      <tr><td class="ColorCell_1">Chassis number</td><td class="ColorCell_2"> fl4-1002311 </td></tr>
+    </table>
+    """
+    detail_text = parse_lot_detail(html_text)
+    assert detail_text.chassis_image_url is None
+    assert detail_text.chassis_number == "FL4-1002311"
+
+    html_blank = html_text.replace(" fl4-1002311 ", " — ")
+    detail_blank = parse_lot_detail(html_blank)
+    assert detail_blank.chassis_image_url is None
+    assert detail_blank.chassis_number is None
+
+    row = AleadoLotRow(
+        trading_date=None,
+        lot_number="2006",
+        auction_house="MIRIVE",
+        model_name="HONDA CIVIC",
+        grade="4",
+        year=2022,
+        mileage_km=41000,
+        displacement_cc=1500,
+        transmission="IAT",
+        color="BLACK",
+        model_type="FL4",
+        start_price_jpy=100_000,
+        result=None,
+        internal_id="982095662",
+        photo_url=None,
+    )
+    fake_client = MagicMock()
+    fake_client.get_lot_detail.return_value = detail_text
+    fake_ml = MagicMock()
+    verified = verify_candidates(
+        lot_pk="lot-1",
+        candidates=[row],
+        expected_frame_id="FL4-1002311",
+        client=fake_client,
+        ml_client=fake_ml,
+    )
+    assert len(verified) == 1
+    assert verified[0].detail is not None
+    assert verified[0].detail.chassis_number == "FL4-1002311"
+    fake_client.fetch_chassis_image.assert_not_called()
+    fake_ml.read_chassis.assert_not_called()

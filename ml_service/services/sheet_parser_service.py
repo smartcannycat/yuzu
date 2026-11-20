@@ -81,6 +81,7 @@ class SheetParserService:
         cache: ResultCacheProtocol,
         *,
         schema_version: str = EXTRACTION_CACHE_VERSION,
+        enable_fast_header: bool = True,
     ) -> None:
         self._image_loader = image_loader
         self._cropper = cropper
@@ -88,6 +89,7 @@ class SheetParserService:
         self._factory = factory
         self._cache = cache
         self._schema_version = schema_version
+        self._enable_fast_header = enable_fast_header
 
     async def parse_bytes(
         self,
@@ -142,28 +144,33 @@ class SheetParserService:
         on_preview: PreviewCallback | None,
     ) -> tuple[RawExtractionEntity, FastHeaderPreviewEntity | None]:
         header_preview: FastHeaderPreviewEntity | None = None
+        run_preview = self._enable_fast_header and on_preview is not None
+        header_task: asyncio.Task[FastHeaderPreviewEntity | None] | None = None
 
-        async def _run_fast_header() -> FastHeaderPreviewEntity | None:
-            preview = await self._vision_client.extract_fast_header(sliced)
-            if preview is not None and preview.preview_title and on_preview is not None:
-                await on_preview(preview.preview_title)
-            return preview
+        if run_preview:
+            assert on_preview is not None
 
-        await _notify_step(on_step, TaskStep.FAST_HEADER_OCR, 45)
-        header_task: asyncio.Task[FastHeaderPreviewEntity | None] = asyncio.create_task(
-            _run_fast_header()
-        )
+            async def _run_fast_header() -> FastHeaderPreviewEntity | None:
+                preview = await self._vision_client.extract_fast_header(sliced)
+                if preview is not None and preview.preview_title:
+                    await on_preview(preview.preview_title)
+                return preview
+
+            await _notify_step(on_step, TaskStep.FAST_HEADER_OCR, 45)
+            header_task = asyncio.create_task(_run_fast_header())
+
         await _notify_step(on_step, TaskStep.GEMINI_OCR, 65)
         try:
             extracted = await self._vision_client.extract_sheet(sliced, complexity)
         except httpx.HTTPError as exc:
             raise VisionUpstreamError(f"Vision extraction HTTP error: {exc}") from exc
         finally:
-            if not header_task.done():
-                header_task.cancel()
-            results = await asyncio.gather(header_task, return_exceptions=True)
-            if results and isinstance(results[0], FastHeaderPreviewEntity):
-                header_preview = results[0]
+            if header_task is not None:
+                if not header_task.done():
+                    header_task.cancel()
+                results = await asyncio.gather(header_task, return_exceptions=True)
+                if results and isinstance(results[0], FastHeaderPreviewEntity):
+                    header_preview = results[0]
         return extracted, header_preview
 
     async def _parse_loaded(
