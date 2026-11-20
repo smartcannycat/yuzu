@@ -24,6 +24,7 @@ _TOML_SECTION_PREFIXES: dict[str, str] = {
     "gemini": "gemini_",
     "batch": "batch_",
     "crop": "crop_",
+    "chassis_ocr": "chassis_ocr_",
 }
 
 _TOML_KEY_OVERRIDES: dict[tuple[str, str], str] = {
@@ -148,7 +149,6 @@ class Settings(BaseSettings):
     gemini_thinking_level: str = Field(default="LOW")
     gemini_request_deadline_seconds: float = Field(default=45.0, ge=5.0, le=300.0)
     gemini_hedge_delay_seconds: float = Field(default=8.0, ge=0.5, le=120.0)
-    gemini_fast_header_timeout_seconds: float = Field(default=1.2, ge=0.1, le=10.0)
     default_auction_strictness: float = Field(default=0.65, ge=0.0, le=1.0)
     batch_poll_interval_ms: int = Field(default=1500, ge=100, le=60000)
     batch_max_items: int = Field(default=10, ge=1, le=50)
@@ -166,6 +166,11 @@ class Settings(BaseSettings):
     crop_quality: int = Field(default=88, ge=50, le=100)
     crop_min_px: int = Field(default=1000, ge=400, le=2400)
     crop_max_px: int = Field(default=1400, ge=600, le=2400)
+
+    chassis_ocr_local_enabled: bool = Field(default=True)
+    chassis_ocr_local_command: str = Field(default="tesseract")
+    chassis_ocr_local_min_confidence: float = Field(default=80.0, ge=0.0, le=100.0)
+    chassis_ocr_local_timeout_seconds: float = Field(default=5.0, ge=0.5, le=30.0)
 
     max_image_size_mb: int = Field(default=15, ge=1, le=50)
     http_timeout_seconds: float = Field(default=20.0, gt=0)

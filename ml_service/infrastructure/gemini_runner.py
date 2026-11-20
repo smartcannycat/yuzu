@@ -167,7 +167,7 @@ class GeminiRunner[T]:
             timeout=self.request_timeout_ms / 1000.0,
         )
 
-    async def _call_with_thinking_downgrade(
+    async def call_with_thinking_downgrade(
         self,
         *,
         model_name: str,
@@ -175,6 +175,7 @@ class GeminiRunner[T]:
         configured_level: types.ThinkingLevel,
         invoke: Callable[[str, str, types.ThinkingLevel], Awaitable[T]],
     ) -> T:
+        """Invoke a model call and retry at LOW when it rejects a non-LOW thinking level."""
         try:
             return await invoke(model_name, api_key, configured_level)
         except ClientError as exc:
@@ -191,6 +192,21 @@ class GeminiRunner[T]:
                 )
                 return await invoke(model_name, api_key, types.ThinkingLevel.LOW)
             raise
+
+    async def _call_with_thinking_downgrade(
+        self,
+        *,
+        model_name: str,
+        api_key: str,
+        configured_level: types.ThinkingLevel,
+        invoke: Callable[[str, str, types.ThinkingLevel], Awaitable[T]],
+    ) -> T:
+        return await self.call_with_thinking_downgrade(
+            model_name=model_name,
+            api_key=api_key,
+            configured_level=configured_level,
+            invoke=invoke,
+        )
 
     async def try_model_with_keys(
         self,

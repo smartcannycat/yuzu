@@ -2,7 +2,6 @@
 
 from ml_service.config import resolve_reference_date
 from ml_service.domains.entities import (
-    FastHeaderPreviewEntity,
     GatekeeperDecisionEntity,
     NormalizedSheetEntity,
     ParserMetaEntity,
@@ -63,7 +62,6 @@ class SheetFactory:
         model_used: str,
         sha256: str,
         gatekeeper: GatekeeperDecisionEntity | None = None,
-        header_preview: FastHeaderPreviewEntity | None = None,
         reference_date: tuple[int, int] | None = None,
     ) -> ParserResultEntity:
         """Normalize raw Vision extraction into a complete ParserResultEntity."""
@@ -169,7 +167,7 @@ class SheetFactory:
                 sha256=sha256,
                 gatekeeper_model=gatekeeper.model_used if gatekeeper else None,
                 gatekeeper_ms=gatekeeper.duration_ms if gatekeeper else 0,
-                header_ms=header_preview.duration_ms if header_preview else None,
+                header_ms=None,
                 extract_ms=ext.extract_ms,
                 attempts=list(ext.attempts),
             ),

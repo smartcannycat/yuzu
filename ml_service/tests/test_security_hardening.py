@@ -221,9 +221,6 @@ async def test_parse_url_maps_gatekeeper_http_error_to_503_not_502(
             async def check_sheet(self, _full_png: bytes):
                 raise httpx.ConnectError("gemini endpoint unreachable")
 
-            async def extract_fast_header(self, _sliced):
-                return None
-
             async def extract_sheet(self, _sliced, _complexity):
                 raise AssertionError("should not reach extract_sheet")
 

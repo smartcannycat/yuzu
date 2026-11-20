@@ -16,7 +16,6 @@ import { formatSheetCountRu } from '@/utils/formatters'
 
 export const DAG_STEPS: readonly TaskStep[] = [
   'gatekeeper',
-  'fast_header_ocr',
   'gemini_ocr',
   'cross_audit',
   'customs_calc',

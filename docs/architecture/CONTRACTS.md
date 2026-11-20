@@ -27,7 +27,7 @@
 - **Traffic Light (`TrafficLightColor`):** `green` (`net_benefit_rub >= 150_000` and no critical/warning risks), `yellow` (benefit `50_000..149_999` or warning/cosmetic risks), `red` (critical stop factors, `meti_sanction_risk`, or benefit `< 50_000`).
 - **Batch Lifecycle (`BatchStatus`):** `queued`, `processing`, `completed`, `partial_failed`, `failed`.
 - **Item Lifecycle (`ItemProcessingStatus`):** `queued`, `processing`, `ready`, `failed`.
-- **Pipeline Steps (`TaskStep`):** `gatekeeper` -> `fast_header_ocr` -> `gemini_ocr` -> (`cross_audit`, `drom_market`, `farpost_parts`) -> `customs_calc` -> `scoring` -> `completed` / `failed`.
+- **Pipeline Steps (`TaskStep`):** `gatekeeper` -> `gemini_ocr` -> (`cross_audit`, `drom_market`, `farpost_parts`) -> `customs_calc` -> `scoring` -> `completed` / `failed`.
 - **Body Panels (`BodyPanel`):** 16 canonical schematic panels (`front_bumper`, `rear_bumper`, `hood`, `roof`, `tailgate`, `front_left_fender`, `front_right_fender`, `front_left_door`, `front_right_door`, `rear_left_door`, `rear_right_door`, `rear_left_quarter`, `rear_right_quarter`, `left_sill`, `right_sill`, `windshield`) plus `other` (`BodyPanel.OTHER = "other"`), aligned across `ml_service` and `backend`; frontend renders `other` defects in the unpinned defect list without diagram pins.
 - **Defect Codes (`DefectCode`):** `A`, `U`, `W`, `S`, `C`, `XX`, `X`, `P`, `G`, `R`.
 - **Power & Utilization (`PowerHpSource`, `UtilFeeType`):** `drom_catalog`, `katashiki_cache`, `manual`; `personal` vs `commercial` (160 HP cutoff enforced; when `is_under_160_hp is not True`, commercial util applies; exposed via `CustomsCalculation.util_fee_type`).

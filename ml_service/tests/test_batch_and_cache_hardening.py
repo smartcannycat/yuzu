@@ -35,7 +35,6 @@ async def test_batch_ttl_from_completed_monotonic_disk_spill_and_sanitized_error
             *,
             force_refresh: bool = False,
             on_step=None,
-            on_preview=None,
         ):
             await gate.wait()
             if "secret" in filename:

@@ -10,6 +10,7 @@ from ml_service.api.errors import register_exception_handlers
 from ml_service.api.router import router
 from ml_service.config import Settings, get_settings
 from ml_service.factories.sheet_factory import SheetFactory
+from ml_service.infrastructure.chassis_local_ocr import LocalChassisOcrReader
 from ml_service.infrastructure.chassis_ocr_client import ChassisOcrClient
 from ml_service.infrastructure.gemini_vision_client import AsyncGeminiVisionClient
 from ml_service.infrastructure.image_cropper import PillowImageCropper
@@ -61,7 +62,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             thinking_level=resolved_settings.gemini_thinking_level,
             request_deadline_seconds=resolved_settings.gemini_request_deadline_seconds,
             hedge_delay_seconds=resolved_settings.gemini_hedge_delay_seconds,
-            fast_header_timeout_seconds=resolved_settings.gemini_fast_header_timeout_seconds,
             gatekeeper_sheet_threshold=resolved_settings.gemini_gatekeeper_sheet_threshold,
             gatekeeper_readable_threshold=resolved_settings.gemini_gatekeeper_readable_threshold,
             client_error_cooldown_seconds=resolved_settings.gemini_client_error_cooldown_seconds,
@@ -77,8 +77,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ttl_seconds=resolved_settings.cache_ttl_seconds,
             max_disk_bytes=resolved_settings.cache_max_bytes,
         )
+        local_chassis_ocr = LocalChassisOcrReader(
+            enabled=resolved_settings.chassis_ocr_local_enabled,
+            command=resolved_settings.chassis_ocr_local_command,
+            min_confidence=resolved_settings.chassis_ocr_local_min_confidence,
+            timeout_seconds=resolved_settings.chassis_ocr_local_timeout_seconds,
+        )
         chassis_ocr_client = ChassisOcrClient(
             runner=vision_client.runner,
+            local_ocr=local_chassis_ocr,
             cache_dir=resolved_settings.cache_dir,
             ttl_seconds=resolved_settings.cache_ttl_seconds,
             max_disk_bytes=resolved_settings.cache_max_bytes,

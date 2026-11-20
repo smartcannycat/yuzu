@@ -23,6 +23,13 @@ RUN groupadd --system appuser \
 # ==========================================
 FROM base AS dev
 
+ARG INSTALL_TESSERACT=true
+RUN if [ "$INSTALL_TESSERACT" = "true" ]; then \
+    apt-get update && apt-get install -y --no-install-recommends \
+        tesseract-ocr \
+    && rm -rf /var/lib/apt/lists/*; \
+fi
+
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project
 
@@ -60,6 +67,10 @@ RUN uv sync --frozen --no-dev --no-editable
 # Stage 4: Production target (minimal runtime, no uv binary)
 # ==========================================
 FROM python:3.12-slim-bookworm AS prod
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app/ml_service
 

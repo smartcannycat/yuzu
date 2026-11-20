@@ -62,30 +62,6 @@ class ChassisOcrEntity:
 
 
 @dataclass(slots=True, frozen=True)
-class FastHeaderPreviewEntity:
-    """Fast low-resolution header preview returned ahead of full extraction."""
-
-    make: str | None = None
-    model: str | None = None
-    lot_number: str | None = None
-    duration_ms: int = 0
-
-    @property
-    def preview_title(self) -> str | None:
-        base = " ".join(
-            part.strip() for part in (self.make or "", self.model or "") if part and part.strip()
-        )
-        lot = (self.lot_number or "").strip()
-        if base and lot:
-            return f"{base} #{lot}"
-        if base:
-            return base
-        if lot:
-            return f"#{lot}"
-        return None
-
-
-@dataclass(slots=True, frozen=True)
 class ModelAttemptEntity:
     """Telemetry record for a single Gemini model invocation attempt."""
 

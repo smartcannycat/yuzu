@@ -256,9 +256,6 @@ def test_full_flow_fills_lot_risk_flags_and_defects(batch_item) -> None:
     rejection = parser.gatekeeper(batch_item)
     assert rejection is None
 
-    preview_title = parser.fast_header(batch_item)
-    assert preview_title == "Subaru Forester #5190"
-
     parser.parse(batch_item)
 
     # Exactly one HTTP call: gatekeeper did the heavy work.
@@ -341,7 +338,6 @@ def test_gatekeeper_returns_reason_for_rejected_not_sheet(batch_item) -> None:
 
     assert rejection is not None
     assert "аукционным листом" in rejection
-    assert parser.fast_header(batch_item) is None
 
 
 @pytest.mark.django_db
@@ -491,18 +487,6 @@ def test_gatekeeper_raises_for_missing_file(batch_item) -> None:
     parser = MlServiceParser(client=_client(lambda _request: httpx.Response(200, content=b"{}")))
     with pytest.raises(MlServiceError, match="no original file"):
         parser.gatekeeper(batch_item)
-
-
-@pytest.mark.django_db
-def test_fast_header_without_make_returns_none(batch_item) -> None:
-    body = _ok_response_body(sheet=_sheet_payload(make=None, model=None))
-
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=body)
-
-    parser = MlServiceParser(client=_client(handler))
-    assert parser.gatekeeper(batch_item) is None
-    assert parser.fast_header(batch_item) is None
 
 
 @pytest.mark.django_db

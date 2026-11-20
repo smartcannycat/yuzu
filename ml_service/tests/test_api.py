@@ -31,7 +31,6 @@ class _StubParserService:
         *,
         force_refresh: bool = False,
         on_step=None,
-        on_preview=None,
     ):
         if self.mode == "value_error":
             raise ValueError("Invalid or corrupted image bytes.")

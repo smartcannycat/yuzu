@@ -39,7 +39,6 @@ max_key_tries = 3
 thinking_level = "LOW"             # Allowed: "MINIMAL" | "LOW" | "MEDIUM" | "HIGH"
 request_deadline_seconds = 45.0
 hedge_delay_seconds = 8.0
-fast_header_timeout_seconds = 1.2
 
 [batch]
 poll_interval_ms = 1500
@@ -54,3 +53,9 @@ format = "JPEG"                   # Allowed: "JPEG" | "PNG" | "WEBP"
 quality = 88
 min_px = 1000
 max_px = 1400
+
+[chassis_ocr]
+local_enabled = true
+local_command = "tesseract"
+local_min_confidence = 80.0
+local_timeout_seconds = 5.0

@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from ml_service.api.mappers import to_batch_progress_response
-from ml_service.domains.entities import FastHeaderPreviewEntity, GatekeeperDecisionEntity
+from ml_service.domains.entities import GatekeeperDecisionEntity
 from ml_service.domains.enums import (
     BatchItemState,
     BatchStatus,
@@ -49,11 +49,6 @@ class _FakeVisionClient:
             duration_ms=10,
         )
 
-    async def extract_fast_header(self, _sliced) -> FastHeaderPreviewEntity | None:
-        return FastHeaderPreviewEntity(
-            make="Toyota", model="Corolla Touring", lot_number="3142", duration_ms=15
-        )
-
     async def extract_sheet(self, _sliced, _complexity: LayoutComplexity):
         await asyncio.sleep(0)
         self.extract_calls += 1
@@ -92,21 +87,14 @@ async def test_sheet_parser_service_cache_hit_force_refresh_and_rejection(
 ) -> None:
     service, vision, loader = _build_parser_service(tmp_path)
     steps: list[tuple[TaskStep, int]] = []
-    previews: list[str] = []
 
     async def on_step(step: TaskStep, pct: int) -> None:
         steps.append((step, pct))
 
-    async def on_preview(title: str) -> None:
-        previews.append(title)
-
-    first = await service.parse_bytes(
-        sample_png_bytes, filename="corolla.png", on_step=on_step, on_preview=on_preview
-    )
+    first = await service.parse_bytes(sample_png_bytes, filename="corolla.png", on_step=on_step)
     assert first.status == ParseStatus.OK
     assert first.meta.cached is False
     assert vision.extract_calls == 1
-    assert previews == ["Toyota Corolla Touring #3142"]
     assert steps[-1] == (TaskStep.COMPLETED, 100)
 
     # Cache hit skips vision calls
