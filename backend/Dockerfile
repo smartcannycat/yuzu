@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Create non-root user and writable runtime directories
 RUN groupadd -r -g 1000 appgroup && \
     useradd -r -u 1000 -g appgroup -d /app -s /bin/bash appuser && \
-    mkdir -p /app/media /app/staticfiles && \
+    mkdir -p /app/media /app/private_intake /app/staticfiles && \
     chown -R appuser:appgroup /app
 
 COPY docker/entrypoint.sh /entrypoint.sh
@@ -43,7 +43,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project
 
 COPY --chown=appuser:appgroup . .
-RUN mkdir -p /app/media /app/staticfiles && chown -R appuser:appgroup /app
+RUN mkdir -p /app/media /app/private_intake /app/staticfiles && chown -R appuser:appgroup /app
 
 USER appuser
 
@@ -79,8 +79,8 @@ COPY --chown=appuser:appgroup config.toml manage.py ./
 RUN SECRET_KEY=build-only-collectstatic-placeholder \
     ENVIRONMENT=local \
     python manage.py collectstatic --noinput && \
-    mkdir -p /app/media /app/staticfiles && \
-    chown -R appuser:appgroup /app/media /app/staticfiles
+    mkdir -p /app/media /app/private_intake /app/staticfiles && \
+    chown -R appuser:appgroup /app/media /app/private_intake /app/staticfiles
 
 USER appuser
 
