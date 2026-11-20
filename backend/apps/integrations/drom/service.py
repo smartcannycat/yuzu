@@ -1,11 +1,12 @@
 """Drom market evaluation facade orchestrating power lookup, cache, and regional cascade."""
 
 import contextlib
-import hashlib
 import logging
 from dataclasses import replace
 from datetime import timedelta
 from typing import Any
+
+from django.conf import settings
 
 from apps.integrations.drom.cache import fetch_with_drom_cache, write_drom_cache
 from apps.integrations.drom.cascade import (
@@ -24,7 +25,7 @@ from apps.integrations.drom.schemas import (
     DromSearchCriteria,
 )
 from apps.integrations.drom.slugs import DromSlugResolver, ResolvedDromSlug
-from config.settings.config import get_settings
+from apps.integrations.shared.cache import bound_cache_key
 
 logger = logging.getLogger(__name__)
 
@@ -41,14 +42,13 @@ class DromMarketService:
     """Orchestrates Drom analog search, read-through caching, and power_hp lookup."""
 
     def __init__(self, client: DromHttpClient | None = None) -> None:
-        app_settings = get_settings()
         self._managed_client = client is None
         self._client = client or DromHttpClient(
-            timeout_sec=app_settings.SCRAPER_TIMEOUT_SEC,
-            request_interval_sec=app_settings.SCRAPER_REQUEST_INTERVAL_SEC,
-            request_jitter_sec=app_settings.SCRAPER_REQUEST_JITTER_SEC,
-            proxy_ban_sec=float(app_settings.SCRAPER_PROXY_BAN_SEC),
-            proxy_urls=app_settings.SCRAPER_PROXY_URLS,
+            timeout_sec=float(getattr(settings, "SCRAPER_TIMEOUT_SEC", 10.0)),
+            request_interval_sec=float(getattr(settings, "SCRAPER_REQUEST_INTERVAL_SEC", 1.2)),
+            request_jitter_sec=float(getattr(settings, "SCRAPER_REQUEST_JITTER_SEC", 0.4)),
+            proxy_ban_sec=float(getattr(settings, "SCRAPER_PROXY_BAN_SEC", 120)),
+            proxy_urls=getattr(settings, "SCRAPER_PROXY_URLS", ()),
         )
         self._slug_resolver = DromSlugResolver(self._client)
         self._power_resolver = DromPowerResolver(self._client, self._slug_resolver)
@@ -185,10 +185,7 @@ def _build_market_cache_key(criteria: DromSearchCriteria, slug: ResolvedDromSlug
         f"drv={criteria.drive_type or 'any'}:fuel={criteria.fuel_type or 'any'}:"
         f"tr={trans_bucket}:ft={slug.frame_type_id or 'any'}"
     )
-    if len(key) <= 450:
-        return key
-    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
-    return f"drom:market:hash:{digest}"
+    return bound_cache_key(key, prefix="drom:market")
 
 
 def _with_power(result: DromMarketResult, power: DromPowerResult) -> DromMarketResult:

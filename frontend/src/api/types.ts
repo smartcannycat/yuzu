@@ -11,22 +11,26 @@ import type {
   LotSummary,
   RecalculateRequest,
   RecalculateResponse,
-  TokenRefreshRequest,
   UserLoginRequest,
   UserProfileResponse,
   UserRegisterRequest,
 } from '@/types/api'
 
+export interface RequestCancelOptions {
+  signal?: AbortSignal
+}
+
 export interface AuthApi {
   register(payload: UserRegisterRequest): Promise<AuthTokensResponse>
   login(payload: UserLoginRequest): Promise<AuthTokensResponse>
-  refresh(payload: TokenRefreshRequest): Promise<AuthTokensResponse>
+  refresh(): Promise<AuthTokensResponse>
+  logout(): Promise<void>
   me(): Promise<UserProfileResponse>
 }
 
 export interface LotsApi {
-  list(params?: LotListQueryParams): Promise<LotListResponse>
-  getDetail(lotId: string): Promise<LotDetailResponse>
+  list(params?: LotListQueryParams, options?: RequestCancelOptions): Promise<LotListResponse>
+  getDetail(lotId: string, options?: RequestCancelOptions): Promise<LotDetailResponse>
   recalculate(lotId: string, payload: RecalculateRequest): Promise<RecalculateResponse>
   resetSimulation(lotId: string): Promise<RecalculateResponse>
   updateLifecycle(lotId: string, payload: LotLifecyclePatchRequest): Promise<LotSummary>
@@ -37,7 +41,12 @@ export interface LotsApi {
   appendBatchItems(batchId: string, files: readonly File[]): Promise<BatchProgressResponse>
 }
 
+export interface MediaApi {
+  fetchBlob(url: string, options?: RequestCancelOptions): Promise<Blob>
+}
+
 export interface ApiClient {
   auth: AuthApi
   lots: LotsApi
+  media: MediaApi
 }

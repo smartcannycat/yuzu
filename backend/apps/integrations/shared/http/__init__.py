@@ -1,6 +1,7 @@
 """Shared HTTP transport helpers using curl_cffi browser impersonation and proxy pool."""
 
 from apps.integrations.shared.http.client import ResilientHttpSession
+from apps.integrations.shared.http.scraper import BaseScraperClient
 from apps.integrations.shared.http.throttle import (
     HttpBudgetExhaustedError,
     HttpFetchResponse,
@@ -21,6 +22,7 @@ from apps.integrations.shared.proxy import (
 )
 
 __all__ = [
+    "BaseScraperClient",
     "HttpBudgetExhaustedError",
     "HttpFetchResponse",
     "HttpTransportError",

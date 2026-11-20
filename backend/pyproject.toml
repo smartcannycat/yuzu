@@ -127,6 +127,7 @@ name = "Calculator domain is independent of API, pipeline, and integrations"
 type = "forbidden"
 source_modules = ["apps.lots.calculator"]
 forbidden_modules = [
+    "apps.core.exceptions",
     "apps.lots.api",
     "apps.lots.pipeline",
     "apps.lots.services",
@@ -146,8 +147,17 @@ name = "Lots lifecycle is independent of API and integrations"
 type = "forbidden"
 source_modules = ["apps.lots.lifecycle"]
 forbidden_modules = [
+    "apps.core.exceptions",
     "apps.lots.api",
     "apps.integrations",
+]
+
+[[tool.importlinter.contracts]]
+name = "Lots services facade does not import API"
+type = "forbidden"
+source_modules = ["apps.lots.services"]
+forbidden_modules = [
+    "apps.lots.api",
 ]
 
 [tool.pytest.ini_options]

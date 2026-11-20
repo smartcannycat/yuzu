@@ -4,41 +4,12 @@ from __future__ import annotations
 
 import re
 
-_CYRILLIC_TRANSLIT: dict[str, str] = {
-    "а": "a",
-    "б": "b",
-    "в": "v",
-    "г": "g",
-    "д": "d",
-    "е": "e",
-    "ё": "e",
-    "ж": "zh",
-    "з": "z",
-    "и": "i",
-    "й": "y",
-    "к": "k",
-    "л": "l",
-    "м": "m",
-    "н": "n",
-    "о": "o",
-    "п": "p",
-    "р": "r",
-    "с": "s",
-    "т": "t",
-    "у": "u",
-    "ф": "f",
-    "х": "kh",
-    "ц": "ts",
-    "ч": "ch",
-    "ш": "sh",
-    "щ": "shch",
-    "ъ": "",
-    "ы": "y",
-    "ь": "",
-    "э": "e",
-    "ю": "yu",
-    "я": "ya",
-}
+from apps.integrations.shared import aliases as _shared_aliases
+
+_BRAND_ALIASES = _shared_aliases.CANONICAL_BRAND_SLUGS
+_CYRILLIC_TRANSLIT = _shared_aliases.CYRILLIC_TRANSLIT
+_TRIM_NOISE_WORDS = _shared_aliases.TRIM_NOISE_WORDS
+_transliterate_cyrillic = _shared_aliases.transliterate_cyrillic
 
 DEFAULT_MODEL_ALIASES: dict[str, tuple[str, str | None]] = {
     "corolla touring": ("corolla", "универсал"),
@@ -59,18 +30,6 @@ _DEFAULT_FRAME_TYPES: dict[str, int] = {
     "универсал": 3,
     "хэтчбек 5 дв.": 5,
     "седан": 10,
-}
-
-_BRAND_ALIASES: dict[str, str] = {
-    "mercedes": "mercedes-benz",
-    "мерседес": "mercedes-benz",
-    "мерседес бенц": "mercedes-benz",
-    "мерседес-бенц": "mercedes-benz",
-    "vw": "volkswagen",
-    "фольксваген": "volkswagen",
-    "бмв": "bmw",
-    "bmv": "bmw",
-    "мини": "mini",
 }
 
 _MB_SERIES_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -116,10 +75,6 @@ _MAKE_REGEX_RULES: dict[str, tuple[tuple[re.Pattern[str], str], ...]] = {
     ),
 }
 
-_TRIM_NOISE_WORDS = frozenset(
-    {"hybrid", "hv", "e-power", "epower", "4wd", "2wd", "turbo", "wxb", "w×b"}
-)
-
 # Tokens that denote a distinct model/body line on Drom and must not be dropped
 # when collapsing a multi-word model name onto a shorter base model.
 _SUBMODEL_CONFLICT_TOKENS = frozenset(
@@ -152,10 +107,6 @@ _SUBMODEL_CONFLICT_TOKENS = frozenset(
 )
 
 
-def _transliterate_cyrillic(value: str) -> str:
-    return "".join(_CYRILLIC_TRANSLIT.get(ch, ch) for ch in value.lower())
-
-
 def normalize_slug(value: str) -> str:
     """Normalize a brand or model string into a non-empty URL-safe Drom slug."""
     transliterated = _transliterate_cyrillic(value.strip())
@@ -167,3 +118,17 @@ def normalize_slug(value: str) -> str:
 def _alnum_key(value: str) -> str:
     transliterated = _transliterate_cyrillic(value.strip()).replace("+", "plus")
     return re.sub(r"[^a-z0-9]+", "", transliterated)
+
+
+__all__ = [
+    "DEFAULT_MODEL_ALIASES",
+    "_BRAND_ALIASES",
+    "_CYRILLIC_TRANSLIT",
+    "_DEFAULT_FRAME_TYPES",
+    "_MAKE_REGEX_RULES",
+    "_SUBMODEL_CONFLICT_TOKENS",
+    "_TRIM_NOISE_WORDS",
+    "_alnum_key",
+    "_transliterate_cyrillic",
+    "normalize_slug",
+]

@@ -6,7 +6,6 @@ import type { AuthApi } from '@/api/types'
 import type {
   AuthTokensResponse,
   InvalidParamDetail,
-  TokenRefreshRequest,
   UserLoginRequest,
   UserProfileResponse,
   UserRegisterRequest,
@@ -19,8 +18,8 @@ import {
 } from '@/utils/validation'
 
 export const MOCK_USERS_STORAGE_KEY = 'yuzu.mock.users'
+export const MOCK_SESSION_STORAGE_KEY = 'yuzu.mock.session_user_id'
 const ACCESS_TOKEN_PREFIX = 'mock-access:'
-const REFRESH_TOKEN_PREFIX = 'mock-refresh:'
 
 export const DEMO_ACCOUNT_CREDENTIALS = {
   email: 'alex@example.com',
@@ -55,7 +54,7 @@ function isValidMockUser(value: unknown): value is MockUserRecord {
     typeof record.email === 'string' &&
     record.email.length > 0 &&
     typeof record.password === 'string' &&
-    (record.name === null || typeof record.name === 'string') &&
+    (record.name === null || record.name === undefined || typeof record.name === 'string') &&
     typeof record.created_at === 'string'
   )
 }
@@ -94,15 +93,39 @@ const mockUsersStorage = useStorage<MockUserRecord[]>(
   },
 )
 
+function readPersistedSessionUserId(): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = window.localStorage.getItem(MOCK_SESSION_STORAGE_KEY)
+    return raw && raw.length > 0 ? raw : null
+  } catch {
+    return null
+  }
+}
+
+function writePersistedSessionUserId(userId: string | null): void {
+  if (typeof window === 'undefined') return
+  try {
+    if (userId) {
+      window.localStorage.setItem(MOCK_SESSION_STORAGE_KEY, userId)
+    } else {
+      window.localStorage.removeItem(MOCK_SESSION_STORAGE_KEY)
+    }
+  } catch {
+    // Ignore storage quota / restricted context errors.
+  }
+}
+
 export function resetMockUsers(): void {
   mockUsersStorage.value = [DEFAULT_DEMO_USER]
+  writePersistedSessionUserId(null)
 }
 
 function toPublicProfile(record: MockUserRecord): UserProfileResponse {
   return {
     user_id: record.user_id,
     email: record.email,
-    name: record.name,
+    name: record.name ?? null,
     created_at: record.created_at,
   }
 }
@@ -112,7 +135,6 @@ function createTokensResponse(record: MockUserRecord): AuthTokensResponse {
   const nonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
   return {
     access_token: `${ACCESS_TOKEN_PREFIX}${record.user_id}:${nonce}`,
-    refresh_token: `${REFRESH_TOKEN_PREFIX}${record.user_id}:${nonce}`,
     token_type: 'bearer',
     expires_in_sec: 3600,
     user: profile,
@@ -126,7 +148,20 @@ function extractUserIdFromToken(token: string, prefix: string): string | null {
   return userId || null
 }
 
-export function createMockAuthApi(defaultDelay: number): AuthApi {
+export function createMockAuthApi(defaultDelay: number, persistState = false): AuthApi {
+  let inMemorySessionUserId: string | null = null
+
+  function getActiveMockSessionUserId(): string | null {
+    return persistState ? readPersistedSessionUserId() : inMemorySessionUserId
+  }
+
+  function setActiveMockSessionUserId(userId: string | null): void {
+    inMemorySessionUserId = userId
+    if (persistState) {
+      writePersistedSessionUserId(userId)
+    }
+  }
+
   return {
     async register(payload: UserRegisterRequest): Promise<AuthTokensResponse> {
       await delay(defaultDelay)
@@ -191,6 +226,7 @@ export function createMockAuthApi(defaultDelay: number): AuthApi {
         created_at: new Date().toISOString(),
       }
       mockUsersStorage.value = [...users, newUser]
+      setActiveMockSessionUserId(newUser.user_id)
       return createTokensResponse(newUser)
     },
 
@@ -212,14 +248,17 @@ export function createMockAuthApi(defaultDelay: number): AuthApi {
         })
       }
 
+      setActiveMockSessionUserId(matched.user_id)
       return createTokensResponse(matched)
     },
 
-    async refresh(payload: TokenRefreshRequest): Promise<AuthTokensResponse> {
+    async refresh(): Promise<AuthTokensResponse> {
       await delay(Math.min(defaultDelay, 120))
-      const userId = extractUserIdFromToken(payload.refresh_token, REFRESH_TOKEN_PREFIX)
+      const sessionUserId = getActiveMockSessionUserId()
       const users = mockUsersStorage.value
-      const matched = userId ? users.find((user) => user.user_id === userId) : undefined
+      const matched = sessionUserId
+        ? users.find((user) => user.user_id === sessionUserId)
+        : undefined
 
       if (!matched) {
         throw createMockProblem({
@@ -234,6 +273,11 @@ export function createMockAuthApi(defaultDelay: number): AuthApi {
       return createTokensResponse(matched)
     },
 
+    async logout(): Promise<void> {
+      await delay(Math.min(defaultDelay, 80))
+      setActiveMockSessionUserId(null)
+    },
+
     async me(): Promise<UserProfileResponse> {
       await delay(Math.min(defaultDelay, 120))
       const accessToken = tokenStorage.getAccessToken()
@@ -243,17 +287,6 @@ export function createMockAuthApi(defaultDelay: number): AuthApi {
 
       if (matched) {
         return toPublicProfile(matched)
-      }
-
-      const refreshToken = tokenStorage.getRefreshToken()
-      if (refreshToken) {
-        try {
-          const refreshed = await this.refresh({ refresh_token: refreshToken })
-          tokenStorage.setFromAuthResponse(refreshed)
-          return refreshed.user
-        } catch {
-          // Fall through to 401 cleanup.
-        }
       }
 
       tokenStorage.clear()

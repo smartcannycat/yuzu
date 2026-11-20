@@ -5,6 +5,10 @@ class DromFetchError(RuntimeError):
     """Raised when an HTTP request to Drom fails unexpectedly."""
 
 
+class DromBudgetExhaustedError(DromFetchError):
+    """Raised when Drom request or retry budget is exhausted."""
+
+
 class DromBlockedError(DromFetchError):
     """Raised when Drom / QRATOR rejects requests with 403 or 429."""
 

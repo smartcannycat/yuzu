@@ -1,7 +1,7 @@
-"""FastAPI dependency providers reading service instances from ml_service.state."""
+"""FastAPI dependency providers reading service instances from app.state."""
 
+import asyncio
 import hmac
-import threading
 import time
 from collections import deque
 
@@ -17,7 +17,6 @@ API_KEY_HEADER_NAME = "X-API-Key"
 _api_key_header = APIKeyHeader(name=API_KEY_HEADER_NAME, auto_error=False)
 _RATE_WINDOW_SECONDS = 60.0
 _MAX_RATE_BUCKETS = 4096
-_rate_limit_lock = threading.Lock()
 
 
 def get_settings_dep(request: Request) -> Settings:
@@ -49,27 +48,39 @@ def require_api_key_dep(
         )
 
 
-def rate_limit_dep(
+def _get_or_init_lock(request: Request, attr_name: str) -> asyncio.Lock:
+    lock: asyncio.Lock | None = getattr(request.app.state, attr_name, None)
+    if lock is None:
+        lock = asyncio.Lock()
+        setattr(request.app.state, attr_name, lock)
+    return lock
+
+
+def _get_or_init_buckets(request: Request, attr_name: str) -> dict[str, deque[float]]:
+    buckets: dict[str, deque[float]] | None = getattr(request.app.state, attr_name, None)
+    if buckets is None:
+        buckets = {}
+        setattr(request.app.state, attr_name, buckets)
+    return buckets
+
+
+async def _enforce_sliding_window_rate_limit(
     request: Request,
-    settings: Settings = Depends(get_settings_dep),
+    *,
+    limit: int,
+    buckets_attr: str,
+    lock_attr: str,
 ) -> None:
-    """Enforce bounded in-memory sliding-window RPM limit per client IP."""
-    limit = settings.rate_limit_requests_per_minute
     if limit <= 0:
         return
 
-    buckets: dict[str, deque[float]] | None = getattr(
-        request.app.state, "_rate_limit_buckets", None
-    )
-    if buckets is None:
-        buckets = {}
-        request.app.state._rate_limit_buckets = buckets
-
+    buckets = _get_or_init_buckets(request, buckets_attr)
+    lock = _get_or_init_lock(request, lock_attr)
     now = time.monotonic()
     cutoff = now - _RATE_WINDOW_SECONDS
     client_host = request.client.host if request.client and request.client.host else "unknown"
 
-    with _rate_limit_lock:
+    async with lock:
         if len(buckets) >= _MAX_RATE_BUCKETS and client_host not in buckets:
             stale_keys = [
                 key for key, stamps in buckets.items() if not stamps or stamps[-1] < cutoff
@@ -94,6 +105,32 @@ def rate_limit_dep(
             detail=f"Rate limit exceeded ({limit} requests per minute).",
             headers={"Retry-After": "60"},
         )
+
+
+async def pre_auth_rate_limit_dep(
+    request: Request,
+    settings: Settings = Depends(get_settings_dep),
+) -> None:
+    """Enforce lightweight pre-authentication sliding-window RPM limit per client IP."""
+    await _enforce_sliding_window_rate_limit(
+        request,
+        limit=settings.pre_auth_rate_limit_requests_per_minute,
+        buckets_attr="_pre_auth_rate_limit_buckets",
+        lock_attr="_pre_auth_rate_limit_lock",
+    )
+
+
+async def rate_limit_dep(
+    request: Request,
+    settings: Settings = Depends(get_settings_dep),
+) -> None:
+    """Enforce bounded in-memory sliding-window RPM limit per client IP."""
+    await _enforce_sliding_window_rate_limit(
+        request,
+        limit=settings.rate_limit_requests_per_minute,
+        buckets_attr="_rate_limit_buckets",
+        lock_attr="_rate_limit_lock",
+    )
 
 
 def get_key_pool_dep(request: Request) -> GeminiKeyPool:

@@ -1,27 +1,17 @@
 <script setup lang="ts">
-import {
-  AlertCircle,
-  ArrowLeft,
-  CheckCircle2,
-  ChevronRight,
-  Clock,
-  Loader2,
-  OctagonAlert,
-  Plus,
-  RefreshCw,
-  Trash2,
-} from '@lucide/vue'
+import { AlertCircle, ArrowLeft, Loader2, OctagonAlert, Plus, RefreshCw, X } from '@lucide/vue'
 import { useMediaQuery } from '@vueuse/core'
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { BatchUploadSheet } from '@/components/lots'
+import BatchItemCard from '@/components/lots/BatchItemCard.vue'
+import { useBatchPolling } from '@/components/lots/composables/useBatchPolling'
 import { CapyMascot } from '@/components/mascot'
-import { BaseBadge, BaseButton, BaseCard, type BadgeVariant } from '@/components/ui'
-import { clampPollIntervalMs, useBatchesStore } from '@/stores/batches'
-import type { BatchItemStatus, TrafficLightColor } from '@/types/api'
+import { BaseButton, BaseCard } from '@/components/ui'
+import { useBatchesStore } from '@/stores/batches'
 import { BATCH_MAX_FILES_PER_UPLOAD, BATCH_MAX_TOTAL_FILES } from '@/utils/batchFiles'
-import { formatRub, formatTaskStepRu, formatVerdictLabelRu } from '@/utils/formatters'
+import { extractApiErrorMessage } from '@/utils/errors'
 
 const route = useRoute()
 const router = useRouter()
@@ -30,17 +20,14 @@ const isDesktop = useMediaQuery('(min-width: 768px)')
 
 const isUploadOpen = ref(false)
 const uploadMode = ref<'create' | 'append'>('append')
-
-const MAX_RETRY_BACKOFF_MS = 30_000
-
-let pollTimerId: number | null = null
-let pollingEpoch = 0
-let consecutivePollFailures = 0
+const uploadActionError = ref<string | null>(null)
 
 const batchId = computed(() => {
   const raw = route.params.batchId
   return typeof raw === 'string' ? raw : Array.isArray(raw) ? (raw[0] ?? '') : ''
 })
+
+const { isUnmounted, startPolling } = useBatchPolling(batchId, batchesStore)
 
 const batch = computed(() => {
   if (!batchesStore.activeBatch || batchesStore.activeBatch.batch_id !== batchId.value) {
@@ -68,79 +55,7 @@ const progressBarClass = computed(() => {
   return 'bg-accent'
 })
 
-const VERDICT_BADGE_VARIANT: Record<TrafficLightColor, BadgeVariant> = {
-  green: 'success',
-  yellow: 'warning',
-  red: 'danger',
-}
-
-function isNonRetryablePollError(status: number | null): boolean {
-  if (status === null) return false
-  // 401/403/404 and permanent 4xx errors should stop polling immediately; 408/429/5xx/network(0) retry.
-  return status >= 400 && status < 500 && status !== 408 && status !== 429
-}
-
-function stopPolling(): void {
-  pollingEpoch += 1
-  consecutivePollFailures = 0
-  if (pollTimerId !== null && typeof window !== 'undefined') {
-    window.clearTimeout(pollTimerId)
-    pollTimerId = null
-  }
-}
-
-async function runPollCycle(targetBatchId: string, epoch: number, initial: boolean): Promise<void> {
-  if (!targetBatchId || epoch !== pollingEpoch) return
-
-  const result = await batchesStore.fetchBatch(targetBatchId, { silent: !initial })
-  if (epoch !== pollingEpoch) return
-
-  if (result) {
-    consecutivePollFailures = 0
-    if (
-      (result.status === 'queued' || result.status === 'processing') &&
-      typeof window !== 'undefined'
-    ) {
-      const interval = clampPollIntervalMs(batchesStore.pollIntervalMs)
-      pollTimerId = window.setTimeout(() => {
-        void runPollCycle(targetBatchId, epoch, false)
-      }, interval)
-    }
-    return
-  }
-
-  if (!isNonRetryablePollError(batchesStore.batchErrorStatus) && typeof window !== 'undefined') {
-    consecutivePollFailures += 1
-    const baseInterval = clampPollIntervalMs(batchesStore.pollIntervalMs)
-    const backoffDelay = Math.min(
-      MAX_RETRY_BACKOFF_MS,
-      baseInterval * 2 ** Math.min(consecutivePollFailures - 1, 4),
-    )
-    pollTimerId = window.setTimeout(() => {
-      void runPollCycle(targetBatchId, epoch, false)
-    }, backoffDelay)
-  }
-}
-
-function startPolling(targetBatchId: string): void {
-  stopPolling()
-  if (!targetBatchId) return
-  const epoch = pollingEpoch
-  void runPollCycle(targetBatchId, epoch, true)
-}
-
-watch(
-  batchId,
-  (nextId) => {
-    batchesStore.clearErrors()
-    startPolling(nextId)
-  },
-  { immediate: true },
-)
-
-onBeforeUnmount(() => {
-  stopPolling()
-})
+const effectiveUploadError = computed(() => batchesStore.uploadError || uploadActionError.value)
 
 function goHome(): void {
   void router.push({ name: 'home' })
@@ -152,53 +67,47 @@ function openLotDetail(lotId: string): void {
 
 function openAppendModal(): void {
   batchesStore.clearErrors()
+  uploadActionError.value = null
   uploadMode.value = 'append'
   isUploadOpen.value = true
 }
 
 function openCreateModal(): void {
   batchesStore.clearErrors()
+  uploadActionError.value = null
   uploadMode.value = 'create'
   isUploadOpen.value = true
 }
 
 async function handleUploadSubmit(files: File[]): Promise<void> {
-  if (uploadMode.value === 'append' && batchId.value) {
-    const updated = await batchesStore.appendItems(batchId.value, files)
-    isUploadOpen.value = false
-    if (updated.status === 'queued' || updated.status === 'processing') {
-      startPolling(batchId.value)
+  uploadActionError.value = null
+  try {
+    if (uploadMode.value === 'append' && batchId.value) {
+      const updated = await batchesStore.appendItems(batchId.value, files)
+      if (isUnmounted.value) return
+      isUploadOpen.value = false
+      if (updated.status === 'queued' || updated.status === 'processing') {
+        startPolling(batchId.value)
+      }
+      return
     }
-    return
-  }
 
-  const created = await batchesStore.createBatch(files)
-  isUploadOpen.value = false
-  if (isDesktop.value) {
-    goHome()
-  } else {
-    await router.push({ name: 'batch-progress', params: { batchId: created.batch_id } })
+    const created = await batchesStore.createBatch(files)
+    if (isUnmounted.value) return
+    isUploadOpen.value = false
+    if (isDesktop.value) {
+      goHome()
+    } else {
+      await router.push({ name: 'batch-progress', params: { batchId: created.batch_id } })
+    }
+  } catch (error: unknown) {
+    if (isUnmounted.value) return
+    const fallback =
+      uploadMode.value === 'append'
+        ? 'Не удалось догрузить листы в текущую очередь.'
+        : 'Не удалось загрузить аукционные листы.'
+    uploadActionError.value = extractApiErrorMessage(error, fallback)
   }
-}
-
-function getItemTitle(item: BatchItemStatus): string {
-  if (item.summary) {
-    return item.summary.year
-      ? `${item.summary.make} ${item.summary.model} ${item.summary.year}`
-      : `${item.summary.make} ${item.summary.model}`
-  }
-  return item.preview_title || item.original_filename
-}
-
-function getItemSubtitle(item: BatchItemStatus): string {
-  if (item.summary) {
-    return `${item.summary.auction_house} #${item.summary.lot_number} · Оценка ${item.summary.overall_grade}`
-  }
-  if (item.status === 'failed') {
-    return item.error_message || 'Не удалось распознать лист'
-  }
-  const stepLabel = formatTaskStepRu(item.current_step)
-  return item.preview_title ? `${stepLabel} · ${item.original_filename}` : stepLabel
 }
 </script>
 
@@ -325,6 +234,31 @@ function getItemSubtitle(item: BatchItemStatus): string {
         </div>
       </BaseCard>
 
+      <!-- Inline upload failure alert when sheet is closed -->
+      <div
+        v-if="effectiveUploadError && !isUploadOpen"
+        role="alert"
+        class="bg-danger-subtle border-danger/25 text-danger flex items-center justify-between gap-3 rounded-md border px-3.5 py-2.5 text-[13px] font-medium"
+      >
+        <div class="flex items-center gap-2">
+          <OctagonAlert :size="16" class="shrink-0" />
+          <span>{{ effectiveUploadError }}</span>
+        </div>
+        <button
+          type="button"
+          aria-label="Скрыть ошибку"
+          class="text-danger/80 hover:text-danger shrink-0 cursor-pointer rounded-full p-1"
+          @click="
+            () => {
+              batchesStore.clearErrors()
+              uploadActionError = null
+            }
+          "
+        >
+          <X :size="15" />
+        </button>
+      </div>
+
       <!-- Inline transient polling warning if connection drops temporarily -->
       <div
         v-if="batchesStore.batchError"
@@ -345,141 +279,10 @@ function getItemSubtitle(item: BatchItemStatus): string {
       <section aria-label="Листы в очереди">
         <ul class="flex flex-col gap-2.5">
           <li
-            v-for="item in batch.items"
-            :key="`${item.file_index}-${item.lot_id ?? item.original_filename}`"
+            v-for="(item, idx) in batch.items"
+            :key="`${idx}:${item.file_index}-${item.lot_id ?? item.original_filename}`"
           >
-            <!-- Ready Lot Row -->
-            <BaseCard
-              v-if="item.status === 'ready' && item.summary"
-              variant="surface"
-              padding="none"
-              interactive
-              class="overflow-hidden"
-            >
-              <button
-                type="button"
-                class="focus-visible:outline-accent flex w-full cursor-pointer items-center justify-between gap-3 px-4 py-3.5 text-left focus-visible:outline-2 focus-visible:outline-offset-[-2px]"
-                @click="openLotDetail(item.summary.lot_id)"
-              >
-                <div class="flex min-w-0 items-center gap-3">
-                  <span
-                    class="bg-success-bg text-success flex h-8 w-8 shrink-0 items-center justify-center rounded-sm"
-                  >
-                    <CheckCircle2 :size="17" :stroke-width="2" />
-                  </span>
-
-                  <div class="min-w-0">
-                    <div class="text-text-primary truncate text-[15px] font-semibold">
-                      {{ getItemTitle(item) }}
-                    </div>
-                    <div class="text-text-secondary truncate text-[12px]">
-                      {{ getItemSubtitle(item) }}
-                    </div>
-                  </div>
-                </div>
-
-                <div class="flex shrink-0 items-center gap-2.5">
-                  <div class="text-right">
-                    <div class="text-text-primary text-[14px] font-semibold tabular-nums">
-                      {{ formatRub(item.summary.turnkey_cost_rub) }}
-                    </div>
-                    <BaseBadge
-                      :variant="VERDICT_BADGE_VARIANT[item.summary.verdict]"
-                      class="mt-0.5"
-                    >
-                      {{ formatVerdictLabelRu(item.summary.verdict) }}
-                    </BaseBadge>
-                  </div>
-
-                  <ChevronRight :size="16" class="text-text-tertiary shrink-0" />
-                </div>
-              </button>
-            </BaseCard>
-
-            <!-- Soft-deleted Ready Lot Row -->
-            <BaseCard
-              v-else-if="item.status === 'ready' && !item.summary"
-              variant="surface"
-              padding="none"
-            >
-              <div class="flex items-center justify-between gap-3 px-4 py-3.5">
-                <div class="flex min-w-0 items-center gap-3">
-                  <span
-                    class="bg-surface-inset text-text-secondary flex h-8 w-8 shrink-0 items-center justify-center rounded-sm"
-                  >
-                    <Trash2 :size="16" :stroke-width="2" />
-                  </span>
-                  <div class="min-w-0">
-                    <div class="text-text-primary truncate text-[14px] font-semibold">
-                      {{ getItemTitle(item) }}
-                    </div>
-                    <div class="text-text-secondary truncate text-[12px]">Лот удалён из списка</div>
-                  </div>
-                </div>
-
-                <BaseBadge variant="neutral">Удалён</BaseBadge>
-              </div>
-            </BaseCard>
-
-            <!-- Failed Item Row -->
-            <BaseCard v-else-if="item.status === 'failed'" variant="surface" padding="none">
-              <div class="flex items-center justify-between gap-3 px-4 py-3.5">
-                <div class="flex min-w-0 items-center gap-3">
-                  <span
-                    class="bg-danger-bg text-danger flex h-8 w-8 shrink-0 items-center justify-center rounded-sm"
-                  >
-                    <OctagonAlert :size="17" :stroke-width="2" />
-                  </span>
-                  <div class="min-w-0">
-                    <div class="text-text-primary truncate text-[14px] font-semibold">
-                      {{ getItemTitle(item) }}
-                    </div>
-                    <div class="text-danger truncate text-[12px]">
-                      {{ getItemSubtitle(item) }}
-                    </div>
-                  </div>
-                </div>
-
-                <BaseBadge variant="danger">Ошибка</BaseBadge>
-              </div>
-            </BaseCard>
-
-            <!-- Processing / Queued Item Row -->
-            <BaseCard v-else variant="surface" padding="none">
-              <div class="flex items-center justify-between gap-3 px-4 py-3.5">
-                <div class="flex min-w-0 items-center gap-3">
-                  <span
-                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm"
-                    :class="
-                      item.status === 'processing'
-                        ? 'bg-info-bg text-info'
-                        : 'bg-surface-inset text-text-secondary'
-                    "
-                  >
-                    <Loader2
-                      v-if="item.status === 'processing'"
-                      :size="16"
-                      :stroke-width="2"
-                      class="animate-spin"
-                    />
-                    <Clock v-else :size="16" :stroke-width="2" />
-                  </span>
-
-                  <div class="min-w-0">
-                    <div class="text-text-primary truncate text-[14px] font-semibold">
-                      {{ getItemTitle(item) }}
-                    </div>
-                    <div class="text-text-secondary truncate text-[12px]">
-                      {{ getItemSubtitle(item) }}
-                    </div>
-                  </div>
-                </div>
-
-                <BaseBadge :variant="item.status === 'processing' ? 'info' : 'neutral'">
-                  {{ item.status === 'processing' ? 'Анализ' : 'В очереди' }}
-                </BaseBadge>
-              </div>
-            </BaseCard>
+            <BatchItemCard :item="item" @open-lot="openLotDetail" />
           </li>
         </ul>
       </section>
@@ -490,7 +293,7 @@ function getItemSubtitle(item: BatchItemStatus): string {
       :mode="uploadMode"
       :max-files="uploadMode === 'append' ? remainingAppendSlots : BATCH_MAX_FILES_PER_UPLOAD"
       :is-submitting="batchesStore.isUploading || batchesStore.isAppending"
-      :server-error="batchesStore.uploadError"
+      :server-error="effectiveUploadError"
       @submit="handleUploadSubmit"
     />
   </div>

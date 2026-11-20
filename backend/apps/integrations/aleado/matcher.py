@@ -5,34 +5,24 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+from apps.integrations.shared.katashiki import extract_aleado_body_code
+
 if TYPE_CHECKING:
     from apps.integrations.aleado.parser import AleadoLotRow
     from apps.lots.models import Lot
 
-_BODY_CODE_RE = re.compile(r"[A-Z]{1,5}\d{1,4}[A-Z]{0,2}")
-
 
 def clean_model_code(lot: Lot) -> str:
-    """Derive the Aleado model type code from the lot's frame/model code.
+    """Derive the Aleado model type code from the lot's frame/model code."""
+    return extract_aleado_body_code(lot.frame_id, lot.model_code)
 
-    Strips emission prefixes ("6BA-GB5" -> "GB5", "DAA-RU3" -> "RU3") and
-    trailing spec suffixes ("3BA-NRE210W-AWXNB" -> "NRE210W").
-    A Frame ID ("GB5-1025108") contributes the part before the dash.
-    """
-    for value in (lot.frame_id, lot.model_code):
-        code = (value or "").upper().strip()
-        if not code:
-            continue
-        parts = [part for part in code.split("-") if part]
-        if len(parts) == 2 and parts[-1].isdigit() and _BODY_CODE_RE.fullmatch(parts[0]):
-            return parts[0]
-        if len(parts) >= 2:
-            for part in parts[1:]:
-                if _BODY_CODE_RE.fullmatch(part):
-                    return part
-        if _BODY_CODE_RE.fullmatch(parts[0]):
-            return parts[0]
-    return ""
+
+def _matches_house_token(needle: str, haystack: str) -> bool:
+    if not needle or not haystack:
+        return False
+    if needle == haystack:
+        return True
+    return bool(re.search(rf"(?<![A-Z0-9]){re.escape(needle)}(?![A-Z0-9])", haystack))
 
 
 def _candidate_is_own_lot(row: AleadoLotRow, lot: Lot) -> bool:
@@ -45,9 +35,7 @@ def _candidate_is_own_lot(row: AleadoLotRow, lot: Lot) -> bool:
     own_house = (lot.auction_house or "").upper().strip()
     branch = (lot.auction_branch or "").upper().strip()
     house = row.auction_house.upper().strip()
-    return (bool(branch) and branch in house) or (
-        bool(own_house) and (house.startswith(own_house) or own_house in house)
-    )
+    return _matches_house_token(branch, house) or _matches_house_token(own_house, house)
 
 
 def _normalize_frame_id(value: str | None) -> str:

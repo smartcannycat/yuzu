@@ -75,7 +75,7 @@
       "net_benefit_rub": 788630,
       "benefit_percentage": 43.4,
       "verdict": "yellow",
-      "verdict_headline": "🟡 ВНИМАНИЕ: ЕСТЬ НЮАНСЫ",
+      "verdict_headline": "ВНИМАНИЕ: ЕСТЬ НЮАНСЫ",
       "meti_sanction_risk": false,
       "baseline_economics": {
         "bid_jpy": 2500000,
@@ -135,8 +135,8 @@
     },
     "verdict": {
       "verdict": "yellow",
-      "headline": "🟡 ВНИМАНИЕ: ЕСТЬ НЮАНСЫ",
-      "short_verdict_label": "🟡 ВНИМАНИЕ: ЕСТЬ НЮАНСЫ",
+      "headline": "ВНИМАНИЕ: ЕСТЬ НЮАНСЫ",
+      "short_verdict_label": "ВНИМАНИЕ: ЕСТЬ НЮАНСЫ",
       "badge_text": "Выгода: +788 630 ₽ (повреждение лобового стекла)",
       "net_benefit_rub": 788630,
       "benefit_percentage": 43.4,
@@ -415,7 +415,7 @@
       "net_benefit_rub": 231818,
       "benefit_percentage": 18.0,
       "verdict": "red",
-      "verdict_headline": "🔴 ПОКУПКУ НЕ РЕКОМЕНДУЕМ",
+      "verdict_headline": "ПОКУПКУ НЕ РЕКОМЕНДУЕМ",
       "meti_sanction_risk": false,
       "baseline_economics": {
         "bid_jpy": 1040000,
@@ -645,8 +645,8 @@
     },
     "verdict": {
       "verdict": "red",
-      "headline": "🔴 ПОКУПКУ НЕ РЕКОМЕНДУЕМ",
-      "short_verdict_label": "🔴 ПОКУПКУ НЕ РЕКОМЕНДУЕМ",
+      "headline": "ПОКУПКУ НЕ РЕКОМЕНДУЕМ",
+      "short_verdict_label": "ПОКУПКУ НЕ РЕКОМЕНДУЕМ",
       "badge_text": "Стоп-факторы: ремонт силовой структуры, аварийный статус (R/RA)",
       "net_benefit_rub": 231818,
       "benefit_percentage": 18.0,
@@ -1077,7 +1077,7 @@
       "net_benefit_rub": 463722,
       "benefit_percentage": 18.3,
       "verdict": "red",
-      "verdict_headline": "🔴 ПОКУПКУ НЕ РЕКОМЕНДУЕМ",
+      "verdict_headline": "ПОКУПКУ НЕ РЕКОМЕНДУЕМ",
       "meti_sanction_risk": true,
       "baseline_economics": {
         "bid_jpy": 2500000,
@@ -1147,8 +1147,8 @@
     },
     "verdict": {
       "verdict": "red",
-      "headline": "🔴 ПОКУПКУ НЕ РЕКОМЕНДУЕМ",
-      "short_verdict_label": "🔴 ПОКУПКУ НЕ РЕКОМЕНДУЕМ",
+      "headline": "ПОКУПКУ НЕ РЕКОМЕНДУЕМ",
+      "short_verdict_label": "ПОКУПКУ НЕ РЕКОМЕНДУЕМ",
       "badge_text": "Стоп-факторы: ремонт рамки радиатора, ремонт силовой структуры, аварийный статус (R/RA)",
       "net_benefit_rub": 463722,
       "benefit_percentage": 18.3,

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { CheckSquare, OctagonAlert, Plus, Trash2, Undo2, X } from '@lucide/vue'
+import { OctagonAlert, Plus, X } from '@lucide/vue'
 import { useMediaQuery } from '@vueuse/core'
-import { onBeforeUnmount, onMounted, ref, toRef, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, toRef } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { AppHeader, ProfileSheet } from '@/components/layout'
@@ -11,21 +11,23 @@ import {
   LotFilterSheet,
   LotsFeed,
   LotsToolbar,
-  type LotFilterDraft,
 } from '@/components/lots'
+import { useHomeFeedFilters } from '@/components/lots/composables/useHomeFeedFilters'
+import { useHomeFeedSync } from '@/components/lots/composables/useHomeFeedSync'
+import LotsBulkActionBar from '@/components/lots/LotsBulkActionBar.vue'
 import { BaseButton } from '@/components/ui'
 import { useLotFeedActions } from '@/composables/useLotFeedActions'
 import { useAuthStore } from '@/stores/auth'
 import { useBatchesStore } from '@/stores/batches'
-import { useLotsStore } from '@/stores/lots'
-import type { InProgressItemPreview, LotSummary, TrafficLightColor } from '@/types/api'
+import { useLotFeedStore } from '@/stores/lotFeed'
+import type { InProgressItemPreview, LotSummary } from '@/types/api'
+import { extractApiErrorMessage } from '@/utils/errors'
 
-const HOME_IN_PROGRESS_POLL_MS = 2000
 const IN_PROGRESS_AUTO_EXPAND_LIMIT = 4
 
 const router = useRouter()
 const authStore = useAuthStore()
-const lotsStore = useLotsStore()
+const lotsStore = useLotFeedStore()
 const batchesStore = useBatchesStore()
 const isDesktop = useMediaQuery('(min-width: 768px)')
 
@@ -33,59 +35,16 @@ const isProfileOpen = ref(false)
 const isFiltersOpen = ref(false)
 const isUploadOpen = ref(false)
 const isInProgressOpen = ref(false)
+const uploadSubmitError = ref<string | null>(null)
 
-let backgroundPollTimerId: number | null = null
-let backgroundPollEpoch = 0
-
-function stopBackgroundSync(): void {
-  backgroundPollEpoch += 1
-  if (backgroundPollTimerId !== null && typeof window !== 'undefined') {
-    window.clearTimeout(backgroundPollTimerId)
-    backgroundPollTimerId = null
-  }
-}
-
-function scheduleBackgroundSync(options: { force?: boolean } = {}): void {
-  stopBackgroundSync()
-  if (
-    (!options.force && lotsStore.inProgress.total_processing_lots <= 0) ||
-    typeof window === 'undefined'
-  ) {
-    return
-  }
-
-  const epoch = backgroundPollEpoch
-  backgroundPollTimerId = window.setTimeout(async () => {
-    if (epoch !== backgroundPollEpoch) return
-    await lotsStore.refreshLotsSilently()
-    if (epoch !== backgroundPollEpoch) return
-    if (lotsStore.inProgress.total_processing_lots > 0) {
-      scheduleBackgroundSync()
-    }
-  }, HOME_IN_PROGRESS_POLL_MS)
-}
-
-watch(
-  () => lotsStore.inProgress.total_processing_lots,
-  (count) => {
-    if (count > 0) {
-      if (backgroundPollTimerId === null) {
-        scheduleBackgroundSync()
-      }
-    } else {
-      stopBackgroundSync()
-      isInProgressOpen.value = false
-    }
+const { isUnmounted, stopBackgroundSync, scheduleBackgroundSync } = useHomeFeedSync({
+  hasLoadedOnce: () => lotsStore.hasLoadedOnce,
+  totalProcessingLots: () => lotsStore.inProgress.total_processing_lots,
+  fetchLots: () => lotsStore.fetchLots(),
+  refreshLotsSilently: () => lotsStore.refreshLotsSilently(),
+  onQueueEmpty: () => {
+    isInProgressOpen.value = false
   },
-)
-
-onMounted(async () => {
-  if (!lotsStore.hasLoadedOnce) {
-    await lotsStore.fetchLots()
-  }
-  if (lotsStore.inProgress.total_processing_lots > 0) {
-    scheduleBackgroundSync()
-  }
 })
 
 const {
@@ -108,132 +67,93 @@ const {
 } = useLotFeedActions(toRef(lotsStore, 'items'), lotsStore)
 
 onBeforeUnmount(() => {
-  stopBackgroundSync()
   flushPendingDeleteOnUnmount()
 })
 
+const effectiveUploadError = computed(() => batchesStore.uploadError || uploadSubmitError.value)
+
+async function runSafeFeedOperation(
+  action: () => Promise<unknown>,
+  fallback: string,
+): Promise<void> {
+  try {
+    await action()
+  } catch (error: unknown) {
+    if (!isUnmounted.value) {
+      lifecycleActionError.value = extractApiErrorMessage(error, fallback)
+    }
+  }
+}
+
 function openUploadSheet(): void {
   batchesStore.clearErrors()
+  uploadSubmitError.value = null
   isUploadOpen.value = true
 }
 
 async function handleUploadSubmit(files: File[]): Promise<void> {
-  const created = await batchesStore.createBatch(files)
-  isUploadOpen.value = false
+  uploadSubmitError.value = null
+  try {
+    const created = await batchesStore.createBatch(files)
+    if (isUnmounted.value) return
+    isUploadOpen.value = false
 
-  if (isDesktop.value) {
-    const totalInProgress = lotsStore.inProgress.total_processing_lots
-    const isBatchActive = created.status === 'queued' || created.status === 'processing'
-    const effectiveTotal =
-      totalInProgress > 0 ? totalInProgress : isBatchActive ? created.total_items : 0
-    isInProgressOpen.value = effectiveTotal > 0 && effectiveTotal <= IN_PROGRESS_AUTO_EXPAND_LIMIT
-    scheduleBackgroundSync({ force: created.total_items > 0 && isBatchActive })
-  } else {
-    await router.push({
-      name: 'batch-progress',
-      params: { batchId: created.batch_id },
-    })
+    if (isDesktop.value) {
+      const totalInProgress = lotsStore.inProgress.total_processing_lots
+      const isBatchActive = created.status === 'queued' || created.status === 'processing'
+      const effectiveTotal =
+        totalInProgress > 0 ? totalInProgress : isBatchActive ? created.total_items : 0
+      isInProgressOpen.value = effectiveTotal > 0 && effectiveTotal <= IN_PROGRESS_AUTO_EXPAND_LIMIT
+      scheduleBackgroundSync({ force: created.total_items > 0 && isBatchActive })
+    } else {
+      await router.push({
+        name: 'batch-progress',
+        params: { batchId: created.batch_id },
+      })
+    }
+  } catch (error: unknown) {
+    if (isUnmounted.value) return
+    const message = extractApiErrorMessage(error, 'Не удалось загрузить аукционные листы.')
+    uploadSubmitError.value = message
+    if (!isUploadOpen.value) {
+      lifecycleActionError.value = message
+    }
   }
 }
 
 function handleSelectInProgressItem(item: InProgressItemPreview): void {
   if (item.status === 'ready' && item.lot_id) {
-    void router.push({
-      name: 'lot-detail',
-      params: { lotId: item.lot_id },
-    })
+    void router.push({ name: 'lot-detail', params: { lotId: item.lot_id } })
     return
   }
-
-  void router.push({
-    name: 'batch-progress',
-    params: { batchId: item.batch_id },
-  })
+  void router.push({ name: 'batch-progress', params: { batchId: item.batch_id } })
 }
 
 function handleSelectLot(lot: LotSummary): void {
-  void router.push({
-    name: 'lot-detail',
-    params: { lotId: lot.lot_id },
-  })
+  void router.push({ name: 'lot-detail', params: { lotId: lot.lot_id } })
 }
 
-async function handleSearch(query: string) {
-  lotsStore.query = query
-  await lotsStore.fetchLots()
-}
-
-async function handleToggleModel(modelName: string | null) {
-  lotsStore.selectedModel =
-    modelName === null || lotsStore.selectedModel === modelName ? null : modelName
-  await lotsStore.fetchLots()
-}
-
-async function handleToggleVerdict(verdict: TrafficLightColor | null) {
-  lotsStore.selectedVerdict =
-    verdict === null || lotsStore.selectedVerdict === verdict ? null : verdict
-  await lotsStore.fetchLots()
-}
-
-async function handleToggleAnomaly() {
-  lotsStore.onlyAnomalies = !lotsStore.onlyAnomalies
-  await lotsStore.fetchLots()
-}
-
-async function handlePreviewFilterSheet(draft: LotFilterDraft) {
-  let modelForDraft: string | undefined
-  if (lotsStore.selectedModel) {
-    if (!draft.make || draft.make === lotsStore.selectedMake) {
-      modelForDraft = lotsStore.selectedModel
-    } else if (
-      lotsStore.items.some(
-        (item) => item.model === lotsStore.selectedModel && item.make === draft.make,
-      )
-    ) {
-      modelForDraft = lotsStore.selectedModel
-    }
-  }
-
-  return lotsStore.fetchFilterPreview({
-    query: lotsStore.query.trim() || undefined,
-    make: draft.make || undefined,
-    model: modelForDraft,
-    verdict: draft.verdict || undefined,
-    has_anomaly: draft.onlyAnomalies ? true : undefined,
-    lifecycle: draft.lifecycle,
-  })
-}
-
-async function handleApplyFilterSheet(draft: LotFilterDraft) {
-  cancelSelectionMode()
-  if (draft.make && draft.make !== lotsStore.selectedMake && lotsStore.selectedModel) {
-    const modelBelongsToMake = lotsStore.items.some(
-      (item) => item.model === lotsStore.selectedModel && item.make === draft.make,
-    )
-    if (!modelBelongsToMake) {
-      lotsStore.selectedModel = null
-    }
-  }
-  lotsStore.selectedMake = draft.make
-  lotsStore.selectedVerdict = draft.verdict
-  lotsStore.onlyAnomalies = draft.onlyAnomalies
-  lotsStore.sortBy = draft.sortBy
-  lotsStore.sortOrder = draft.sortOrder
-  lotsStore.lifecycle = draft.lifecycle
-  await lotsStore.fetchLots()
-}
-
-async function handleResetAllFilters() {
-  cancelSelectionMode()
-  lotsStore.resetFilters()
-  await lotsStore.fetchLots()
-}
+const {
+  handleSearch,
+  handleToggleModel,
+  handleToggleVerdict,
+  handleToggleAnomaly,
+  handlePreviewFilterSheet,
+  handleApplyFilterSheet,
+  handleResetAllFilters,
+} = useHomeFeedFilters(lotsStore, runSafeFeedOperation, cancelSelectionMode)
 
 async function handleLogout(): Promise<void> {
   isProfileOpen.value = false
   stopBackgroundSync()
-  await authStore.logout()
-  await router.replace({ name: 'auth' })
+  try {
+    await authStore.logout()
+    await router.replace({ name: 'auth' })
+  } catch (error: unknown) {
+    if (!isUnmounted.value) {
+      lifecycleActionError.value = extractApiErrorMessage(error, 'Не удалось выйти из аккаунта.')
+    }
+  }
 }
 </script>
 
@@ -315,10 +235,12 @@ async function handleLogout(): Promise<void> {
       :selection-mode="selectionMode"
       :selected-ids="selectedLotIds"
       @select-lot="handleSelectLot"
-      @retry="lotsStore.fetchLots()"
+      @retry="runSafeFeedOperation(() => lotsStore.fetchLots(), 'Не удалось загрузить лоты.')"
       @reset-filters="handleResetAllFilters"
       @open-upload="openUploadSheet"
-      @load-more="lotsStore.loadMore()"
+      @load-more="
+        runSafeFeedOperation(() => lotsStore.loadMore(), 'Не удалось загрузить следующую страницу.')
+      "
       @toggle-archive="handleToggleArchiveLot"
       @delete-lot="handleDeleteLot"
       @start-multi-select="handleStartMultiSelect"
@@ -336,72 +258,17 @@ async function handleLogout(): Promise<void> {
       <span>Загрузить</span>
     </button>
 
-    <!-- Single-delete 5-second Undo Toast -->
-    <div
-      v-if="pendingDelete && !selectionMode"
-      role="status"
-      aria-live="polite"
-      class="bg-text-primary text-surface fixed inset-x-4 bottom-5 z-40 mx-auto flex max-w-md items-center justify-between gap-3 rounded-full px-4 py-2.5 shadow-xl sm:inset-x-auto sm:left-1/2 sm:min-w-[360px] sm:-translate-x-1/2"
-    >
-      <span class="truncate text-[13px] font-medium">
-        «{{ pendingDelete.lot.make }} {{ pendingDelete.lot.model }}» удалён
-      </span>
-      <button
-        type="button"
-        class="text-accent hover:text-accent/90 inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-2.5 py-1 text-[13px] font-semibold transition-colors"
-        @click="handleUndoDelete"
-      >
-        <Undo2 :size="14" />
-        <span>Отменить</span>
-      </button>
-    </div>
-
-    <!-- Bulk Selection Floating Bar -->
-    <div
-      v-if="selectionMode"
-      role="region"
-      aria-label="Массовые действия с лотами"
-      class="bg-surface border-border fixed inset-x-3 bottom-4 z-40 mx-auto flex max-w-2xl flex-wrap items-center justify-between gap-2 rounded-2xl border px-3.5 py-2.5 shadow-xl sm:inset-x-auto sm:bottom-5 sm:left-1/2 sm:w-full sm:-translate-x-1/2 sm:rounded-full sm:px-4"
-    >
-      <div class="flex items-center gap-2.5">
-        <CheckSquare :size="16" class="text-accent shrink-0" />
-        <span class="text-text-primary text-[13px] font-semibold tabular-nums">
-          Выбрано: {{ selectedLotIds.size }}
-        </span>
-        <button
-          type="button"
-          class="text-accent hover:text-accent-hover cursor-pointer text-[13px] font-medium"
-          @click="handleToggleSelectAll"
-        >
-          {{ allVisibleSelected ? 'Снять все' : 'Выбрать все' }}
-        </button>
-      </div>
-
-      <div class="flex items-center gap-2">
-        <BaseButton
-          variant="ghost"
-          size="sm"
-          pill
-          :disabled="isBulkDeleting"
-          @click="cancelSelectionMode"
-        >
-          Отмена
-        </BaseButton>
-        <BaseButton
-          variant="destructive"
-          size="sm"
-          pill
-          :disabled="selectedLotIds.size === 0"
-          :loading="isBulkDeleting"
-          @click="handleBulkDeleteSelected"
-        >
-          <template #icon-left>
-            <Trash2 :size="14" />
-          </template>
-          Удалить ({{ selectedLotIds.size }})
-        </BaseButton>
-      </div>
-    </div>
+    <LotsBulkActionBar
+      :pending-delete-lot="pendingDelete?.lot ?? null"
+      :selection-mode="selectionMode"
+      :selected-count="selectedLotIds.size"
+      :all-visible-selected="allVisibleSelected"
+      :is-bulk-deleting="isBulkDeleting"
+      @undo-delete="handleUndoDelete"
+      @toggle-select-all="handleToggleSelectAll"
+      @cancel-selection="cancelSelectionMode"
+      @bulk-delete="handleBulkDeleteSelected"
+    />
 
     <LotFilterSheet
       v-model:open="isFiltersOpen"
@@ -421,7 +288,7 @@ async function handleLogout(): Promise<void> {
       v-model:open="isUploadOpen"
       mode="create"
       :is-submitting="batchesStore.isUploading"
-      :server-error="batchesStore.uploadError"
+      :server-error="effectiveUploadError"
       @submit="handleUploadSubmit"
     />
 

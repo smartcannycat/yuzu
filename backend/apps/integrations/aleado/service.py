@@ -54,8 +54,9 @@ __all__ = [
 
 def _persist(lot: Lot, outcome: CrossAuditOutcome) -> CrossAuditReport:
     with transaction.atomic():
+        locked_lot = Lot.objects.select_for_update().get(pk=lot.pk)
         report = CrossAuditReport.objects.update_or_create(
-            lot=lot,
+            lot=locked_lot,
             defaults={
                 "status": outcome.status,
                 "source_name": outcome.source_name,
@@ -98,11 +99,13 @@ def _persist(lot: Lot, outcome: CrossAuditOutcome) -> CrossAuditReport:
         )
 
         has_anomaly = outcome.has_critical_anomaly
-        lot.has_anomaly = has_anomaly
-        lot.anomaly_text = (
+        locked_lot.has_anomaly = has_anomaly
+        locked_lot.anomaly_text = (
             outcome.anomalies[0].message_ru[:500] if has_anomaly and outcome.anomalies else None
         )
-        lot.save(update_fields=["has_anomaly", "anomaly_text", "updated_at"])
+        locked_lot.save(update_fields=["has_anomaly", "anomaly_text", "updated_at"])
+        lot.has_anomaly = locked_lot.has_anomaly
+        lot.anomaly_text = locked_lot.anomaly_text
     return report
 
 
@@ -114,7 +117,15 @@ def _partition_verified_by_time(
     future_verified = 0
     for verified in verified_rows:
         trading_date = verified.row.trading_date
+        if trading_date is None and verified.detail is not None:
+            trading_date = verified.detail.trading_datetime
         if trading_date is None:
+            logger.debug(
+                "Aleado verified row %s (#%s) has no trading_date; keeping in history",
+                verified.row.internal_id,
+                verified.row.lot_number,
+            )
+            verified_past.append(verified)
             continue
         if timezone.is_naive(trading_date):
             trading_date = timezone.make_aware(trading_date)
@@ -133,6 +144,8 @@ class AleadoCrossAuditService:
         client: AleadoClient | None = None,
         ml_client: MlServiceClient | None = None,
     ) -> None:
+        self._owns_client = client is None
+        self._owns_ml_client = False
         if client is None:
             from django.conf import settings
 
@@ -145,6 +158,18 @@ class AleadoCrossAuditService:
         self.client = client
         self.ml_client = ml_client
         self._verify_candidates_limit = self._resolve_verify_limit()
+
+    def close(self) -> None:
+        if self._owns_client and hasattr(self.client, "close"):
+            self.client.close()
+        if self._owns_ml_client and self.ml_client is not None and hasattr(self.ml_client, "close"):
+            self.ml_client.close()
+
+    def __enter__(self) -> AleadoCrossAuditService:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
 
     @staticmethod
     def _resolve_verify_limit() -> int:
@@ -164,6 +189,7 @@ class AleadoCrossAuditService:
             timeout_sec=settings.ML_SERVICE_TIMEOUT_SEC,
             api_key=settings.ML_SERVICE_API_KEY,
         )
+        self._owns_ml_client = True
         return self.ml_client
 
     def audit_lot(self, lot: Lot) -> CrossAuditOutcome:

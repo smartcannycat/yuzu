@@ -11,6 +11,13 @@ const sampleUser: UserProfileResponse = {
   created_at: '2026-11-13T08:00:00Z',
 }
 
+const secondUser: UserProfileResponse = {
+  user_id: '99999999-8888-4777-8666-555555555555',
+  email: 'maria@example.com',
+  name: 'Мария',
+  created_at: '2026-11-14T08:00:00Z',
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -24,12 +31,16 @@ function extractUrl(input: RequestInfo | URL): string {
   return input.url
 }
 
-function extractAuthHeader(input: RequestInfo | URL, init?: RequestInit): string | null {
+function extractHeader(
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  headerName: string,
+): string | null {
   if (init?.headers) {
-    return new Headers(init.headers).get('Authorization')
+    return new Headers(init.headers).get(headerName)
   }
   if (input instanceof Request) {
-    return input.headers.get('Authorization')
+    return input.headers.get(headerName)
   }
   return null
 }
@@ -46,10 +57,9 @@ describe('httpClient (ofetch)', () => {
     vi.restoreAllMocks()
   })
 
-  it('attaches Bearer token and returns user profile', async () => {
+  it('attaches Bearer token, credentials include, and X-Requested-With header', async () => {
     tokenStorage.setFromAuthResponse({
       access_token: 'access-1',
-      refresh_token: 'refresh-1',
       token_type: 'bearer',
       expires_in_sec: 3600,
       user: sampleUser,
@@ -57,7 +67,9 @@ describe('httpClient (ofetch)', () => {
 
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(extractUrl(input)).toBe('/api/v1/auth/me')
-      expect(extractAuthHeader(input, init)).toBe('Bearer access-1')
+      expect(extractHeader(input, init, 'Authorization')).toBe('Bearer access-1')
+      expect(extractHeader(input, init, 'X-Requested-With')).toBe('YuzuSPA')
+      expect(init?.credentials).toBe('include')
       return jsonResponse(sampleUser, 200)
     })
 
@@ -67,10 +79,37 @@ describe('httpClient (ofetch)', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
-  it('performs single-flight refresh on 401 and retries concurrent requests', async () => {
+  it('sends cookie-based POST /auth/refresh without JSON body and POST /auth/logout', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = extractUrl(input)
+      expect(init?.credentials).toBe('include')
+      expect(extractHeader(input, init, 'X-Requested-With')).toBe('YuzuSPA')
+      expect(init?.method).toBe('POST')
+      expect(init?.body).toBeUndefined()
+
+      if (url === '/api/v1/auth/refresh') {
+        return jsonResponse({
+          access_token: 'cookie-access',
+          token_type: 'bearer',
+          expires_in_sec: 3600,
+          user: sampleUser,
+        } satisfies AuthTokensResponse)
+      }
+
+      expect(url).toBe('/api/v1/auth/logout')
+      return new Response(null, { status: 204 })
+    })
+
+    const client = createHttpApiClient({ fetch: fetchMock })
+    const refreshed = await client.auth.refresh()
+    expect(refreshed.access_token).toBe('cookie-access')
+    await expect(client.auth.logout()).resolves.toBeUndefined()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('performs single-flight cookie refresh on 401 without body and retries concurrent requests', async () => {
     tokenStorage.setFromAuthResponse({
       access_token: 'expired-access',
-      refresh_token: 'valid-refresh',
       token_type: 'bearer',
       expires_in_sec: 3600,
       user: sampleUser,
@@ -79,7 +118,6 @@ describe('httpClient (ofetch)', () => {
     let refreshCalls = 0
     const refreshedTokens: AuthTokensResponse = {
       access_token: 'fresh-access',
-      refresh_token: 'fresh-refresh',
       token_type: 'bearer',
       expires_in_sec: 3600,
       user: sampleUser,
@@ -89,10 +127,13 @@ describe('httpClient (ofetch)', () => {
       const url = extractUrl(input)
       if (url.endsWith('/auth/refresh')) {
         refreshCalls += 1
+        expect(init?.credentials).toBe('include')
+        expect(extractHeader(input, init, 'X-Requested-With')).toBe('YuzuSPA')
+        expect(init?.body).toBeUndefined()
         return jsonResponse(refreshedTokens, 200)
       }
 
-      const authHeader = extractAuthHeader(input, init)
+      const authHeader = extractHeader(input, init, 'Authorization')
       if (authHeader === 'Bearer expired-access') {
         return jsonResponse(
           {
@@ -116,13 +157,55 @@ describe('httpClient (ofetch)', () => {
     expect(second).toEqual(sampleUser)
     expect(refreshCalls).toBe(1)
     expect(tokenStorage.getAccessToken()).toBe('fresh-access')
-    expect(tokenStorage.getRefreshToken()).toBe('fresh-refresh')
   })
 
-  it('clears session and notifies unauthorized handler when refresh fails', async () => {
+  it('clears session and notifies unauthorized handler when refresh returns 401 or 403', async () => {
+    for (const status of [401, 403]) {
+      tokenStorage.clear()
+      tokenStorage.setFromAuthResponse({
+        access_token: 'expired-access',
+        token_type: 'bearer',
+        expires_in_sec: 3600,
+        user: sampleUser,
+      })
+
+      const onUnauthorized = vi.fn()
+      setHttpUnauthorizedHandler(onUnauthorized)
+
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const url = extractUrl(input)
+        if (url.endsWith('/auth/refresh')) {
+          return jsonResponse(
+            {
+              type: 'about:blank',
+              title: 'Сессия истекла',
+              status,
+              detail: 'Refresh cookie invalid',
+            },
+            status,
+          )
+        }
+        return jsonResponse(
+          {
+            type: 'about:blank',
+            title: 'Требуется авторизация',
+            status: 401,
+            detail: 'Unauthorized',
+          },
+          401,
+        )
+      })
+
+      const client = createHttpApiClient({ fetch: fetchMock })
+      await expect(client.auth.me()).rejects.toBeInstanceOf(ApiError)
+      expect(tokenStorage.getSession()).toBeNull()
+      expect(onUnauthorized).toHaveBeenCalledTimes(1)
+    }
+  })
+
+  it('does NOT clear session on transient 5xx or network failure from /auth/refresh', async () => {
     tokenStorage.setFromAuthResponse({
-      access_token: 'expired-access',
-      refresh_token: 'dead-refresh',
+      access_token: 'valid-or-expiring-access',
       token_type: 'bearer',
       expires_in_sec: 3600,
       user: sampleUser,
@@ -134,29 +217,117 @@ describe('httpClient (ofetch)', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = extractUrl(input)
       if (url.endsWith('/auth/refresh')) {
-        return jsonResponse(
-          {
-            type: 'about:blank',
-            title: 'Сессия истекла',
-            status: 401,
-            detail: 'Refresh token invalid',
-          },
-          401,
-        )
+        return jsonResponse({ title: 'Bad Gateway', status: 502, detail: 'Upstream down' }, 502)
       }
-      return jsonResponse(
-        {
-          type: 'about:blank',
-          title: 'Требуется авторизация',
-          status: 401,
-          detail: 'Unauthorized',
-        },
-        401,
+      return jsonResponse({ title: 'Unauthorized', status: 401, detail: 'Expired' }, 401)
+    })
+
+    const client = createHttpApiClient({ fetch: fetchMock })
+    await expect(client.auth.me()).rejects.toMatchObject({ status: 502 })
+    expect(tokenStorage.getAccessToken()).toBe('valid-or-expiring-access')
+    expect(tokenStorage.getUser()?.user_id).toBe(sampleUser.user_id)
+    expect(onUnauthorized).not.toHaveBeenCalled()
+  })
+
+  it('prevents User A 401/refresh race from replaying with User B token or clearing User B session (FE-SEC-01)', async () => {
+    tokenStorage.setFromAuthResponse({
+      access_token: 'user-a-access',
+      token_type: 'bearer',
+      expires_in_sec: 3600,
+      user: sampleUser,
+    })
+
+    let releaseRefresh!: (res: Response) => void
+    const refreshGate = new Promise<Response>((resolve) => {
+      releaseRefresh = resolve
+    })
+
+    const onUnauthorized = vi.fn()
+    setHttpUnauthorizedHandler(onUnauthorized)
+
+    const seenMeTokens: Array<string | null> = []
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = extractUrl(input)
+      if (url.endsWith('/auth/refresh')) {
+        return refreshGate
+      }
+
+      const authHeader = extractHeader(input, init, 'Authorization')
+      seenMeTokens.push(authHeader)
+      if (authHeader === 'Bearer user-a-access') {
+        return jsonResponse({ title: 'Expired', status: 401, detail: 'Expired' }, 401)
+      }
+      return jsonResponse(secondUser, 200)
+    })
+
+    const client = createHttpApiClient({ fetch: fetchMock })
+    const userARequest = client.auth.me()
+
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/v1/auth/refresh',
+        expect.objectContaining({ method: 'POST' }),
       )
+    })
+
+    // User A logs out and User B logs in while User A's refresh is in flight.
+    tokenStorage.resetSession()
+    tokenStorage.setFromAuthResponse(
+      {
+        access_token: 'user-b-access',
+        token_type: 'bearer',
+        expires_in_sec: 3600,
+        user: secondUser,
+      },
+      { isNewSession: true },
+    )
+
+    // User A's stale refresh settles with User A's refreshed token.
+    releaseRefresh(
+      jsonResponse({
+        access_token: 'user-a-fresh-access',
+        token_type: 'bearer',
+        expires_in_sec: 3600,
+        user: sampleUser,
+      } satisfies AuthTokensResponse),
+    )
+
+    await expect(userARequest).rejects.toBeInstanceOf(ApiError)
+    expect(seenMeTokens).toEqual(['Bearer user-a-access'])
+    expect(tokenStorage.getAccessToken()).toBe('user-b-access')
+    expect(tokenStorage.getUser()?.user_id).toBe(secondUser.user_id)
+    expect(onUnauthorized).not.toHaveBeenCalled()
+  })
+
+  it('rejects /auth/refresh returning mismatched user_id for active session', async () => {
+    tokenStorage.setFromAuthResponse({
+      access_token: 'user-a-access',
+      token_type: 'bearer',
+      expires_in_sec: 3600,
+      user: sampleUser,
+    })
+
+    const onUnauthorized = vi.fn()
+    setHttpUnauthorizedHandler(onUnauthorized)
+
+    const seenMeTokens: Array<string | null> = []
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = extractUrl(input)
+      if (url.endsWith('/auth/refresh')) {
+        return jsonResponse({
+          access_token: 'user-b-access',
+          token_type: 'bearer',
+          expires_in_sec: 3600,
+          user: secondUser,
+        } satisfies AuthTokensResponse)
+      }
+      seenMeTokens.push(extractHeader(input, init, 'Authorization'))
+      return jsonResponse({ title: 'Expired', status: 401, detail: 'Expired' }, 401)
     })
 
     const client = createHttpApiClient({ fetch: fetchMock })
     await expect(client.auth.me()).rejects.toBeInstanceOf(ApiError)
+    expect(seenMeTokens).toEqual(['Bearer user-a-access'])
     expect(tokenStorage.getSession()).toBeNull()
     expect(onUnauthorized).toHaveBeenCalledTimes(1)
   })
@@ -164,7 +335,6 @@ describe('httpClient (ofetch)', () => {
   it('reuses refreshed token for staggered 401s and avoids duplicate refresh', async () => {
     tokenStorage.setFromAuthResponse({
       access_token: 'expired-access',
-      refresh_token: 'valid-refresh',
       token_type: 'bearer',
       expires_in_sec: 3600,
       user: sampleUser,
@@ -184,7 +354,6 @@ describe('httpClient (ofetch)', () => {
         return jsonResponse(
           {
             access_token: 'fresh-access',
-            refresh_token: 'fresh-refresh',
             token_type: 'bearer',
             expires_in_sec: 3600,
             user: sampleUser,
@@ -193,7 +362,7 @@ describe('httpClient (ofetch)', () => {
         )
       }
 
-      const authHeader = extractAuthHeader(input, init)
+      const authHeader = extractHeader(input, init, 'Authorization')
       if (authHeader === 'Bearer expired-access') {
         meCalls += 1
         if (meCalls === 2) {
@@ -222,7 +391,6 @@ describe('httpClient (ofetch)', () => {
   it('clears session if retried request after refresh still returns 401', async () => {
     tokenStorage.setFromAuthResponse({
       access_token: 'expired-access',
-      refresh_token: 'valid-refresh',
       token_type: 'bearer',
       expires_in_sec: 3600,
       user: sampleUser,
@@ -237,7 +405,6 @@ describe('httpClient (ofetch)', () => {
         return jsonResponse(
           {
             access_token: 'rejected-access',
-            refresh_token: 'fresh-refresh',
             token_type: 'bearer',
             expires_in_sec: 3600,
             user: sampleUser,
@@ -252,6 +419,33 @@ describe('httpClient (ofetch)', () => {
     await expect(client.auth.me()).rejects.toBeInstanceOf(ApiError)
     expect(tokenStorage.getSession()).toBeNull()
     expect(onUnauthorized).toHaveBeenCalledTimes(1)
+  })
+
+  it('handles empty detail: "" in ProblemDetail cleanly using title/fallback (FE-MIN-01)', async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(
+        {
+          type: 'about:blank',
+          title: 'Запрещенный формат файла',
+          status: 400,
+          detail: '',
+        },
+        400,
+      ),
+    )
+
+    const client = createHttpApiClient({ fetch: fetchMock })
+    let caught: unknown
+    try {
+      await client.auth.me()
+    } catch (error: unknown) {
+      caught = error
+    }
+
+    expect(caught).toBeInstanceOf(ApiError)
+    const apiError = caught as ApiError
+    expect(apiError.detail).toBe('Запрещенный формат файла')
+    expect(apiError.message).toBe('Запрещенный формат файла')
   })
 
   it('parses RFC 7807 ProblemDetail with invalid_params', async () => {
@@ -292,10 +486,44 @@ describe('httpClient (ofetch)', () => {
     expect(apiError.getFieldError('password')).toBe('Минимум 8 символов')
   })
 
-  it('requests lots feed with cleaned query parameters and auth header', async () => {
+  it('fetches protected lot media blobs with Bearer header without leaking auth to external URLs', async () => {
+    tokenStorage.setFromAuthResponse({
+      access_token: 'media-token',
+      token_type: 'bearer',
+      expires_in_sec: 3600,
+      user: sampleUser,
+    })
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = extractUrl(input)
+      if (url === '/api/v1/lots/lot-1/media/thumbnail') {
+        expect(extractHeader(input, init, 'Authorization')).toBe('Bearer media-token')
+        return new Response(new Blob(['img-bytes'], { type: 'image/jpeg' }), {
+          status: 200,
+          headers: { 'Content-Type': 'image/jpeg' },
+        })
+      }
+      expect(url).toBe('https://cdn.example.com/public.jpg')
+      expect(extractHeader(input, init, 'Authorization')).toBeNull()
+      expect(init?.credentials).toBe('omit')
+      return new Response(new Blob(['ext-bytes'], { type: 'image/jpeg' }), {
+        status: 200,
+        headers: { 'Content-Type': 'image/jpeg' },
+      })
+    })
+
+    const client = createHttpApiClient({ fetch: fetchMock })
+    const apiBlob = await client.media.fetchBlob('/api/v1/lots/lot-1/media/thumbnail')
+    expect(apiBlob).toBeInstanceOf(Blob)
+
+    const extBlob = await client.media.fetchBlob('https://cdn.example.com/public.jpg')
+    expect(extBlob).toBeInstanceOf(Blob)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('requests lots feed with cleaned query parameters and guards NaN pagination numbers', async () => {
     tokenStorage.setFromAuthResponse({
       access_token: 'access-lots',
-      refresh_token: 'refresh-lots',
       token_type: 'bearer',
       expires_in_sec: 3600,
       user: sampleUser,
@@ -308,7 +536,9 @@ describe('httpClient (ofetch)', () => {
       expect(url).toContain('verdict=green')
       expect(url).toContain('has_anomaly=true')
       expect(url).not.toContain('make=')
-      expect(extractAuthHeader(input, init)).toBe('Bearer access-lots')
+      expect(url).not.toContain('page=')
+      expect(url).not.toContain('page_size=')
+      expect(extractHeader(input, init, 'Authorization')).toBe('Bearer access-lots')
 
       return jsonResponse({
         items: [],
@@ -339,6 +569,8 @@ describe('httpClient (ofetch)', () => {
       make: '   ',
       verdict: 'green',
       has_anomaly: true,
+      page: Number.NaN,
+      page_size: Number.POSITIVE_INFINITY,
     })
 
     expect(result.items).toEqual([])
@@ -348,7 +580,6 @@ describe('httpClient (ofetch)', () => {
   it('calls POST /lots/:id/recalculate/reset for resetSimulation', async () => {
     tokenStorage.setFromAuthResponse({
       access_token: 'access-reset',
-      refresh_token: 'refresh-reset',
       token_type: 'bearer',
       expires_in_sec: 3600,
       user: sampleUser,
@@ -357,7 +588,7 @@ describe('httpClient (ofetch)', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(extractUrl(input)).toBe('/api/v1/lots/lot-uuid-1/recalculate/reset')
       expect(init?.method).toBe('POST')
-      expect(extractAuthHeader(input, init)).toBe('Bearer access-reset')
+      expect(extractHeader(input, init, 'Authorization')).toBe('Bearer access-reset')
       return jsonResponse(
         {
           lot_id: 'lot-uuid-1',
@@ -390,7 +621,6 @@ describe('httpClient (ofetch)', () => {
   it('sends multipart FormData for createBatch and appendBatchItems and polls batch status', async () => {
     tokenStorage.setFromAuthResponse({
       access_token: 'access-batch',
-      refresh_token: 'refresh-batch',
       token_type: 'bearer',
       expires_in_sec: 3600,
       user: sampleUser,
@@ -398,7 +628,7 @@ describe('httpClient (ofetch)', () => {
 
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = extractUrl(input)
-      expect(extractAuthHeader(input, init)).toBe('Bearer access-batch')
+      expect(extractHeader(input, init, 'Authorization')).toBe('Bearer access-batch')
 
       if (url === '/api/v1/lots/batches') {
         expect(init?.method).toBe('POST')
@@ -478,7 +708,6 @@ describe('httpClient (ofetch)', () => {
   it('sends lifecycle query and calls PATCH, DELETE, and POST bulk-delete lot endpoints', async () => {
     tokenStorage.setFromAuthResponse({
       access_token: 'access-lifecycle',
-      refresh_token: 'refresh-lifecycle',
       token_type: 'bearer',
       expires_in_sec: 3600,
       user: sampleUser,

@@ -81,6 +81,8 @@ class TestSettings:
                 ENVIRONMENT="production",
                 DEBUG=False,
                 SECRET_KEY="x" * 40,
+                JWT_SIGNING_KEY="y" * 40,
+                ML_SERVICE_API_KEY="prod-ml-secret-key",
                 ALLOWED_HOSTS=["api.yuzu.ru"],
             )
 

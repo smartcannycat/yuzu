@@ -1,11 +1,9 @@
 <script setup lang="ts">
-import { CircleAlert, Eye, EyeOff, Lock, Mail, Sparkles, User } from '@lucide/vue'
-import { computed, reactive, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { CircleAlert, Eye, EyeOff, Lock, Mail, User } from '@lucide/vue'
+import { computed, ref } from 'vue'
 
-import { DEMO_ACCOUNT_CREDENTIALS, isMockMode } from '@/api'
+import { isMockMode } from '@/api'
 import {
-  BaseBadge,
   BaseButton,
   BaseCard,
   BaseInput,
@@ -13,197 +11,33 @@ import {
   SegmentedControl,
   type SegmentOption,
 } from '@/components/ui'
-import { useAuthStore } from '@/stores/auth'
-import { ApiError } from '@/types/api'
-import {
-  NAME_MAX_LENGTH,
-  PASSWORD_MAX_LENGTH,
-  validateAuthForm,
-  validateEmail,
-  validateName,
-  validatePassword,
-  type AuthField,
-  type AuthFieldErrors,
-  type AuthMode,
-} from '@/utils/validation'
-
-const route = useRoute()
-const router = useRouter()
-const authStore = useAuthStore()
-
-function resolveInitialMode(): AuthMode {
-  if (route.name === 'register' || route.query.mode === 'register') {
-    return 'register'
-  }
-  return 'login'
-}
-
-const mode = ref<AuthMode>(resolveInitialMode())
+import { NAME_MAX_LENGTH, PASSWORD_MAX_LENGTH, type AuthMode } from '@/utils/validation'
+import AuthMockDemoBanner from '@/views/helpers/AuthMockDemoBanner.vue'
+import { useAuthForm } from '@/views/helpers/useAuthForm'
 
 const modeOptions: SegmentOption<AuthMode>[] = [
   { value: 'login', label: 'Вход' },
   { value: 'register', label: 'Регистрация' },
 ]
 
-const form = reactive({
-  email: '',
-  password: '',
-  name: '',
-})
-
-const touched = reactive<Record<AuthField, boolean>>({
-  email: false,
-  password: false,
-  name: false,
-})
-
-const fieldErrors = ref<AuthFieldErrors>({})
-const serverError = ref<{ status: number; title: string; detail: string } | null>(null)
 const showPassword = ref(false)
-
-const isRegister = computed(() => mode.value === 'register')
 const passwordInputType = computed(() => (showPassword.value ? 'text' : 'password'))
-const showSwitchToLoginHint = computed(() => isRegister.value && serverError.value?.status === 409)
 
-watch(
-  () => [route.name, route.query.mode] as const,
-  ([routeName, queryMode]) => {
-    if (routeName === 'register' || queryMode === 'register') {
-      mode.value = 'register'
-    } else if (routeName === 'login' || queryMode === 'login') {
-      mode.value = 'login'
-    }
-  },
-)
-
-watch(mode, () => {
-  serverError.value = null
-  fieldErrors.value = {}
-  touched.email = false
-  touched.password = false
-  touched.name = false
-})
-
-function validateSingleField(field: AuthField): void {
-  const nextErrors: AuthFieldErrors = { ...fieldErrors.value }
-  let errorMessage: string | undefined
-
-  if (field === 'email') {
-    errorMessage = validateEmail(form.email)
-  } else if (field === 'password') {
-    errorMessage = validatePassword(form.password, mode.value)
-  } else if (field === 'name' && isRegister.value) {
-    errorMessage = validateName(form.name)
-  }
-
-  if (errorMessage) {
-    nextErrors[field] = errorMessage
-  } else {
-    delete nextErrors[field]
-  }
-  fieldErrors.value = nextErrors
-}
-
-function handleBlur(field: AuthField): void {
-  touched[field] = true
-  validateSingleField(field)
-}
-
-function handleInputUpdate(field: AuthField): void {
-  if (serverError.value) {
-    serverError.value = null
-  }
-  if (touched[field] || fieldErrors.value[field]) {
-    validateSingleField(field)
-  }
-}
-
-function applyDemoCredentials(): void {
-  mode.value = 'login'
-  form.email = DEMO_ACCOUNT_CREDENTIALS.email
-  form.password = DEMO_ACCOUNT_CREDENTIALS.password
-  fieldErrors.value = {}
-  serverError.value = null
-}
-
-function switchToLoginFromConflict(): void {
-  mode.value = 'login'
-  form.password = ''
-}
-
-function resolvePostAuthTarget() {
-  const redirectParam = route.query.redirect
-  if (
-    typeof redirectParam === 'string' &&
-    redirectParam.startsWith('/') &&
-    !redirectParam.startsWith('//')
-  ) {
-    return redirectParam
-  }
-  return { name: 'home' as const }
-}
-
-async function handleSubmit(): Promise<void> {
-  if (authStore.isSubmitting) return
-  serverError.value = null
-  touched.email = true
-  touched.password = true
-  if (isRegister.value) {
-    touched.name = true
-  }
-
-  const result = validateAuthForm(mode.value, form)
-  if (!result.valid) {
-    fieldErrors.value = result.errors
-    return
-  }
-
-  fieldErrors.value = {}
-
-  try {
-    if (isRegister.value) {
-      await authStore.register({
-        email: form.email.trim(),
-        password: form.password,
-        name: form.name.trim() || null,
-      })
-    } else {
-      await authStore.login({
-        email: form.email.trim(),
-        password: form.password,
-      })
-    }
-
-    await router.replace(resolvePostAuthTarget())
-  } catch (error: unknown) {
-    if (error instanceof ApiError) {
-      const mappedErrors: AuthFieldErrors = {}
-      const emailErr = error.getFieldError('email')
-      const passwordErr = error.getFieldError('password')
-      const nameErr = error.getFieldError('name')
-      if (emailErr) mappedErrors.email = emailErr
-      if (passwordErr) mappedErrors.password = passwordErr
-      if (nameErr) mappedErrors.name = nameErr
-
-      if (Object.keys(mappedErrors).length > 0) {
-        fieldErrors.value = mappedErrors
-      }
-
-      serverError.value = {
-        status: error.status,
-        title: error.title,
-        detail: error.detail,
-      }
-      return
-    }
-
-    serverError.value = {
-      status: 0,
-      title: 'Не удалось выполнить запрос',
-      detail: 'Попробуйте повторить попытку через несколько секунд.',
-    }
-  }
-}
+const {
+  authStore,
+  mode,
+  form,
+  fieldErrors,
+  serverError,
+  demoCredentials,
+  isRegister,
+  showSwitchToLoginHint,
+  handleBlur,
+  handleInputUpdate,
+  applyDemoCredentials,
+  switchToLoginFromConflict,
+  handleSubmit,
+} = useAuthForm()
 </script>
 
 <template>
@@ -338,33 +172,11 @@ async function handleSubmit(): Promise<void> {
       </form>
     </BaseCard>
 
-    <div
-      v-if="isMockMode"
-      class="border-border bg-surface flex items-center justify-between gap-3 rounded-md border px-4 py-3"
-    >
-      <div class="flex min-w-0 flex-col gap-0.5">
-        <div class="flex items-center gap-1.5">
-          <BaseBadge variant="neutral" size="sm">
-            <template #icon>
-              <Sparkles :size="12" :stroke-width="2" />
-            </template>
-            Mock API
-          </BaseBadge>
-          <span class="text-text-secondary truncate text-[12px]">
-            {{ DEMO_ACCOUNT_CREDENTIALS.email }}
-          </span>
-        </div>
-        <span class="text-text-muted text-[12px]"> Демо-доступ для проверки без бэкенда </span>
-      </div>
-
-      <BaseButton
-        variant="secondary"
-        size="sm"
-        :disabled="authStore.isSubmitting"
-        @click="applyDemoCredentials"
-      >
-        Заполнить
-      </BaseButton>
-    </div>
+    <AuthMockDemoBanner
+      v-if="isMockMode && demoCredentials"
+      :email="demoCredentials.email"
+      :disabled="authStore.isSubmitting"
+      @apply="applyDemoCredentials"
+    />
   </main>
 </template>

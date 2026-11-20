@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { AlertTriangle, CheckCircle2, OctagonAlert } from '@lucide/vue'
 import { computed } from 'vue'
 
 import { VERDICT_META } from '@/components/lots/detail/lotPresentation'
+import LotVerdictBullets from '@/components/lots/detail/LotVerdictBullets.vue'
 import { CapyMascot } from '@/components/mascot'
 import { BaseBadge, BaseCard } from '@/components/ui'
 import type { LotDetailResponse } from '@/types/api'
@@ -59,25 +59,9 @@ const verdictMeta = computed(() => VERDICT_META[props.detail.verdict.verdict])
       </div>
     </div>
 
-    <ul v-if="detail.verdict.reasoning_bullets.length > 0" class="mt-3 flex flex-col gap-1.5">
-      <li
-        v-for="bullet in detail.verdict.reasoning_bullets"
-        :key="bullet"
-        class="text-text-primary flex items-start gap-2 text-[13px] leading-snug"
-      >
-        <CheckCircle2
-          v-if="detail.verdict.verdict === 'green'"
-          :size="15"
-          class="text-success mt-0.5 shrink-0"
-        />
-        <AlertTriangle
-          v-else-if="detail.verdict.verdict === 'yellow'"
-          :size="15"
-          class="text-warning mt-0.5 shrink-0"
-        />
-        <OctagonAlert v-else :size="15" class="text-danger mt-0.5 shrink-0" />
-        <span>{{ bullet }}</span>
-      </li>
-    </ul>
+    <LotVerdictBullets
+      :verdict="detail.verdict.verdict"
+      :bullets="detail.verdict.reasoning_bullets"
+    />
   </BaseCard>
 </template>

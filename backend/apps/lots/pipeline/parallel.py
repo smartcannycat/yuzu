@@ -8,15 +8,16 @@ from typing import TYPE_CHECKING
 
 from django.conf import settings
 from django.db import connection
+from django.utils.module_loading import import_string
 
 from apps.core.enums import ItemProcessingStatus, TaskStep
 from apps.lots.media import attach_uploaded_sheet_media_from_item
-from apps.lots.models import BatchItem
+from apps.lots.models import BatchItem, has_full_detail
+from apps.lots.pipeline.leases import managed_closing
 from apps.lots.pipeline.stages import (
     _advance_step,
     _fail_item,
     _missing_summary_fields,
-    has_full_detail,
 )
 
 if TYPE_CHECKING:
@@ -60,22 +61,20 @@ def _run_parallel_steps(item: BatchItem, step_fns: list[Callable[[BatchItem], bo
 
 
 def _run_ocr_stage(item: BatchItem) -> bool:
-    from apps.lots import pipeline as pipeline_pkg
-
     if not settings.LOT_PARSER_BACKEND:
         _fail_item(item, TaskStep.FAILED, "Сервис распознавания не настроен")
         return False
     try:
-        parser = pipeline_pkg.import_string(settings.LOT_PARSER_BACKEND)()
-        rejection = parser.gatekeeper(item)
-        if rejection:
-            _fail_item(item, TaskStep.FAILED, rejection)
-            return False
-        _advance_step(item, TaskStep.FAST_HEADER_OCR)
-        item.preview_title = parser.fast_header(item)
-        item.save(update_fields=["preview_title", "updated_at"])
-        _advance_step(item, TaskStep.GEMINI_OCR)
-        parser.parse(item)
+        with managed_closing(import_string(settings.LOT_PARSER_BACKEND)()) as parser:
+            rejection = parser.gatekeeper(item)
+            if rejection:
+                _fail_item(item, TaskStep.FAILED, rejection)
+                return False
+            _advance_step(item, TaskStep.FAST_HEADER_OCR)
+            item.preview_title = parser.fast_header(item)
+            item.save(update_fields=["preview_title", "updated_at"])
+            _advance_step(item, TaskStep.GEMINI_OCR)
+            parser.parse(item)
         item.lot.refresh_from_db()
         if not item.lot.make or not item.lot.model:
             _fail_item(item, TaskStep.FAILED, "Распознавание не вернуло марку и модель")

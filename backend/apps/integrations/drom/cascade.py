@@ -13,6 +13,7 @@ from apps.integrations.drom.filtering import (
 from apps.integrations.drom.parser import parse_listings
 from apps.integrations.drom.schemas import (
     DromBlockedError,
+    DromBudgetExhaustedError,
     DromFetchError,
     DromMarketResult,
     DromNotFoundError,
@@ -208,6 +209,8 @@ class DromCascadeExecutor:
                 raise
             except DromFetchError as exc:
                 last_error = exc
+                if isinstance(exc, DromBudgetExhaustedError) or "budget" in str(exc).lower():
+                    break
                 continue
 
             winner, best_partial, best_nearby = self._evaluate_step_stats(

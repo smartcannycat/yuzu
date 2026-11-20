@@ -28,7 +28,7 @@ pre-commit:
       glob: "*.py"
       run: uv run lint-imports
     contracts-check:
-      glob: "{backend/apps/**/api.py,backend/apps/**/schemas.py,backend/apps/**/controllers.py,backend/config/api.py,docs/architecture/openapi.json,frontend/src/types/api.generated.ts}"
+      glob: "{backend/apps/**/api.py,backend/apps/**/api/**/*.py,backend/apps/**/schemas.py,backend/apps/**/controllers.py,backend/apps/core/enums.py,backend/config/api.py,backend/config/openapi.py,docs/architecture/openapi.json,frontend/src/types/api.generated.ts}"
       run: make check-contracts
     file-size-warn:
       glob: "*.{py,ts,vue}"

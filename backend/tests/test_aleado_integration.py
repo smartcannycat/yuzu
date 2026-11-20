@@ -39,7 +39,7 @@ from apps.integrations.aleado.service import (
 )
 from apps.integrations.ml.client import MlServiceClient
 from apps.lots.models import Batch, BatchItem, CrossAuditReport, Lot
-from apps.lots.pipeline import _step_cross_audit
+from apps.lots.pipeline.stages import _step_cross_audit
 from config.settings.config import AppSettings
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "aleado"
@@ -811,7 +811,7 @@ def pipeline_batch_item(user_factory, db) -> BatchItem:
 def test_pipeline_cross_audit_falls_back_to_baseline_on_aleado_failure(
     pipeline_batch_item: BatchItem,
 ) -> None:
-    with patch("apps.lots.pipeline.AleadoCrossAuditService") as service_cls:
+    with patch("apps.lots.pipeline.stages.AleadoCrossAuditService") as service_cls:
         service_cls.return_value.audit_lot.side_effect = AleadoUnavailableError("site down")
         assert _step_cross_audit(pipeline_batch_item) is True
 
@@ -823,7 +823,7 @@ def test_pipeline_cross_audit_falls_back_to_baseline_on_aleado_failure(
 
 @pytest.mark.django_db
 def test_pipeline_cross_audit_delegates_to_aleado(pipeline_batch_item: BatchItem) -> None:
-    with patch("apps.lots.pipeline.AleadoCrossAuditService") as service_cls:
+    with patch("apps.lots.pipeline.stages.AleadoCrossAuditService") as service_cls:
         assert _step_cross_audit(pipeline_batch_item) is True
     service_cls.return_value.audit_lot.assert_called_once()
 

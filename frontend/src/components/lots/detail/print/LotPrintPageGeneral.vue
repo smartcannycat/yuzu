@@ -1,22 +1,21 @@
 <script setup lang="ts">
-import { AlertTriangle, CheckCircle2, OctagonAlert } from '@lucide/vue'
-import { computed } from 'vue'
+import { AlertTriangle, OctagonAlert } from '@lucide/vue'
+import { computed, ref, watch } from 'vue'
 
 import {
   CHECKLIST_STATUS_META,
   SAFETY_SHORT_LABELS,
   VERDICT_META,
   buildLotTtxItems,
-  formatDromPriceRange,
   formatLotSpecsSubtitle,
-  formatRoiPercent,
-  formatSpreadLabel,
-  formatUtilModeLabel,
 } from '@/components/lots/detail/lotPresentation'
+import { buildLotFinancialSummary } from '@/components/lots/detail/lotSummaryHelpers'
+import LotVerdictBullets from '@/components/lots/detail/LotVerdictBullets.vue'
 import { CapyMascot } from '@/components/mascot'
 import { BaseBadge, BrandLogo, TtxGrid } from '@/components/ui'
+import { useAuthorizedImage } from '@/composables/useAuthorizedImage'
 import type { LotDetailResponse } from '@/types/api'
-import { formatJpy, formatMileageKm, formatRub } from '@/utils/formatters'
+import { formatJpy, formatMileageKm } from '@/utils/formatters'
 
 interface Props {
   detail: LotDetailResponse
@@ -31,30 +30,25 @@ const props = withDefaults(defineProps<Props>(), {
 const verdictMeta = computed(() => VERDICT_META[props.detail.verdict.verdict])
 const ttxItems = computed(() => buildLotTtxItems(props.detail, { katashikiSpan: 1 }))
 const specsSubtitle = computed(() => formatLotSpecsSubtitle(props.detail.passport))
+const summary = computed(() => buildLotFinancialSummary(props.detail, { roiFixedDigits: 1 }))
 
-const netBenefitRub = computed(() => props.detail.economics.wise_cost_ladder.net_benefit_rub)
-const isOverpay = computed(() => netBenefitRub.value < 0)
-const spreadLabel = computed(() => formatSpreadLabel(netBenefitRub.value))
+const { src: authorizedSheetImageSrc, hasError: sheetImageFetchError } = useAuthorizedImage(
+  () => props.detail.media.sheet_thumbnail_url || props.detail.media.sheet_scan_url,
+)
+const sheetImageElementError = ref(false)
 
-const roiFormatted = computed(() =>
-  formatRoiPercent(props.detail.economics.wise_cost_ladder.benefit_percentage, { fixedDigits: 1 }),
+watch(
+  () => [props.detail.media.sheet_thumbnail_url, props.detail.media.sheet_scan_url],
+  () => {
+    sheetImageElementError.value = false
+  },
 )
 
-const dromRangeText = computed(() => {
-  const {
-    price_min_rub: minRub,
-    price_max_rub: maxRub,
-    search_region_ru: region,
-  } = props.detail.market
-  return formatDromPriceRange(minRub, maxRub) ?? region
-})
-
-const repairTotalRub = computed(() => props.detail.economics.farpost_repair.grand_total_repair_rub)
-
-const utilModeLabel = computed(() => {
-  const { is_commercial_util, is_under_160_hp } = props.detail.economics.customs
-  return formatUtilModeLabel(is_commercial_util, is_under_160_hp, 'short')
-})
+const visibleSheetImageSrc = computed(() =>
+  !sheetImageFetchError.value && !sheetImageElementError.value
+    ? authorizedSheetImageSrc.value
+    : undefined,
+)
 </script>
 
 <template>
@@ -78,8 +72,8 @@ const utilModeLabel = computed(() => {
         </div>
       </div>
 
-      <div class="flex items-baseline justify-between gap-4">
-        <div class="min-w-0">
+      <div class="flex items-center justify-between gap-4">
+        <div class="min-w-0 flex-1">
           <h1 class="text-[21px] leading-tight font-semibold tracking-[-0.015em]">
             {{ detail.passport.make }} {{ detail.passport.model }}
             <span v-if="detail.passport.trim" class="text-[15px] font-normal text-[#4B5563]">
@@ -91,9 +85,18 @@ const utilModeLabel = computed(() => {
           </p>
         </div>
 
-        <BaseBadge v-if="isSimulationModified" variant="info" class="shrink-0">
-          Расчёт скорректирован вручную
-        </BaseBadge>
+        <div class="flex shrink-0 items-center gap-2.5">
+          <BaseBadge v-if="isSimulationModified" variant="info" class="shrink-0">
+            Расчёт скорректирован вручную
+          </BaseBadge>
+          <img
+            v-if="visibleSheetImageSrc"
+            :src="visibleSheetImageSrc"
+            :alt="`Миниатюра аукционного листа ${detail.passport.make} ${detail.passport.model}`"
+            class="h-12 w-9 rounded-xs border border-[#E5E5EA] object-cover"
+            @error="sheetImageElementError = true"
+          />
+        </div>
       </div>
     </header>
 
@@ -165,26 +168,11 @@ const utilModeLabel = computed(() => {
           </div>
         </div>
 
-        <ul v-if="detail.verdict.reasoning_bullets.length > 0" class="mt-2.5 flex flex-col gap-1">
-          <li
-            v-for="bullet in detail.verdict.reasoning_bullets"
-            :key="bullet"
-            class="flex items-start gap-1.5 text-[11.5px] leading-snug text-[#111827]"
-          >
-            <CheckCircle2
-              v-if="detail.verdict.verdict === 'green'"
-              :size="13"
-              class="mt-0.5 shrink-0 text-[#15803D]"
-            />
-            <AlertTriangle
-              v-else-if="detail.verdict.verdict === 'yellow'"
-              :size="13"
-              class="mt-0.5 shrink-0 text-[#B45309]"
-            />
-            <OctagonAlert v-else :size="13" class="mt-0.5 shrink-0 text-[#B91C1C]" />
-            <span>{{ bullet }}</span>
-          </li>
-        </ul>
+        <LotVerdictBullets
+          :verdict="detail.verdict.verdict"
+          :bullets="detail.verdict.reasoning_bullets"
+          density="print"
+        />
       </div>
 
       <div
@@ -195,12 +183,12 @@ const utilModeLabel = computed(() => {
             <div class="text-[11px] font-medium whitespace-nowrap text-[#6B7280]">
               Себестоимость под ключ
             </div>
-            <BaseBadge :variant="isOverpay ? 'danger' : 'success'" class="shrink-0">
-              {{ spreadLabel }}
+            <BaseBadge :variant="summary.isOverpay ? 'danger' : 'success'" class="shrink-0">
+              {{ summary.spreadLabel }}
             </BaseBadge>
           </div>
           <div class="mt-1 text-[21px] leading-tight font-semibold whitespace-nowrap tabular-nums">
-            {{ formatRub(detail.economics.wise_cost_ladder.turnkey_cost_rub) }}
+            {{ summary.turnkeyFormatted }}
           </div>
 
           <dl class="mt-2.5 divide-y divide-[#F2F2F7] border-t border-[#F2F2F7] text-[11.5px]">
@@ -212,36 +200,39 @@ const utilModeLabel = computed(() => {
             </div>
             <div class="flex items-center justify-between gap-2 py-1.5">
               <dt class="text-[#6B7280]">
-                Рынок РФ (Drom · {{ detail.market.analogs_count }} авто)
+                {{ summary.marketLabel }}
               </dt>
               <dd class="font-semibold tabular-nums">
-                {{ formatRub(detail.market.market_price_rf_rub) }}
+                {{ summary.marketPriceFormatted }}
               </dd>
             </div>
-            <div class="flex items-center justify-between gap-2 py-1.5">
-              <dt class="text-[#6B7280]">Разброс цен в ДФО</dt>
+            <div
+              v-if="summary.dromRangeText"
+              class="flex items-center justify-between gap-2 py-1.5"
+            >
+              <dt class="text-[#6B7280]">{{ summary.dromRangeLabel }}</dt>
               <dd class="text-right font-medium text-[#374151] tabular-nums">
-                {{ dromRangeText }}
+                {{ summary.dromRangeText }}
               </dd>
             </div>
             <div class="flex items-center justify-between gap-2 py-1.5">
               <dt class="text-[#6B7280]">Ремонт Farpost</dt>
-              <dd class="font-semibold tabular-nums">{{ formatRub(repairTotalRub) }}</dd>
+              <dd class="font-semibold tabular-nums">{{ summary.repairFormatted }}</dd>
             </div>
             <div class="flex items-center justify-between gap-2 py-1.5">
               <dt class="text-[#6B7280]">Доходность (ROI)</dt>
               <dd
                 class="font-semibold tabular-nums"
-                :class="isOverpay ? 'text-[#B91C1C]' : 'text-[#15803D]'"
+                :class="summary.isOverpay ? 'text-[#B91C1C]' : 'text-[#15803D]'"
               >
-                {{ roiFormatted }}
+                {{ summary.roiFormatted }}
               </dd>
             </div>
           </dl>
         </div>
 
         <div class="mt-2 rounded-sm bg-[#F8F8FA] px-2.5 py-2 text-[11px] text-[#4B5563]">
-          <div class="font-medium text-[#111827]">Утильсбор: {{ utilModeLabel }}</div>
+          <div class="font-medium text-[#111827]">Утильсбор: {{ summary.utilModeLabel }}</div>
           <div class="mt-0.5">
             Смета ремонта:
             {{ detail.economics.is_repairs_included ? 'учтена в цене' : 'исключена' }}
@@ -262,7 +253,11 @@ const utilModeLabel = computed(() => {
       <TtxGrid :items="ttxItems" :columns="3" />
 
       <div v-if="detail.passport.equipment_ru.length > 0" class="mt-2 flex flex-wrap gap-1">
-        <BaseBadge v-for="item in detail.passport.equipment_ru" :key="item" variant="neutral">
+        <BaseBadge
+          v-for="(item, idx) in detail.passport.equipment_ru"
+          :key="`${idx}:${item}`"
+          variant="neutral"
+        >
           {{ item }}
         </BaseBadge>
       </div>
@@ -315,8 +310,8 @@ const utilModeLabel = computed(() => {
           </p>
           <ul v-else class="divide-y divide-[#F2F2F7] text-[10.5px]">
             <li
-              v-for="record in detail.audit.history.slice(0, 3)"
-              :key="`${record.auction_date}-${record.lot_number}`"
+              v-for="(record, idx) in detail.audit.history.slice(0, 3)"
+              :key="`${idx}:${record.auction_date}-${record.lot_number}`"
               class="flex items-center justify-between gap-2 py-1"
             >
               <div class="min-w-0">

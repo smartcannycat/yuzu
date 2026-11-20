@@ -2,7 +2,6 @@ import type { HttpRequestFn } from '@/api/http/transport'
 import type { AuthApi } from '@/api/types'
 import type {
   AuthTokensResponse,
-  TokenRefreshRequest,
   UserLoginRequest,
   UserProfileResponse,
   UserRegisterRequest,
@@ -28,10 +27,17 @@ export function createHttpAuthApi(request: HttpRequestFn): AuthApi {
       })
     },
 
-    refresh(payload: TokenRefreshRequest): Promise<AuthTokensResponse> {
+    refresh(): Promise<AuthTokensResponse> {
       return request<AuthTokensResponse>('/auth/refresh', {
         method: 'POST',
-        body: payload,
+        skipAuth: true,
+        skipRefresh: true,
+      })
+    },
+
+    logout(): Promise<void> {
+      return request<void>('/auth/logout', {
+        method: 'POST',
         skipAuth: true,
         skipRefresh: true,
       })

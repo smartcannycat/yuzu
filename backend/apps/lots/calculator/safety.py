@@ -146,47 +146,52 @@ def build_cross_audit_baseline(lot: Lot) -> CrossAuditReport:
     rather than a fabricated clean bill. Sheet-internal red flags still
     drive ``has_critical_anomaly`` so sticky alerts do not regress.
     """
-    flags = LotRiskFlags.objects.filter(lot=lot).first()
-    critical_flags = bool(
-        flags
-        and (
-            flags.is_flooded
-            or flags.airbag_deployed
-            or flags.underbody_corrosion
-            or flags.odometer_issue
-            or flags.repaired_grade_r_ra
+    with transaction.atomic():
+        locked_lot = Lot.objects.select_for_update().get(pk=lot.pk)
+        flags = LotRiskFlags.objects.filter(lot=locked_lot).first()
+        critical_flags = bool(
+            flags
+            and (
+                flags.is_flooded
+                or flags.airbag_deployed
+                or flags.underbody_corrosion
+                or flags.odometer_issue
+                or flags.repaired_grade_r_ra
+            )
         )
-    )
-    has_anomaly = critical_flags
-    if has_anomaly:
-        headline = (
-            "Критические отметки на листе (стоп-факторы безопасности); "
-            "внешние архивы торгов пока не проверены"
-        )
-        risk = RiskLevel.CRITICAL
-        status = CrossAuditStatus.ANOMALY_DETECTED
-    else:
-        headline = (
-            "Критических отметок на листе нет; внешние архивы торгов "
-            "(AucJP / AAA Japan) пока не проверены"
-        )
-        risk = RiskLevel.INFO
-        status = CrossAuditStatus.NOT_FOUND
+        has_anomaly = critical_flags
+        if has_anomaly:
+            headline = (
+                "Критические отметки на листе (стоп-факторы безопасности); "
+                "внешние архивы торгов пока не проверены"
+            )
+            risk = RiskLevel.CRITICAL
+            status = CrossAuditStatus.ANOMALY_DETECTED
+        else:
+            headline = (
+                "Критических отметок на листе нет; внешние архивы торгов "
+                "(AucJP / AAA Japan) пока не проверены"
+            )
+            risk = RiskLevel.INFO
+            status = CrossAuditStatus.NOT_FOUND
 
-    report = CrossAuditReport.objects.update_or_create(
-        lot=lot,
-        defaults={
-            "status": status,
-            "is_archive_available": False,
-            "risk_level": risk,
-            "has_critical_anomaly": has_anomaly,
-            "headline_ru": headline,
-            "times_auctioned": 0,
-            "verified_at": timezone.now(),
-        },
-    )[0]
+        report = CrossAuditReport.objects.update_or_create(
+            lot=locked_lot,
+            defaults={
+                "status": status,
+                "is_archive_available": False,
+                "risk_level": risk,
+                "has_critical_anomaly": has_anomaly,
+                "headline_ru": headline,
+                "times_auctioned": 0,
+                "verified_at": timezone.now(),
+            },
+        )[0]
 
-    lot.has_anomaly = has_anomaly
-    lot.anomaly_text = headline[:500] if has_anomaly else None
-    lot.save(update_fields=["has_anomaly", "anomaly_text", "updated_at"])
+        locked_lot.has_anomaly = has_anomaly
+        locked_lot.anomaly_text = headline[:500] if has_anomaly else None
+        locked_lot.save(update_fields=["has_anomaly", "anomaly_text", "updated_at"])
+
+    lot.has_anomaly = locked_lot.has_anomaly
+    lot.anomaly_text = locked_lot.anomaly_text
     return report

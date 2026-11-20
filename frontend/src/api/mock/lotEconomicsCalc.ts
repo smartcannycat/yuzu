@@ -13,8 +13,10 @@ import { formatRub } from '@/utils/formatters'
 export const JPY_RUB_RATE = 0.642
 export const EUR_RUB_RATE = 95.0
 export const USD_RUB_RATE = 88.5
+export const MIN_BID_JPY = 100_000
 export const COMMERCIAL_UTIL_FEE_RUB = 528_000
 export const PERSONAL_UTIL_FEE_RUB = 5_200
+export const COMMERCIAL_UTIL_BULLET = 'В расчёт заложен коммерческий утильсбор (ПП РФ № 1255)'
 
 export function formatVerdictBadgeText(netBenefitRub: number): string {
   return netBenefitRub >= 0
@@ -142,12 +144,12 @@ export function deriveVerdict(params: {
   const shortPrefix =
     verdict === 'green' ? 'Можно брать' : verdict === 'yellow' ? 'Под вопросом' : 'Высокий риск'
 
-  const bullets = [...params.baseBullets]
+  const bullets = params.baseBullets.filter((item) => item !== COMMERCIAL_UTIL_BULLET)
   if (params.metiRisk && !bullets.some((item) => item.includes('METI'))) {
     bullets.push('Автомобиль попадает под ограничения METI — нужна транзитная логистика')
   }
   if (params.isCommercialUtil) {
-    bullets.push('В расчёт заложен коммерческий утильсбор (ПП РФ № 1255)')
+    bullets.push(COMMERCIAL_UTIL_BULLET)
   }
 
   return {
@@ -175,13 +177,13 @@ export function recalculateMockLotDetail(
     typeof payload.bid_rub === 'number' && Number.isFinite(payload.bid_rub) && payload.bid_rub > 0
 
   const appliedBidJpy = hasValidBidJpy
-    ? Math.round(payload.bid_jpy!)
+    ? Math.max(MIN_BID_JPY, Math.round(payload.bid_jpy!))
     : hasValidBidRub
-      ? Math.round(payload.bid_rub! / rate)
-      : base.economics.wise_cost_ladder.car_bid_jpy
+      ? Math.max(MIN_BID_JPY, Math.round(payload.bid_rub! / rate))
+      : Math.max(MIN_BID_JPY, base.economics.wise_cost_ladder.car_bid_jpy)
 
   const appliedBidRub = hasValidBidRub
-    ? Math.round(payload.bid_rub!)
+    ? Math.max(Math.round(MIN_BID_JPY * rate), Math.round(payload.bid_rub!))
     : Math.round(appliedBidJpy * rate)
 
   const nextPowerHp =
@@ -234,6 +236,7 @@ export function recalculateMockLotDetail(
   const updatedCustoms: CustomsCalculation = {
     ...base.economics.customs,
     is_commercial_util: isCommercialUtil,
+    util_fee_type: isCommercialUtil ? 'commercial' : 'personal',
     is_under_160_hp: nextIsUnder160,
     utilization_fee_rub: utilFeeRub,
     freight_vladivostok_rub: freightRub,

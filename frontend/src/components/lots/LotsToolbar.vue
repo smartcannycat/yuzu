@@ -1,15 +1,9 @@
 <script setup lang="ts">
-import {
-  AlertTriangle,
-  CheckCircle2,
-  OctagonAlert,
-  RotateCcw,
-  Search,
-  SlidersHorizontal,
-} from '@lucide/vue'
+import { AlertTriangle, RotateCcw, Search, SlidersHorizontal } from '@lucide/vue'
 import { useResizeObserver } from '@vueuse/core'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
 
+import { buildVerdictOptionItems } from '@/components/lots/verdictOptions'
 import { BaseButton, BaseInput } from '@/components/ui'
 import type { AvailableFilters, TrafficLightColor } from '@/types/api'
 
@@ -83,29 +77,9 @@ const isSearchExpanded = computed(
   () => isSearchFocused.value || searchDraft.value.trim().length > 0,
 )
 
-const VERDICT_PILLS = computed(() => [
-  {
-    value: 'green' as const,
-    label: 'Можно брать',
-    count: props.availableFilters.counts_by_verdict.green ?? 0,
-    icon: CheckCircle2,
-    activeClass: 'bg-success-bg text-success shadow-segment',
-  },
-  {
-    value: 'yellow' as const,
-    label: 'Под вопросом',
-    count: props.availableFilters.counts_by_verdict.yellow ?? 0,
-    icon: AlertTriangle,
-    activeClass: 'bg-warning-bg text-warning shadow-segment',
-  },
-  {
-    value: 'red' as const,
-    label: 'Высокий риск',
-    count: props.availableFilters.counts_by_verdict.red ?? 0,
-    icon: OctagonAlert,
-    activeClass: 'bg-danger-bg text-danger shadow-segment',
-  },
-])
+const VERDICT_PILLS = computed(() =>
+  buildVerdictOptionItems(props.availableFilters.counts_by_verdict, 'toolbar'),
+)
 
 function clearSearchTimer() {
   if (searchTimer !== null) {

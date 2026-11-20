@@ -3,7 +3,7 @@ from typing import Any
 
 from bs4 import BeautifulSoup, Tag
 
-from apps.integrations.drom.html_utils import extract_bulls_list_ssr_payload
+from apps.integrations.drom.directory_parser import extract_bulls_list_ssr_payload
 from apps.integrations.drom.schemas import DromListing
 
 _TRAILING_DECIMAL_RE = re.compile(r"[.,]\d{1,2}\s*(?:₽|руб\.?)?\s*$", re.IGNORECASE)

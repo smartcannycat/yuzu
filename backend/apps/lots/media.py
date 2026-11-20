@@ -23,6 +23,10 @@ _SCAN_MAX_PX = 2400
 _THUMB_MAX_PX = 480
 _SCAN_JPEG_QUALITY = 88
 _THUMB_JPEG_QUALITY = 82
+MAX_IMAGE_PIXELS = 50_000_000
+MAX_IMAGE_SIDE = 12_000
+
+Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
 
 _heif_registered = False
 
@@ -33,6 +37,21 @@ def ensure_heif_registered() -> None:
     if not _heif_registered:
         pillow_heif.register_heif_opener()
         _heif_registered = True
+
+
+def ensure_safe_image_dimensions(image: Image.Image) -> None:
+    """Reject images exceeding per-side or total-pixel safety caps."""
+    width, height = image.size
+    if (
+        width <= 0
+        or height <= 0
+        or width > MAX_IMAGE_SIDE
+        or height > MAX_IMAGE_SIDE
+        or width * height > MAX_IMAGE_PIXELS
+    ):
+        raise Image.DecompressionBombError(
+            f"Image dimensions {width}x{height} exceed allowed limits"
+        )
 
 
 def _to_rgb(image: Image.Image) -> Image.Image:
@@ -58,7 +77,11 @@ def _encode_jpeg(image: Image.Image, *, max_px: int, quality: int) -> bytes:
 def render_browser_scan_and_thumbnail(source_bytes: bytes) -> tuple[bytes, bytes]:
     """Decode JPEG/PNG/WEBP/HEIC/HEIF bytes into browser-ready JPEG scan and thumbnail."""
     ensure_heif_registered()
+    Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
     with Image.open(BytesIO(source_bytes)) as opened:
+        ensure_safe_image_dimensions(opened)
+        opened.draft("RGB", (_SCAN_MAX_PX, _SCAN_MAX_PX))
+        opened.thumbnail((_SCAN_MAX_PX, _SCAN_MAX_PX), Image.Resampling.LANCZOS)
         transposed = ImageOps.exif_transpose(opened)
         rgb = _to_rgb(transposed)
         scan_bytes = _encode_jpeg(rgb, max_px=_SCAN_MAX_PX, quality=_SCAN_JPEG_QUALITY)
@@ -74,7 +97,7 @@ def attach_uploaded_sheet_media_from_item(item: BatchItem) -> bool:
         with item.original_file.open("rb") as file_obj:
             source_bytes = file_obj.read()
         scan_bytes, thumb_bytes = render_browser_scan_and_thumbnail(source_bytes)
-    except (UnidentifiedImageError, OSError) as exc:
+    except (UnidentifiedImageError, Image.DecompressionBombError, OSError, SyntaxError) as exc:
         logger.warning("Could not render scan/thumbnail for item %s: %s", item.pk, exc)
         return False
 

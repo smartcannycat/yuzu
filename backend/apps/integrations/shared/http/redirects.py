@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 from apps.integrations.shared.http.throttle import (
     HttpFetchResponse,
@@ -17,12 +17,32 @@ if TYPE_CHECKING:
 
 REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 MAX_REDIRECTS = 5
+_BODY_HEADERS = frozenset({"content-type", "content-length"})
+_SENSITIVE_HEADERS = frozenset({"authorization", "cookie", "x-api-key", "proxy-authorization"})
+
+
+def _url_origin(url: str) -> tuple[str, str]:
+    parsed = urlparse(url)
+    scheme = parsed.scheme.lower()
+    host = (parsed.hostname or "").rstrip(".").lower()
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    if port is None:
+        port = 443 if scheme == "https" else (80 if scheme == "http" else None)
+    netloc = f"{host}:{port}" if port is not None else parsed.netloc.lower()
+    return scheme, netloc
+
+
+def _filter_headers(headers: dict[str, str] | None, drop: frozenset[str]) -> dict[str, str] | None:
+    if not headers or not drop:
+        return headers
+    return {k: v for k, v in headers.items() if k.lower() not in drop}
 
 
 def strip_body_headers(headers: dict[str, str] | None) -> dict[str, str] | None:
-    if not headers:
-        return headers
-    return {k: v for k, v in headers.items() if k.lower() not in {"content-type", "content-length"}}
+    return _filter_headers(headers, _BODY_HEADERS)
 
 
 @dataclass
@@ -47,24 +67,36 @@ def advance_redirect_hop(
     proxy_key: str,
     validate_url: Callable[[str], str],
 ) -> HopRequestState:
-    """Validate redirect target and update method/payload per RFC 9110."""
+    """Validate redirect target and update method/payload/headers per RFC 9110."""
     if hop >= MAX_REDIRECTS:
         raise HttpTransportError(f"Too many redirects for {original_url}", proxy_key=proxy_key)
-    next_url = validate_url(urljoin(response_url or state.url, location))
-    if status_code in {301, 302, 303}:
+    current_url = response_url or state.url
+    next_url = validate_url(urljoin(current_url, location))
+    cross_origin = _url_origin(current_url) != _url_origin(next_url)
+
+    if status_code in {307, 308}:
+        if cross_origin and (state.data is not None or state.method.upper() not in {"GET", "HEAD"}):
+            raise HttpTransportError(
+                f"Blocked cross-origin {status_code} redirect with request body for {original_url}",
+                proxy_key=proxy_key,
+            )
+        drop = _SENSITIVE_HEADERS if cross_origin else frozenset()
+        headers = _filter_headers(state.headers, drop)
         return HopRequestState(
-            method="GET",
+            method=state.method,
             url=next_url,
             params=None,
-            data=None,
-            headers=strip_body_headers(state.headers),
+            data=state.data,
+            headers=headers,
         )
+
+    drop_headers = _BODY_HEADERS | (_SENSITIVE_HEADERS if cross_origin else frozenset())
     return HopRequestState(
-        method=state.method,
+        method="GET",
         url=next_url,
         params=None,
-        data=state.data,
-        headers=state.headers,
+        data=None,
+        headers=_filter_headers(state.headers, drop_headers),
     )
 
 

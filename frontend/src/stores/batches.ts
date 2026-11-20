@@ -3,8 +3,10 @@ import { computed, ref } from 'vue'
 
 import { apiClient } from '@/api'
 import type { ApiClient } from '@/api/types'
-import { useLotsStore } from '@/stores/lots'
+import { useLotFeedStore } from '@/stores/lotFeed'
 import { ApiError, type BatchCreateResponse, type BatchProgressResponse } from '@/types/api'
+import { extractApiErrorMessage } from '@/utils/errors'
+import { onSessionReset } from '@/utils/sessionEvents'
 
 export const MIN_POLL_INTERVAL_MS = 800
 export const MAX_POLL_INTERVAL_MS = 10_000
@@ -15,12 +17,6 @@ export function clampPollIntervalMs(rawMs: unknown): number {
     return DEFAULT_POLL_INTERVAL_MS
   }
   return Math.min(MAX_POLL_INTERVAL_MS, Math.max(MIN_POLL_INTERVAL_MS, Math.round(rawMs)))
-}
-
-function formatBatchError(error: unknown, fallback: string): string {
-  if (error instanceof ApiError) return error.detail
-  if (error instanceof Error && error.message) return error.message
-  return fallback
 }
 
 export const useBatchesStore = defineStore('batches', () => {
@@ -34,7 +30,8 @@ export const useBatchesStore = defineStore('batches', () => {
   const batchError = ref<string | null>(null)
   const batchErrorStatus = ref<number | null>(null)
 
-  let latestBatchRequestId = 0
+  let latestFetchRequestId = 0
+  let latestAppendRequestId = 0
   let sessionEpoch = 0
 
   const isTerminal = computed(() => {
@@ -63,11 +60,11 @@ export const useBatchesStore = defineStore('batches', () => {
       pollIntervalMs.value = clampPollIntervalMs(response.poll_interval_ms)
 
       // Sync home in_progress banner immediately without flickering feed cards.
-      await useLotsStore().refreshLotsSilently(client)
+      await useLotFeedStore().refreshLotsSilently(client)
       return response
     } catch (error: unknown) {
       if (epoch === sessionEpoch) {
-        uploadError.value = formatBatchError(error, 'Не удалось загрузить аукционные листы.')
+        uploadError.value = extractApiErrorMessage(error, 'Не удалось загрузить аукционные листы.')
       }
       throw error
     } finally {
@@ -82,7 +79,14 @@ export const useBatchesStore = defineStore('batches', () => {
     options: { silent?: boolean } = {},
     client: ApiClient = apiClient,
   ): Promise<BatchProgressResponse | null> {
-    const requestId = ++latestBatchRequestId
+    const epoch = sessionEpoch
+    const fetchRequestId = ++latestFetchRequestId
+    const appendSeqAtStart = latestAppendRequestId
+
+    if (activeBatch.value && activeBatch.value.batch_id !== batchId) {
+      activeBatch.value = null
+    }
+
     const previousReadyCount =
       activeBatch.value?.batch_id === batchId ? activeBatch.value.ready_count : 0
     const previousStatus = activeBatch.value?.batch_id === batchId ? activeBatch.value.status : null
@@ -95,7 +99,13 @@ export const useBatchesStore = defineStore('batches', () => {
 
     try {
       const response = await client.lots.getBatch(batchId)
-      if (requestId !== latestBatchRequestId) return null
+      if (
+        epoch !== sessionEpoch ||
+        fetchRequestId !== latestFetchRequestId ||
+        appendSeqAtStart !== latestAppendRequestId
+      ) {
+        return null
+      }
 
       activeBatch.value = response
 
@@ -106,17 +116,24 @@ export const useBatchesStore = defineStore('batches', () => {
           response.status === 'failed')
 
       if (response.ready_count > previousReadyCount || completedNow) {
-        void useLotsStore().refreshLotsSilently(client)
+        void useLotFeedStore().refreshLotsSilently(client)
       }
 
       return response
     } catch (error: unknown) {
-      if (requestId !== latestBatchRequestId) return null
-      batchError.value = formatBatchError(error, 'Не удалось получить статус очереди обработки.')
-      batchErrorStatus.value = error instanceof ApiError ? error.status : 0
+      if (epoch !== sessionEpoch || fetchRequestId !== latestFetchRequestId) return null
+      const status = error instanceof ApiError ? error.status : 0
+      if (!options.silent || status === 401 || status === 403 || status === 404) {
+        activeBatch.value = null
+      }
+      batchError.value = extractApiErrorMessage(
+        error,
+        'Не удалось получить статус очереди обработки.',
+      )
+      batchErrorStatus.value = status
       return null
     } finally {
-      if (requestId === latestBatchRequestId && !options.silent) {
+      if (epoch === sessionEpoch && fetchRequestId === latestFetchRequestId && !options.silent) {
         isLoadingBatch.value = false
       }
     }
@@ -128,7 +145,11 @@ export const useBatchesStore = defineStore('batches', () => {
     client: ApiClient = apiClient,
   ): Promise<BatchProgressResponse> {
     const epoch = sessionEpoch
-    const requestId = ++latestBatchRequestId
+    const appendRequestId = ++latestAppendRequestId
+    if (activeBatch.value && activeBatch.value.batch_id !== batchId) {
+      activeBatch.value = null
+    }
+
     isAppending.value = true
     uploadError.value = null
 
@@ -136,14 +157,18 @@ export const useBatchesStore = defineStore('batches', () => {
       const response = await client.lots.appendBatchItems(batchId, files)
       if (epoch !== sessionEpoch) return response
 
-      if (requestId === latestBatchRequestId) {
+      if (appendRequestId === latestAppendRequestId) {
+        latestFetchRequestId += 1
         activeBatch.value = response
       }
-      await useLotsStore().refreshLotsSilently(client)
+      await useLotFeedStore().refreshLotsSilently(client)
       return response
     } catch (error: unknown) {
       if (epoch === sessionEpoch) {
-        uploadError.value = formatBatchError(error, 'Не удалось догрузить листы в текущую очередь.')
+        uploadError.value = extractApiErrorMessage(
+          error,
+          'Не удалось догрузить листы в текущую очередь.',
+        )
       }
       throw error
     } finally {
@@ -161,7 +186,8 @@ export const useBatchesStore = defineStore('batches', () => {
 
   function clear(): void {
     sessionEpoch += 1
-    latestBatchRequestId += 1
+    latestFetchRequestId += 1
+    latestAppendRequestId += 1
     activeBatch.value = null
     pollIntervalMs.value = DEFAULT_POLL_INTERVAL_MS
     isUploading.value = false
@@ -171,6 +197,8 @@ export const useBatchesStore = defineStore('batches', () => {
     batchError.value = null
     batchErrorStatus.value = null
   }
+
+  onSessionReset('batches', clear)
 
   return {
     activeBatch,

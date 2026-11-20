@@ -1,31 +1,27 @@
 """Deterministic normalizers for Japanese auction sheet codes, dates, and defects."""
 
-import datetime
 import re
 import unicodedata
 
-from ml_service.domains.enums import AuctionHouse, BodyPanel, DefectCode, FrameIdConfidence
+from ml_service.domains.enums import AuctionHouse, FrameIdConfidence
+from ml_service.factories.date_normalizer import (
+    KANJI_DIGITS,
+    calculate_age_and_corridor,
+    parse_japanese_date,
+)
+from ml_service.factories.defect_normalizer import (
+    DEFECT_ITEM_RE,
+    build_defect_description_ru,
+    derive_structural_risk_flags,
+    normalize_body_panel,
+    parse_defect_codes_with_warnings,
+    split_defect_codes,
+)
 
 CHASSIS_RE = re.compile(r"^(?:[A-Z0-9]{2,7}-\d{4,8}|\d{6,8}|[A-HJ-NPR-Z0-9]{17})$")
 KATASHIKI_RE = re.compile(r"^(?:[A-Z0-9]{1,4}-)?[A-Z0-9]{2,8}(?:-[A-Z0-9]{1,5})?$")
 EMISSION_PREFIX_RE = re.compile(r"^[0-9A-Z]{1,4}-")
 CHASSIS_CANONICAL_RE = re.compile(r"^[A-Z0-9]{2,8}-\d{4,8}$")
-DEFECT_ITEM_RE = re.compile(r"^([A-Z]{1,2})([1-3])?$")
-_VALID_SINGLE_DEFECT_LETTERS = frozenset({"A", "U", "W", "S", "C", "P", "G"})
-
-KANJI_DIGITS: dict[str, int] = {
-    "〇": 0,
-    "零": 0,
-    "一": 1,
-    "二": 2,
-    "三": 3,
-    "四": 4,
-    "五": 5,
-    "六": 6,
-    "七": 7,
-    "八": 8,
-    "九": 9,
-}
 
 # Canonical inspection strictness index (I_strict) aligned with API contracts (Decision D1).
 AUCTION_STRICTNESS: dict[AuctionHouse, float] = {
@@ -83,38 +79,6 @@ _AUCTION_TOKEN_ALIASES: dict[str, AuctionHouse] = {
 }
 
 _EMPTY_AUCTION_MARKERS = frozenset({"", "UNKNOWN", "NONE", "NULL", "N/A", "NA", "-"})
-
-_DEFECT_LABELS_RU: dict[str, str] = {
-    "A": "царапина",
-    "U": "вмятина",
-    "W": "ремонт/волна окраса",
-    "S": "ржавчина",
-    "C": "коррозия",
-    "P": "нарушение ЛКП",
-    "G": "скол стекла",
-    "XX": "замена детали",
-    "X": "требуется замена",
-    "R": "следы ремонта",
-}
-
-_ERA_OFFSETS: dict[str, int] = {
-    "R": 2018,
-    "令和": 2018,
-    "H": 1988,
-    "平成": 1988,
-    "S": 1925,
-    "昭和": 1925,
-}
-_KANJI_NUM_RE = re.compile(r"[〇零一二三四五六七八九十]+")
-_ERA_DATE_RE = re.compile(
-    r"(?<![A-Za-z])(R|令和|H|平成|S|昭和)\s*(\d{1,2})"
-    r"(?:\s*[./年-]\s*(\d{1,2})(?!\d)|\s+(\d{1,2})(?=\s*(?:月|$)))?",
-    re.IGNORECASE,
-)
-_MM_YYYY_RE = re.compile(r"\b(\d{1,2})[./](19\d{2}|20\d{2})\b")
-_GREGORIAN_DATE_RE = re.compile(r"(19\d{2}|20\d{2})(?:\D+(\d{1,2}))?")
-_BARE_DATE_RE = re.compile(r"^(\d{1,2})(?:\D+(\d{1,2}))?")
-_MONTH_KANJI_RE = re.compile(r"(\d{1,2})\s*月")
 
 
 def clean_code(raw: str | None) -> str:
@@ -184,252 +148,6 @@ def synthesize_frame_id(model_code: str, chassis_number: str) -> tuple[str, Fram
     return c, FrameIdConfidence.RAW
 
 
-def parse_defect_codes_with_warnings(
-    raw_code: str,
-) -> tuple[list[tuple[DefectCode, int | None]], list[str]]:
-    """Parse composite defect code into validated (DefectCode, severity) pairs and warnings."""
-    norm = unicodedata.normalize("NFKC", raw_code).strip()
-    parts = re.split(r"[/,\s]+", norm)
-    results: list[tuple[DefectCode, int | None]] = []
-    warnings: list[str] = []
-
-    for part in parts:
-        raw_part = part.strip()
-        if not raw_part:
-            continue
-        upper_part = raw_part.upper()
-
-        if upper_part in {"S小", "S(小)"}:
-            results.append((DefectCode.S, 1))
-            continue
-        if upper_part in {"C小", "C(小)"}:
-            results.append((DefectCode.C, 1))
-            continue
-        if upper_part in {"XX", "X", "R"}:
-            results.append((DefectCode(upper_part), None))
-            continue
-
-        match = DEFECT_ITEM_RE.match(upper_part)
-        if not match:
-            warnings.append(f"unknown_defect_code:{raw_part}")
-            continue
-
-        letters = match.group(1)
-        severity = int(match.group(2)) if match.group(2) else None
-        if all(ch in _VALID_SINGLE_DEFECT_LETTERS for ch in letters):
-            for ch in letters:
-                results.append((DefectCode(ch), severity))
-        else:
-            warnings.append(f"unknown_defect_code:{raw_part}")
-
-    return results, warnings
-
-
-def split_defect_codes(raw_code: str) -> list[tuple[str, int | None]]:
-    """Split composite body diagram defect codes into validated (code, severity) pairs."""
-    parsed, _ = parse_defect_codes_with_warnings(raw_code)
-    return [(code.value, severity) for code, severity in parsed]
-
-
-def build_defect_description_ru(
-    panel_ru: str,
-    defect_code: DefectCode | str,
-    severity: int | None,
-    *,
-    raw_code: str = "",
-) -> str:
-    """Build deterministic Russian human-readable description for a normalized defect."""
-    code_str = defect_code.value if isinstance(defect_code, DefectCode) else str(defect_code)
-    label = _DEFECT_LABELS_RU.get(code_str, code_str.lower())
-    panel = panel_ru.strip() or "Кузов"
-    norm_raw = unicodedata.normalize("NFKC", raw_code)
-    small_suffix = " (small)" if "小" in norm_raw else ""
-    if severity is not None:
-        return f"{panel} — {label}, степень {severity}{small_suffix}"
-    return f"{panel} — {label}{small_suffix}"
-
-
-def _replace_kanji_numbers(text: str) -> str:
-    """Convert Japanese kanji numerals (0..99) in text to ASCII digits."""
-
-    def _convert(match: re.Match[str]) -> str:
-        token = match.group(0)
-        if "十" not in token:
-            return "".join(str(KANJI_DIGITS[ch]) for ch in token)
-        tens_part, ones_part = token.split("十", 1)
-        tens = KANJI_DIGITS.get(tens_part, 1) if tens_part else 1
-        ones = KANJI_DIGITS.get(ones_part, 0) if ones_part else 0
-        return str(tens * 10 + ones)
-
-    return _KANJI_NUM_RE.sub(_convert, text)
-
-
-def _format_parsed_date(
-    year: int,
-    month_str: str | None,
-    *,
-    ambiguous: bool = False,
-) -> tuple[int, int | None, str, bool]:
-    if month_str and 1 <= int(month_str) <= 12:
-        month = int(month_str)
-        return year, month, f"{month:02d}.{year}", ambiguous
-    return year, None, str(year), ambiguous
-
-
-def _extract_month(text: str, captured_month: str | None) -> str | None:
-    if captured_month:
-        return captured_month
-    month_match = _MONTH_KANJI_RE.search(text)
-    return month_match.group(1) if month_match else None
-
-
-def parse_japanese_date(
-    raw: str | None,
-    *,
-    is_future_date: bool = False,
-    current_year: int = 2026,
-) -> tuple[int | None, int | None, str | None, bool]:
-    """Parse Japanese era or Gregorian date into (year, month, formatted_str, is_ambiguous)."""
-    if not raw:
-        return None, None, None, False
-
-    cur_year = current_year or datetime.date.today().year
-    cur_reiwa = cur_year - 2018
-
-    normalized = re.sub(
-        r"(R|令和|H|平成|S|昭和)元",
-        r"\g<1>1",
-        unicodedata.normalize("NFKC", raw).strip(),
-    )
-    normalized = _replace_kanji_numbers(normalized)
-
-    era_match = _ERA_DATE_RE.search(normalized)
-    if era_match:
-        era = era_match.group(1).upper()
-        year = _ERA_OFFSETS[era] + int(era_match.group(2))
-        month = _extract_month(normalized, era_match.group(3) or era_match.group(4))
-        return _format_parsed_date(year, month)
-
-    mm_yyyy_match = _MM_YYYY_RE.search(normalized)
-    if mm_yyyy_match and 1 <= int(mm_yyyy_match.group(1)) <= 12:
-        return _format_parsed_date(int(mm_yyyy_match.group(2)), mm_yyyy_match.group(1))
-
-    greg_match = _GREGORIAN_DATE_RE.search(normalized)
-    if greg_match:
-        month = _extract_month(normalized, greg_match.group(2))
-        return _format_parsed_date(int(greg_match.group(1)), month)
-
-    bare_match = _BARE_DATE_RE.search(normalized)
-    if not bare_match:
-        return None, None, raw, True
-
-    num = int(bare_match.group(1))
-    month = bare_match.group(2)
-
-    if is_future_date:
-        if 1 <= num <= 18:
-            return _format_parsed_date(2018 + num, month)
-        if 19 <= num <= 32:
-            return _format_parsed_date(1988 + num, month)
-        return None, None, raw, True
-
-    if 1 <= num <= cur_reiwa:
-        # Bare years 1..cur_reiwa overlap theoretically with Heisei 1..cur_reiwa.
-        return _format_parsed_date(2018 + num, month, ambiguous=True)
-    if (cur_reiwa + 1) <= num <= 32:
-        # Includes transitional Heisei 31 (2019) and Heisei 32 (2020) sheets.
-        return _format_parsed_date(1988 + num, month)
-    if 33 <= num <= 64:
-        return _format_parsed_date(1925 + num, month)
-
-    return None, None, raw, True
-
-
-def _pluralize_years_ru(years: int) -> str:
-    mod100 = years % 100
-    if 11 <= mod100 <= 19:
-        return "лет"
-    mod10 = years % 10
-    if mod10 == 1:
-        return "год"
-    if 2 <= mod10 <= 4:
-        return "года"
-    return "лет"
-
-
-def calculate_age_and_corridor(
-    reg_year: int | None,
-    reg_month: int | None,
-    *,
-    reference_year: int = 2026,
-    reference_month: int = 11,
-) -> tuple[str | None, bool]:
-    """Format registration age string and check whether vehicle is in the 3-5 year duty corridor."""
-    if reg_year is None:
-        return None, False
-
-    effective_month = reg_month if reg_month is not None else 7
-    total_months = (reference_year - reg_year) * 12 + (reference_month - effective_month)
-    is_pass_corridor = 36 <= total_months <= 60
-
-    display_months = max(total_months, 0)
-    years, months = divmod(display_months, 12)
-    date_part = f"{reg_month:02d}.{reg_year}" if reg_month is not None else str(reg_year)
-    formatted = f"{date_part} (Возраст {years} {_pluralize_years_ru(years)} {months} мес.)"
-    return formatted, is_pass_corridor
-
-
-_PANEL_ZONE_KEYWORDS: tuple[tuple[str, BodyPanel, str], ...] = (
-    ("コアサポート", BodyPanel.OTHER, "Рамка радиатора (Core Support)"),
-    ("クロスメンバー", BodyPanel.OTHER, "Поперечина кузова (Crossmember)"),
-    ("インパネ", BodyPanel.OTHER, "Брызговик/внутреннее крыло"),
-    ("インサイドパネル", BodyPanel.OTHER, "Брызговик/внутреннее крыло"),
-    ("ピラー", BodyPanel.OTHER, "Стойка кузова"),
-    ("サイドメンバー", BodyPanel.OTHER, "Лонжерон"),
-    ("フレーム", BodyPanel.OTHER, "Рама / силовой лонжерон"),
-    ("フェンダー左前", BodyPanel.FRONT_LEFT_FENDER, "Переднее левое крыло"),
-    ("左Fフェンダー", BodyPanel.FRONT_LEFT_FENDER, "Переднее левое крыло"),
-    ("右Fフェンダー", BodyPanel.FRONT_RIGHT_FENDER, "Переднее правое крыло"),
-    ("左Fドア", BodyPanel.FRONT_LEFT_DOOR, "Передняя левая дверь"),
-    ("右Fドア", BodyPanel.FRONT_RIGHT_DOOR, "Передняя правая дверь"),
-    ("左Rドア", BodyPanel.REAR_LEFT_DOOR, "Задняя левая дверь"),
-    ("右Rドア", BodyPanel.REAR_RIGHT_DOOR, "Задняя правая дверь"),
-    ("Fバンパー", BodyPanel.FRONT_BUMPER, "Передний бампер"),
-    ("Rバンパー", BodyPanel.REAR_BUMPER, "Задний бампер"),
-    ("ボンネット", BodyPanel.HOOD, "Капот"),
-    ("ルーフ", BodyPanel.ROOF, "Крыша"),
-    ("トランク", BodyPanel.TAILGATE, "Крышка багажника / пятая дверь"),
-    ("バックドア", BodyPanel.TAILGATE, "Пятая дверь"),
-    ("フロントガラス", BodyPanel.WINDSHIELD, "Лобовое стекло"),
-)
-
-_REPAIR_ACTION_RE = re.compile(
-    r"(XX|\bX\b|\bR\b|W\d?|交換|修理|鈑金|歪|曲|凹|修復|замен|ремонт|деформац)", re.IGNORECASE
-)
-_PILLAR_OR_FRAME_RE = re.compile(
-    r"(ピラー|サイドメンバー|フレーム|修復歴|骨格|стойк|лонжерон)", re.IGNORECASE
-)
-_INSIDE_PANEL_ONLY_RE = re.compile(r"(インパネ|インサイドパネル)", re.IGNORECASE)
-_CORE_SUPPORT_RE = re.compile(r"(コアサポート|рамк[аи]\s+радиатора|телевизор)", re.IGNORECASE)
-_NO_ANOMALY_RE = re.compile(r"(異常なし|問題なし|исправн|в\s+норме)", re.IGNORECASE)
-
-
-def normalize_body_panel(
-    panel_id: BodyPanel,
-    panel_ru: str,
-    visual_location: str = "",
-) -> tuple[BodyPanel, str]:
-    """Map body panel into canonical 16 panels or BodyPanel.OTHER with Russian name."""
-    combined = f"{visual_location} {panel_ru}"
-    for keyword, mapped_panel, default_ru in _PANEL_ZONE_KEYWORDS:
-        if keyword in combined:
-            clean_ru = panel_ru.strip() or default_ru
-            if mapped_panel == BodyPanel.OTHER:
-                return BodyPanel.OTHER, clean_ru
-            return mapped_panel if panel_id == BodyPanel.OTHER else panel_id, clean_ru
-    return panel_id, (panel_ru.strip() or "Другая зона кузова")
-
-
 def normalize_transmission_ru(raw: str | None, ru: str | None) -> str:
     """Normalize transmission codes/descriptions to canonical Russian labels."""
     candidates = [
@@ -464,53 +182,24 @@ def clean_color_ru(color_ru: str | None, paint_code: str | None) -> str | None:
     return cleaned or None
 
 
-_STANDALONE_NO_ANOMALY_RE = re.compile(
-    r"^(?:特に)?(?:異常なし|問題なし|исправно|в\s+норме)$", re.IGNORECASE
-)
-
-
-def derive_structural_risk_flags(
-    *,
-    llm_pillar_or_frame: bool,
-    llm_core_support: bool,
-    inspector_notes_raw: list[str],
-    inspector_notes_ru: list[str],
-    defect_texts: list[str],
-) -> tuple[bool, bool]:
-    """Deterministically refine structural risk flags based on Japanese notes and repair codes."""
-    all_lines = [*inspector_notes_raw, *inspector_notes_ru, *defect_texts]
-    all_raw = " | ".join(inspector_notes_raw)
-    clauses = [
-        clause.strip()
-        for line in all_lines
-        for clause in re.split(r"[、,。;/\n]+", line)
-        if clause.strip()
-    ]
-    raw_clauses = [
-        clause.strip()
-        for line in inspector_notes_raw
-        for clause in re.split(r"[、,。;/\n]+", line)
-        if clause.strip()
-    ]
-    has_standalone_no_anomaly = any(_STANDALONE_NO_ANOMALY_RE.match(c) for c in raw_clauses)
-
-    pillar_clauses = [c for c in clauses if _PILLAR_OR_FRAME_RE.search(c)]
-    has_active_pillar = any(not _NO_ANOMALY_RE.search(c) for c in pillar_clauses)
-    has_inside_panel_only = bool(_INSIDE_PANEL_ONLY_RE.search(all_raw)) and not pillar_clauses
-
-    if has_active_pillar:
-        pillar_or_frame = True
-    elif pillar_clauses or has_inside_panel_only or has_standalone_no_anomaly:
-        pillar_or_frame = False
-    else:
-        pillar_or_frame = llm_pillar_or_frame
-
-    core_clauses = [c for c in clauses if _CORE_SUPPORT_RE.search(c)]
-    if core_clauses:
-        core_support = any(
-            _REPAIR_ACTION_RE.search(c) and not _NO_ANOMALY_RE.search(c) for c in core_clauses
-        )
-    else:
-        core_support = False if has_standalone_no_anomaly else llm_core_support
-
-    return pillar_or_frame, core_support
+__all__ = [
+    "AUCTION_STRICTNESS",
+    "CHASSIS_CANONICAL_RE",
+    "CHASSIS_RE",
+    "DEFECT_ITEM_RE",
+    "EMISSION_PREFIX_RE",
+    "KANJI_DIGITS",
+    "KATASHIKI_RE",
+    "build_defect_description_ru",
+    "calculate_age_and_corridor",
+    "clean_code",
+    "clean_color_ru",
+    "derive_structural_risk_flags",
+    "normalize_auction_house",
+    "normalize_body_panel",
+    "normalize_transmission_ru",
+    "parse_defect_codes_with_warnings",
+    "parse_japanese_date",
+    "split_defect_codes",
+    "synthesize_frame_id",
+]

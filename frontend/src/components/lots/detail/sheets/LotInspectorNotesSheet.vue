@@ -25,8 +25,8 @@ const open = defineModel<boolean>('open', { default: false })
         </h4>
         <ul v-if="detail.passport.inspector_notes_ru.length > 0" class="flex flex-col gap-2">
           <li
-            v-for="note in detail.passport.inspector_notes_ru"
-            :key="note"
+            v-for="(note, idx) in detail.passport.inspector_notes_ru"
+            :key="`${idx}:${note}`"
             class="border-border bg-surface rounded-sm border px-3 py-2.5 text-[13px] leading-relaxed text-[#111827]"
           >
             {{ note }}
@@ -41,8 +41,8 @@ const open = defineModel<boolean>('open', { default: false })
         </h4>
         <ul class="flex flex-col gap-1.5">
           <li
-            v-for="comment in detail.passport.seller_comments_ru"
-            :key="comment"
+            v-for="(comment, idx) in detail.passport.seller_comments_ru"
+            :key="`${idx}:${comment}`"
             class="bg-surface-inset rounded-sm px-3 py-2 text-[13px] text-[#111827]"
           >
             {{ comment }}
@@ -57,7 +57,9 @@ const open = defineModel<boolean>('open', { default: false })
         <ul
           class="bg-surface-inset flex flex-col gap-1 rounded-sm p-3 font-mono text-[12px] text-[#4B5563]"
         >
-          <li v-for="raw in detail.passport.inspector_notes_raw" :key="raw">• {{ raw }}</li>
+          <li v-for="(raw, idx) in detail.passport.inspector_notes_raw" :key="`${idx}:${raw}`">
+            • {{ raw }}
+          </li>
         </ul>
       </div>
     </div>

@@ -8,16 +8,17 @@ from urllib.parse import urlparse
 from apps.integrations.drom.parser import is_antibot_challenge_html
 from apps.integrations.drom.schemas import (
     DromBlockedError,
+    DromBudgetExhaustedError,
     DromFetchError,
     DromNotFoundError,
 )
 from apps.integrations.shared.http import (
+    BaseScraperClient,
     HttpBudgetExhaustedError,
     HttpFetchResponse,
     HttpTransportError,
     ResilientHttpSession,
     decode_html_bytes,
-    get_shared_proxy_pool,
 )
 
 if TYPE_CHECKING:
@@ -36,7 +37,7 @@ _BLOCKED_STATUSES = frozenset({403, 429})
 _RETRYABLE_STATUSES = frozenset({500, 502, 503, 504})
 
 
-class DromHttpClient:
+class DromHttpClient(BaseScraperClient):
     """Thin HTTP client for Drom HTML pages and model JSON endpoints."""
 
     def __init__(
@@ -51,6 +52,17 @@ class DromHttpClient:
         transport: httpx.BaseTransport | None = None,
         proxy_urls: tuple[str, ...] | list[str] = (),
     ) -> None:
+        super().__init__(
+            domain="drom.ru",
+            allowed_hosts=frozenset({"drom.ru"}),
+            default_headers=_DEFAULT_HEADERS,
+            timeout_sec=timeout_sec,
+            request_interval_sec=request_interval_sec,
+            request_jitter_sec=request_jitter_sec,
+            proxy_ban_sec=proxy_ban_sec,
+            proxy_urls=proxy_urls,
+            transport=transport,
+        )
         self._timeout_sec = timeout_sec
         self._max_retries = max(0, max_retries)
         self._retry_backoff_sec = retry_backoff_sec
@@ -58,12 +70,6 @@ class DromHttpClient:
         self._request_jitter_sec = request_jitter_sec
         self._proxy_ban_sec = proxy_ban_sec
         self._transport = transport
-        self._proxy_rotator = (
-            get_shared_proxy_pool(proxy_urls, ban_cooldown_sec=proxy_ban_sec)
-            if proxy_urls
-            else None
-        )
-        self._session: ResilientHttpSession | None = None
         self._budget_deadline: float | None = None
 
     @contextlib.contextmanager
@@ -78,28 +84,6 @@ class DromHttpClient:
             yield
         finally:
             self._budget_deadline = previous
-
-    def _build_session(self, headers: dict[str, str] | None = None) -> ResilientHttpSession:
-        return ResilientHttpSession(
-            headers=headers or _DEFAULT_HEADERS,
-            timeout_sec=self._timeout_sec,
-            impersonate="chrome",
-            domain="drom.ru",
-            allowed_hosts=frozenset({"drom.ru"}),
-            proxy_rotator=self._proxy_rotator,
-            transport=self._transport,
-        )
-
-    def __enter__(self) -> DromHttpClient:
-        if self._session is None:
-            self._session = self._build_session()
-            self._session.__enter__()
-        return self
-
-    def __exit__(self, *args: object) -> None:
-        if self._session is not None:
-            self._session.__exit__(*args)
-            self._session = None
 
     def get_html(
         self,
@@ -129,6 +113,16 @@ class DromHttpClient:
             raise DromFetchError(f"Expected JSON object from {url}")
         return payload
 
+    def _sleep_within_deadline(self, delay: float, deadline: float, url: str) -> None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise DromBudgetExhaustedError(f"Request budget exhausted for {url}")
+        sleep_sec = min(max(0.0, delay), remaining)
+        if sleep_sec > 0:
+            time.sleep(sleep_sec)
+        if delay >= remaining:
+            raise DromBudgetExhaustedError(f"Request budget exhausted for {url}")
+
     def _validate_drom_response(
         self,
         session: ResilientHttpSession,
@@ -138,6 +132,7 @@ class DromHttpClient:
         has_multiple_proxies: bool,
         can_retry: bool,
         attempt: int,
+        deadline: float,
         check_antibot_html: bool,
     ) -> HttpFetchResponse | None:
         if response.status_code in _BLOCKED_STATUSES:
@@ -155,7 +150,7 @@ class DromHttpClient:
                     response.proxy_key, domain="drom.ru", cooldown_sec=self._proxy_ban_sec
                 )
             else:
-                time.sleep(self._retry_backoff_sec * (attempt + 1))
+                self._sleep_within_deadline(self._retry_backoff_sec * (attempt + 1), deadline, url)
             return None
         if response.status_code >= 400:
             raise DromFetchError(f"Drom HTTP {response.status_code} for {url}")
@@ -184,7 +179,7 @@ class DromHttpClient:
         for attempt in range(total_attempts):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise DromFetchError(f"Request budget exhausted for {url}")
+                raise DromBudgetExhaustedError(f"Request budget exhausted for {url}")
             can_retry = attempt < total_attempts - 1
             try:
                 response = session.get(
@@ -198,7 +193,7 @@ class DromHttpClient:
                     deadline=deadline,
                 )
             except HttpBudgetExhaustedError as exc:
-                raise DromFetchError(f"Request budget exhausted for {url}") from exc
+                raise DromBudgetExhaustedError(f"Request budget exhausted for {url}") from exc
             except HttpTransportError as exc:
                 if exc.proxy_key:
                     session.mark_proxy_blocked(
@@ -206,7 +201,9 @@ class DromHttpClient:
                     )
                 if can_retry:
                     if not has_multiple_proxies:
-                        time.sleep(self._retry_backoff_sec * (attempt + 1))
+                        self._sleep_within_deadline(
+                            self._retry_backoff_sec * (attempt + 1), deadline, url
+                        )
                     continue
                 raise DromFetchError(f"Network error requesting {url}: {exc}") from exc
 
@@ -217,6 +214,7 @@ class DromHttpClient:
                 has_multiple_proxies=has_multiple_proxies,
                 can_retry=can_retry,
                 attempt=attempt,
+                deadline=deadline,
                 check_antibot_html=check_antibot_html,
             )
             if validated is not None:
@@ -238,16 +236,7 @@ class DromHttpClient:
             if self._budget_deadline is not None
             else per_call_deadline
         )
-        if self._session is not None:
-            return self._execute_request(
-                self._session,
-                url,
-                headers=headers,
-                total_attempts=total_attempts,
-                deadline=deadline,
-                check_antibot_html=check_antibot_html,
-            )
-        with self._build_session(headers) as session:
+        with self._borrow_session(headers) as session:
             return self._execute_request(
                 session,
                 url,

@@ -56,7 +56,11 @@ const auditSubtitle = computed(() => {
         <TtxGrid :items="ttxItems" :columns="2" />
 
         <div v-if="detail.passport.equipment_ru.length > 0" class="mt-3.5 flex flex-wrap gap-1.5">
-          <BaseBadge v-for="option in detail.passport.equipment_ru" :key="option" variant="neutral">
+          <BaseBadge
+            v-for="(option, idx) in detail.passport.equipment_ru"
+            :key="`${idx}:${option}`"
+            variant="neutral"
+          >
             {{ option }}
           </BaseBadge>
         </div>

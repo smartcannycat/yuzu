@@ -6,6 +6,7 @@ import dataclasses
 import math
 from decimal import Decimal
 
+from apps.core.math_utils import round_half_up_int, to_decimal
 from apps.lots.calculator.customs.calculator import build_wise_cost_ladder, calculate_customs
 from apps.lots.calculator.customs.tariffs import (
     DEFAULT_FREIGHT_USD,
@@ -26,7 +27,7 @@ def _turnkey_for_bid(
     freight_rub: int,
 ) -> int:
     """Full turnkey cost for a candidate bid (engine grids, exact-sum ladder)."""
-    bid_rub = math.floor(bid_jpy * params.rates.jpy_rub + 0.5)
+    bid_rub = round_half_up_int(bid_jpy, params.rates.jpy_rub)
     customs_value_rub = bid_rub + fob_rub + freight_rub
     customs = calculate_customs(
         dataclasses.replace(
@@ -63,13 +64,13 @@ def derive_start_bid_from_market(params: StartBidInput) -> StartBidResult:
 
     rates = params.rates
     validate_rates(rates)
-    fob_rub = math.floor(params.japan_fob_jpy * rates.jpy_rub + 0.5)
+    fob_rub = round_half_up_int(params.japan_fob_jpy, rates.jpy_rub)
     freight_rub = params.customs_params.freight_rub
     if freight_rub is None:
-        freight_rub = math.floor(DEFAULT_FREIGHT_USD * rates.usd_rub + 0.5)
+        freight_rub = round_half_up_int(DEFAULT_FREIGHT_USD, rates.usd_rub)
 
     target_turnkey_rub = math.floor(
-        params.market_price_rf_rub * (1 - Decimal(str(params.target_margin_pct)) / 100)
+        to_decimal(params.market_price_rf_rub) * (1 - Decimal(str(params.target_margin_pct)) / 100)
     )
 
     def result_for(bid_jpy: int, *, clamped: bool) -> StartBidResult:

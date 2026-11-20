@@ -97,11 +97,6 @@
             "title": "Expires In Sec",
             "type": "integer"
           },
-          "refresh_token": {
-            "description": "JWT refresh token",
-            "title": "Refresh Token",
-            "type": "string"
-          },
           "token_type": {
             "const": "bearer",
             "default": "bearer",
@@ -116,7 +111,6 @@
         },
         "required": [
           "access_token",
-          "refresh_token",
           "user"
         ],
         "title": "AuthTokensResponse",
@@ -385,7 +379,8 @@
           "rear_right_quarter",
           "left_sill",
           "right_sill",
-          "windshield"
+          "windshield",
+          "other"
         ],
         "title": "BodyPanel",
         "type": "string"
@@ -633,6 +628,15 @@
             "$ref": "#/components/schemas/CurrencyRates",
             "description": "Currency rates snapshot (CBRF + Far East bank)"
           },
+          "util_fee_type": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/UtilFeeType"
+              }
+            ],
+            "default": "personal",
+            "description": "Applied utilization fee category"
+          },
           "utilization_fee_rub": {
             "description": "RF utilization fee",
             "title": "Utilization Fee Rub",
@@ -689,10 +693,13 @@
             "type": "integer"
           },
           "source_kind": {
-            "default": "",
-            "description": "Machine-readable price source / fallback reason",
-            "title": "Source Kind",
-            "type": "string"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PartSourceKind"
+              }
+            ],
+            "default": "matrix",
+            "description": "Machine-readable price source / fallback reason"
           },
           "subtitle_ru": {
             "anyOf": [
@@ -1614,7 +1621,7 @@
           },
           "panel_id": {
             "$ref": "#/components/schemas/BodyPanel",
-            "description": "Canonical body panel identifier (1 of 16)"
+            "description": "Canonical body panel identifier (16 panels or 'other')"
           },
           "panel_ru": {
             "description": "Russian name of the panel",
@@ -2111,6 +2118,20 @@
         "title": "PaginationMeta",
         "type": "object"
       },
+      "PartSourceKind": {
+        "enum": [
+          "farpost_color_match",
+          "farpost_plain",
+          "farpost_cache",
+          "missing_identity",
+          "rate_limited",
+          "fetch_error",
+          "not_found",
+          "matrix"
+        ],
+        "title": "PartSourceKind",
+        "type": "string"
+      },
       "PastAuctionRecord": {
         "additionalProperties": false,
         "properties": {
@@ -2307,6 +2328,7 @@
           "custom_freight_rub": {
             "anyOf": [
               {
+                "maximum": 50000000,
                 "minimum": 0,
                 "type": "integer"
               },
@@ -2715,22 +2737,6 @@
         "title": "TaskStep",
         "type": "string"
       },
-      "TokenRefreshRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "refresh_token": {
-            "description": "Valid refresh JWT token",
-            "minLength": 1,
-            "title": "Refresh Token",
-            "type": "string"
-          }
-        },
-        "required": [
-          "refresh_token"
-        ],
-        "title": "TokenRefreshRequest",
-        "type": "object"
-      },
       "TrafficLightColor": {
         "enum": [
           "green",
@@ -2905,6 +2911,14 @@
         "title": "UserRegisterRequest",
         "type": "object"
       },
+      "UtilFeeType": {
+        "enum": [
+          "personal",
+          "commercial"
+        ],
+        "title": "UtilFeeType",
+        "type": "string"
+      },
       "WiseCostLadder": {
         "additionalProperties": false,
         "properties": {
@@ -3075,7 +3089,7 @@
           },
           "400": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3085,7 +3099,7 @@
           },
           "401": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3095,7 +3109,7 @@
           },
           "422": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3105,7 +3119,7 @@
           },
           "429": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3115,6 +3129,31 @@
           }
         },
         "summary": "Login",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "operationId": "auth_logout",
+        "parameters": [],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          }
+        },
+        "summary": "Logout",
         "tags": [
           "Auth"
         ]
@@ -3137,7 +3176,7 @@
           },
           "401": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3161,16 +3200,6 @@
       "post": {
         "operationId": "auth_refresh",
         "parameters": [],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TokenRefreshRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "content": {
@@ -3182,19 +3211,9 @@
             },
             "description": "OK"
           },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetail"
-                }
-              }
-            },
-            "description": "Bad Request"
-          },
           "401": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3202,19 +3221,19 @@
             },
             "description": "Unauthorized"
           },
-          "422": {
+          "403": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Forbidden"
           },
           "429": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3256,7 +3275,7 @@
           },
           "400": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3266,7 +3285,7 @@
           },
           "409": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3276,7 +3295,7 @@
           },
           "422": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3286,7 +3305,7 @@
           },
           "429": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3318,7 +3337,7 @@
           },
           "503": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3344,6 +3363,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 100,
                   "type": "string"
                 },
                 {
@@ -3360,6 +3380,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 100,
                   "type": "string"
                 },
                 {
@@ -3376,6 +3397,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 100,
                   "type": "string"
                 },
                 {
@@ -3501,7 +3523,7 @@
           },
           "401": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3511,7 +3533,7 @@
           },
           "422": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3572,7 +3594,7 @@
           },
           "400": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3582,7 +3604,7 @@
           },
           "401": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3592,7 +3614,7 @@
           },
           "422": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3602,7 +3624,7 @@
           },
           "429": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3650,7 +3672,7 @@
           },
           "401": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3660,7 +3682,7 @@
           },
           "404": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3670,7 +3692,7 @@
           },
           "422": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3742,7 +3764,7 @@
           },
           "400": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3752,7 +3774,7 @@
           },
           "401": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3762,7 +3784,7 @@
           },
           "404": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3772,7 +3794,7 @@
           },
           "409": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3782,7 +3804,7 @@
           },
           "422": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3792,7 +3814,7 @@
           },
           "429": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3839,7 +3861,7 @@
           },
           "401": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3849,7 +3871,7 @@
           },
           "422": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3890,7 +3912,7 @@
           },
           "401": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3900,7 +3922,7 @@
           },
           "404": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3910,7 +3932,7 @@
           },
           "422": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3956,7 +3978,7 @@
           },
           "401": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3966,7 +3988,7 @@
           },
           "404": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -3976,7 +3998,7 @@
           },
           "422": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -4032,7 +4054,7 @@
           },
           "401": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -4042,7 +4064,7 @@
           },
           "404": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -4052,7 +4074,7 @@
           },
           "422": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -4067,6 +4089,106 @@
           }
         ],
         "summary": "Update Lot Lifecycle",
+        "tags": [
+          "Lots"
+        ]
+      }
+    },
+    "/api/v1/lots/{lot_id}/media/{kind}": {
+      "get": {
+        "operationId": "lot_get_lot_media",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lot_id",
+            "required": true,
+            "schema": {
+              "format": "uuid4",
+              "title": "Lot Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "enum": [
+                "scan",
+                "thumbnail"
+              ],
+              "title": "Kind",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "image/svg+xml": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Authenticated auction sheet scan or thumbnail image"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "security": [
+          {
+            "AppJWTAuth": []
+          }
+        ],
+        "summary": "Get Lot Media",
         "tags": [
           "Lots"
         ]
@@ -4110,7 +4232,7 @@
           },
           "400": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -4120,7 +4242,7 @@
           },
           "401": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -4130,7 +4252,7 @@
           },
           "404": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -4140,7 +4262,7 @@
           },
           "422": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -4188,7 +4310,7 @@
           },
           "400": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -4198,7 +4320,7 @@
           },
           "401": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -4208,7 +4330,7 @@
           },
           "404": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }
@@ -4218,7 +4340,7 @@
           },
           "422": {
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetail"
                 }

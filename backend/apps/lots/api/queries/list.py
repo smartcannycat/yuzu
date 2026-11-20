@@ -4,6 +4,7 @@ import math
 
 from django.db.models import CharField, Count, F, Q, Value
 from django.db.models.functions import Coalesce, Concat
+from django.utils import timezone
 
 from apps.core.enums import (
     BatchStatus,
@@ -13,7 +14,6 @@ from apps.core.enums import (
 )
 from apps.lots.api import schemas
 from apps.lots.api.queries.helpers import _build_lot_summary
-from apps.lots.lifecycle import archive_expired_lots_for_user
 from apps.lots.models import Batch, BatchItem, Lot
 from apps.users.models import User
 
@@ -91,13 +91,14 @@ def _facet_counts(qs, field: str) -> list[schemas.FilterCountItem]:
 
 def _build_available_filters(
     *,
+    total_lots_count: int,
     archived_lots_count: int,
     make_facet_qs,
     model_facet_qs,
     verdict_facet_qs,
 ) -> schemas.AvailableFilters:
     return schemas.AvailableFilters(
-        total_lots_count=make_facet_qs.count(),
+        total_lots_count=total_lots_count,
         archived_lots_count=archived_lots_count,
         makes=_facet_counts(make_facet_qs, "make"),
         models=_facet_counts(model_facet_qs, "model"),
@@ -158,19 +159,16 @@ def get_lots_list(
     sort_order: str = "desc",
 ) -> schemas.LotListResponse:
     """Return a paginated, filtered, and faceted lot feed for the user."""
-    archive_expired_lots_for_user(user)
-    non_deleted_qs = Lot.objects.filter(
-        user=user,
-        completed_at__isnull=False,
-        deleted_at__isnull=True,
-    )
-    archived_lots_count = non_deleted_qs.filter(is_archived=True).count()
+    now = timezone.now()
+    non_deleted_qs = Lot.objects.ready_for_user(user)
+    archived_lots_count = non_deleted_qs.effectively_archived(now).count()
     if lifecycle == LotLifecycleFilter.ACTIVE:
-        base_qs = non_deleted_qs.filter(is_archived=False)
+        base_qs = non_deleted_qs.effectively_active(now)
     elif lifecycle == LotLifecycleFilter.ARCHIVED:
-        base_qs = non_deleted_qs.filter(is_archived=True)
+        base_qs = non_deleted_qs.effectively_archived(now)
     else:
         base_qs = non_deleted_qs
+    total_lots_count = base_qs.count()
     searched = _apply_search(base_qs, query)
     if has_anomaly is not None:
         searched = searched.filter(has_anomaly=has_anomaly)
@@ -203,6 +201,7 @@ def get_lots_list(
             total_pages=total_pages,
         ),
         available_filters=_build_available_filters(
+            total_lots_count=total_lots_count,
             archived_lots_count=archived_lots_count,
             make_facet_qs=make_facet_qs,
             model_facet_qs=model_facet_qs,

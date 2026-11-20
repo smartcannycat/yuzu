@@ -1,9 +1,11 @@
 import { createPinia, setActivePinia } from 'pinia'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 
-import { useLotsStore } from '@/stores/lots'
+import { apiClient } from '@/api'
+import { clearAuthorizedImageCache } from '@/composables/useAuthorizedImage'
+import { useLotDetailStore } from '@/stores/lotDetail'
 import LotDetailView from '@/views/LotDetailView.vue'
 
 async function flushUi(): Promise<void> {
@@ -17,6 +19,10 @@ describe('LotDetailView (Screens 4, 5, 6)', () => {
   let host: HTMLDivElement | null = null
   let app: ReturnType<typeof createApp> | null = null
   let pinia: ReturnType<typeof createPinia>
+
+  beforeAll(async () => {
+    await import('@/api/mockApiClient')
+  })
 
   beforeEach(() => {
     vi.useFakeTimers()
@@ -55,7 +61,7 @@ describe('LotDetailView (Screens 4, 5, 6)', () => {
     await vi.advanceTimersByTimeAsync(400)
     await flushUi()
 
-    return { host, router, lotsStore: useLotsStore() }
+    return { host, router, lotsStore: useLotDetailStore() }
   }
 
   it('renders Screen 4 General tab cleanly without Sticky Danger Alert on clean Corolla lot', async () => {
@@ -285,5 +291,153 @@ describe('LotDetailView (Screens 4, 5, 6)', () => {
 
     expect(deleteSpy).toHaveBeenCalledWith('892b4e10-3a2c-411f-a801-019283746501')
     expect(replaceSpy).toHaveBeenCalledWith({ name: 'home' })
+  })
+
+  it('disables reset simulation button while recalculating and preserves LotTabEconomics drafts on archive update', async () => {
+    const { host, lotsStore } = await mountLotDetail('892b4e10-3a2c-411f-a801-019283746501')
+
+    const econTab = Array.from(host.querySelectorAll('[role="tab"]')).find((el) =>
+      el.textContent?.includes('Экономика'),
+    ) as HTMLButtonElement
+    econTab.click()
+    await flushUi()
+
+    const hpInput = host.querySelector('#simulator-custom-power-hp') as HTMLInputElement
+    hpInput.value = '155'
+    hpInput.dispatchEvent(new Event('input'))
+    await flushUi()
+
+    // Unrelated detail replacement (like archiving) must NOT wipe unsaved power input
+    lotsStore.currentLotDetail = {
+      ...lotsStore.currentLotDetail!,
+      is_archived: true,
+      archived_reason: 'manual',
+    }
+    await flushUi()
+    expect((host.querySelector('#simulator-custom-power-hp') as HTMLInputElement).value).toBe('155')
+
+    // When simulation is modified & isRecalculating is true, header reset button is disabled
+    lotsStore.currentLotDetail = {
+      ...lotsStore.currentLotDetail!,
+      economics: {
+        ...lotsStore.currentLotDetail!.economics,
+        is_simulation_modified: true,
+      },
+    }
+    lotsStore.isRecalculating = true
+    await flushUi()
+
+    const resetTopBtn = Array.from(host.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('Сбросить ставку'),
+    ) as HTMLButtonElement | undefined
+    expect(resetTopBtn?.disabled).toBe(true)
+  })
+
+  it('checks window.history.state?.back in goBack, marks RA and *** grades as danger in AuditSheet, and handles scan @error', async () => {
+    clearAuthorizedImageCache()
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:scan/lot-scan-1')
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+
+    const { host, lotsStore, router } = await mountLotDetail('892b4e10-3a2c-411f-a801-019283746504')
+    const pushSpy = vi.spyOn(router, 'push')
+    const backSpy = vi.spyOn(router, 'back').mockImplementation(() => undefined)
+
+    // Even when window.history.length > 1, missing history.state.back navigates to home
+    const origHistoryState = window.history.state
+    window.history.replaceState({ ...origHistoryState, back: null }, '')
+    const backBtn = Array.from(host.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('Назад'),
+    ) as HTMLButtonElement
+    backBtn.click()
+    expect(pushSpy).toHaveBeenCalledWith({ name: 'home' })
+    expect(backSpy).not.toHaveBeenCalled()
+
+    // When history.state.back is present, router.back() is called
+    window.history.replaceState({ ...origHistoryState, back: '/' }, '')
+    backBtn.click()
+    expect(backSpy).toHaveBeenCalledTimes(1)
+
+    // Audit sheet recognizes RA and *** grades as danger
+    lotsStore.currentLotDetail = {
+      ...lotsStore.currentLotDetail!,
+      audit: {
+        ...lotsStore.currentLotDetail!.audit,
+        history: [
+          {
+            auction_date: '01.10.2026',
+            auction_house: 'USS Tokyo',
+            auction_strictness: 0.9,
+            lot_number: '2201',
+            overall_grade: 'RA',
+            mileage_km: 50000,
+            defects_summary: 'XX',
+            closing_price_jpy: 900000,
+            sheet_archive_url: null,
+          },
+          {
+            auction_date: '02.10.2026',
+            auction_house: 'TAA',
+            auction_strictness: 0.85,
+            lot_number: '2202',
+            overall_grade: '***',
+            mileage_km: 50000,
+            defects_summary: 'Аварийный',
+            closing_price_jpy: 700000,
+            sheet_archive_url: null,
+          },
+        ],
+      },
+    }
+    await flushUi()
+
+    const alertBtn = host.querySelector('[role="alert"] button') as HTMLButtonElement
+    alertBtn.click()
+    await flushUi()
+
+    const auditDialog = document.body.querySelector('[role="dialog"]')!
+    const raBadge = Array.from(auditDialog.querySelectorAll('span')).find((el) =>
+      el.textContent?.includes('Оценка RA'),
+    )
+    const starBadge = Array.from(auditDialog.querySelectorAll('span')).find((el) =>
+      el.textContent?.includes('Оценка ***'),
+    )
+    expect(raBadge?.className).toContain('text-danger')
+    expect(starBadge?.className).toContain('text-danger')
+
+    // Close audit sheet via Escape, open Scan sheet with protected media URL + test @error fallback
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flushUi()
+
+    const fetchBlobSpy = vi
+      .spyOn(apiClient.media, 'fetchBlob')
+      .mockResolvedValue(new Blob(['scan'], { type: 'image/jpeg' }))
+    lotsStore.currentLotDetail = {
+      ...lotsStore.currentLotDetail!,
+      media: {
+        ...lotsStore.currentLotDetail!.media,
+        sheet_scan_url: '/api/v1/lots/lot-scan/media/scan',
+      },
+    }
+    await flushUi()
+
+    const scanRow = Array.from(host.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('Оригинальный аукционный лист'),
+    )
+    scanRow?.click()
+    await flushUi()
+
+    expect(fetchBlobSpy).toHaveBeenCalledWith(
+      '/api/v1/lots/lot-scan/media/scan',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
+    const scanDialog = document.body.querySelector('[role="dialog"]')!
+    const scanImg = scanDialog.querySelector('img') as HTMLImageElement | null
+    expect(scanImg?.getAttribute('src')).toBe('blob:scan/lot-scan-1')
+
+    scanImg?.dispatchEvent(new Event('error'))
+    await flushUi()
+    expect(scanDialog.querySelector('img')).toBeNull()
+    expect(scanDialog.textContent).toContain('Скан аукционного листа недоступен')
+    clearAuthorizedImageCache()
   })
 })

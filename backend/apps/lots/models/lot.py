@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import uuid
+from typing import TYPE_CHECKING
 
 from django.contrib.postgres.fields import ArrayField
 from django.db import models
+from django.utils import timezone
 
 from apps.core.enums import (
     AuctionHouse,
@@ -21,8 +23,76 @@ from apps.core.enums import (
 from apps.lots.models import _lot_scan_upload_to, _lot_thumb_upload_to
 from apps.users.models import User
 
+if TYPE_CHECKING:
+    from datetime import datetime
+    from typing import Self
+
+
+class LotQuerySet(models.QuerySet["Lot"]):
+    """Reusable composable queries for completed non-deleted lots and lifecycle views."""
+
+    def ready(self) -> Self:
+        """Filter completed lots that have not been soft-deleted."""
+        return self.filter(completed_at__isnull=False, deleted_at__isnull=True)
+
+    def ready_for_user(self, user: User) -> Self:
+        """Filter completed, non-deleted lots owned by ``user``."""
+        return self.ready().filter(user=user)
+
+    def effectively_active(self, now: datetime | None = None) -> Self:
+        """Filter lots treated as active on read (including unexpired deadlines)."""
+        current_time = now or timezone.now()
+        return self.filter(
+            models.Q(is_archived=False)
+            & (
+                models.Q(auto_archive_disabled=True)
+                | models.Q(expires_at__isnull=True)
+                | models.Q(expires_at__gt=current_time)
+            )
+        )
+
+    def effectively_archived(self, now: datetime | None = None) -> Self:
+        """Filter lots archived explicitly or logically expired as of ``now``."""
+        current_time = now or timezone.now()
+        return self.filter(
+            models.Q(is_archived=True)
+            | (
+                models.Q(auto_archive_disabled=False)
+                & models.Q(expires_at__isnull=False)
+                & models.Q(expires_at__lte=current_time)
+            )
+        )
+
+    def expired_unarchived(self, now: datetime | None = None) -> Self:
+        """Filter completed active lots past ``expires_at`` awaiting background archival."""
+        current_time = now or timezone.now()
+        return self.ready().filter(
+            is_archived=False,
+            auto_archive_disabled=False,
+            expires_at__isnull=False,
+            expires_at__lte=current_time,
+        )
+
+
+def has_full_detail(lot: Lot) -> bool:
+    """Return True when all related detail models required for full specification exist."""
+    required_attrs = (
+        "risk_flags",
+        "verdict_detail",
+        "market_info",
+        "cross_audit",
+        "safety_checklist",
+        "customs_calc",
+        "farpost_repair",
+        "wise_cost_ladder",
+    )
+    if not all(hasattr(lot, name) for name in required_attrs):
+        return False
+    return hasattr(lot.customs_calc, "rates_snapshot")
+
 
 class Lot(models.Model):
+    objects = LotQuerySet.as_manager()
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="lots")
     completed_at = models.DateTimeField(null=True, blank=True)
@@ -153,6 +223,10 @@ class Lot(models.Model):
             models.Index(fields=["make"]),
             models.Index(fields=["model"]),
         ]
+
+    def has_full_detail(self) -> bool:
+        """Return True when all related detail models required for full specification exist."""
+        return has_full_detail(self)
 
     def __str__(self) -> str:
         parts = [self.make, self.model]

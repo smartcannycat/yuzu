@@ -9,50 +9,59 @@ def test_app_settings_parses_json_and_csv_lists() -> None:
     settings_json = AppSettings(
         _env_file=None,
         ALLOWED_HOSTS='["api.yuzu.ru", "localhost"]',
+        ADMIN_ALLOWED_IPS="10.0.0.1, 192.168.1.0/24",
         CORS_ALLOWED_ORIGINS="https://yuzu.ru, https://app.yuzu.ru",
+        DJANGO_ADMIN_URL="/ops-console",
     )
     assert settings_json.ALLOWED_HOSTS == ["api.yuzu.ru", "localhost"]
+    assert settings_json.ADMIN_ALLOWED_IPS == ["10.0.0.1", "192.168.1.0/24"]
     assert settings_json.CORS_ALLOWED_ORIGINS == ["https://yuzu.ru", "https://app.yuzu.ru"]
+    assert settings_json.DJANGO_ADMIN_URL == "ops-console/"
 
 
 def test_production_settings_reject_insecure_defaults() -> None:
+    base_prod_kwargs = {
+        "_env_file": None,
+        "ENVIRONMENT": "production",
+        "DEBUG": False,
+        "SECRET_KEY": "x" * 40,
+        "JWT_SIGNING_KEY": "y" * 40,
+        "ML_SERVICE_API_KEY": "prod-ml-secret-key",
+        "ALLOWED_HOSTS": ["api.yuzu.ru"],
+        "CBRF_FALLBACK_RATES": (
+            '{"eur_rub": 95, "usd_rub": 85, "jpy_rub": 0.58, "cbrf_date": "01.01.2026"}'
+        ),
+    }
+
+    with pytest.raises(ValidationError, match="DEBUG"):
+        AppSettings(**{**base_prod_kwargs, "DEBUG": True})
+
     with pytest.raises(ValidationError, match="SECRET_KEY"):
-        AppSettings(
-            _env_file=None,
-            ENVIRONMENT="production",
-            DEBUG=False,
-            SECRET_KEY="django-insecure-short",
-            ALLOWED_HOSTS=["api.yuzu.ru"],
-        )
+        AppSettings(**{**base_prod_kwargs, "SECRET_KEY": "django-insecure-short"})
+
+    with pytest.raises(ValidationError, match="JWT_SIGNING_KEY"):
+        AppSettings(**{**base_prod_kwargs, "JWT_SIGNING_KEY": None})
+
+    with pytest.raises(ValidationError, match="JWT_SIGNING_KEY"):
+        AppSettings(**{**base_prod_kwargs, "JWT_SIGNING_KEY": "short-key"})
+
+    with pytest.raises(ValidationError, match="JWT_SIGNING_KEY"):
+        AppSettings(**{**base_prod_kwargs, "JWT_SIGNING_KEY": "x" * 40})
+
+    with pytest.raises(ValidationError, match="ML_SERVICE_API_KEY"):
+        AppSettings(**{**base_prod_kwargs, "ML_SERVICE_API_KEY": ""})
+
+    with pytest.raises(ValidationError, match="ML_SERVICE_API_KEY"):
+        AppSettings(**{**base_prod_kwargs, "ML_SERVICE_API_KEY": "dev-ml-service-key"})
 
     with pytest.raises(ValidationError, match="ALLOWED_HOSTS"):
-        AppSettings(
-            _env_file=None,
-            ENVIRONMENT="production",
-            DEBUG=False,
-            SECRET_KEY="x" * 40,
-            ALLOWED_HOSTS=["*"],
-        )
-
-    valid_prod = AppSettings(
-        _env_file=None,
-        ENVIRONMENT="production",
-        DEBUG=False,
-        SECRET_KEY="x" * 40,
-        ALLOWED_HOSTS=["api.yuzu.ru"],
-        CBRF_FALLBACK_RATES='{"eur_rub": 95, "usd_rub": 85, "jpy_rub": 0.58,'
-        ' "cbrf_date": "01.01.2026"}',
-    )
-    assert valid_prod.is_production is True
+        AppSettings(**{**base_prod_kwargs, "ALLOWED_HOSTS": ["*"]})
 
     with pytest.raises(ValidationError, match="CBRF_FALLBACK_RATES"):
-        AppSettings(
-            _env_file=None,
-            ENVIRONMENT="production",
-            DEBUG=False,
-            SECRET_KEY="x" * 40,
-            ALLOWED_HOSTS=["api.yuzu.ru"],
-        )
+        AppSettings(**{**base_prod_kwargs, "CBRF_FALLBACK_RATES": None})
+
+    valid_prod = AppSettings(**base_prod_kwargs)
+    assert valid_prod.is_production is True
 
 
 def test_database_url_overrides_postgres_settings() -> None:
@@ -118,6 +127,9 @@ def test_backend_config_toml_loaded_with_env_override(monkeypatch) -> None:
     assert from_toml.FARPOST_BUDGET_SEC == 30.0
     assert from_toml.CBRF_JPY_SPREAD == 0.03
     assert from_toml.ALEADO_VERIFY_CANDIDATES == 10
+    assert from_toml.ML_SERVICE_TIMEOUT_SEC == 65.0
+    assert from_toml.DJANGO_ADMIN_URL == "admin/"
+    assert from_toml.PRIVATE_INTAKE_ROOT == "private_intake"
 
     monkeypatch.setenv("FARPOST_BUDGET_SEC", "45.5")
     overridden = AppSettings(_env_file=None)

@@ -22,12 +22,12 @@ from apps.integrations.farpost.parser import (
     parse_offers,
 )
 from apps.integrations.shared.http import (
+    BaseScraperClient,
     HttpBudgetExhaustedError,
     HttpFetchResponse,
     HttpTransportError,
     ResilientHttpSession,
     decode_html_bytes,
-    get_shared_proxy_pool,
 )
 
 if TYPE_CHECKING:
@@ -63,7 +63,7 @@ class _FarpostRetryableError(FarpostFetchError):
     """Transient Farpost HTTP error (5xx) eligible for proxy rotation."""
 
 
-class FarpostClient:
+class FarpostClient(BaseScraperClient):
     """Synchronous Farpost parts-search client with shared ProxyPool and ALTCHA solving."""
 
     def __init__(
@@ -80,15 +80,16 @@ class FarpostClient:
         captcha_solve_budget_sec: float = 20.0,
         captcha_max_workers: int | None = None,
     ):
-        self.timeout_sec = timeout_sec
-        self.request_interval_sec = request_interval_sec
-        self.request_jitter_sec = request_jitter_sec
-        self.proxy_ban_sec = proxy_ban_sec
-        self.transport = transport
-        self._proxy_rotator = (
-            get_shared_proxy_pool(proxy_urls, ban_cooldown_sec=proxy_ban_sec)
-            if proxy_urls
-            else None
+        super().__init__(
+            domain="www.farpost.ru",
+            allowed_hosts=frozenset({"farpost.ru"}),
+            default_headers=_DEFAULT_HEADERS,
+            timeout_sec=timeout_sec,
+            request_interval_sec=request_interval_sec,
+            request_jitter_sec=request_jitter_sec,
+            proxy_ban_sec=proxy_ban_sec,
+            proxy_urls=proxy_urls,
+            transport=transport,
         )
         self._captcha_solver = captcha_solver or FarpostCaptchaSolver(
             max_attempts=captcha_max_attempts,
@@ -96,29 +97,6 @@ class FarpostClient:
             max_workers=captcha_max_workers,
             request_timeout_sec=timeout_sec,
         )
-        self._session: ResilientHttpSession | None = None
-
-    def _build_session(self) -> ResilientHttpSession:
-        return ResilientHttpSession(
-            headers=_DEFAULT_HEADERS,
-            timeout_sec=self.timeout_sec,
-            impersonate="chrome",
-            domain="www.farpost.ru",
-            allowed_hosts=frozenset({"farpost.ru"}),
-            proxy_rotator=self._proxy_rotator,
-            transport=self.transport,
-        )
-
-    def __enter__(self) -> FarpostClient:
-        if self._session is None:
-            self._session = self._build_session()
-            self._session.__enter__()
-        return self
-
-    def __exit__(self, *args: object) -> None:
-        if self._session is not None:
-            self._session.__exit__(*args)
-            self._session = None
 
     def _fetch_html(
         self,
@@ -171,14 +149,11 @@ class FarpostClient:
         self, criteria: PartCriteria, *, deadline: float, page: int
     ) -> tuple[ParseResult | None, str | None, Exception | None]:
         """Run a single fetch+parse attempt, returning (result, proxy_key, retryable_exc)."""
-        active_session = self._session
+        active_session: ResilientHttpSession | None = self._session
         try:
-            if active_session is not None:
-                html, final_url = self._fetch_html(active_session, criteria, deadline, page=page)
-            else:
-                with self._build_session() as session:
-                    active_session = session
-                    html, final_url = self._fetch_html(session, criteria, deadline, page=page)
+            with self._borrow_session() as session:
+                active_session = session
+                html, final_url = self._fetch_html(session, criteria, deadline, page=page)
             return parse_listing_page(html, criteria, source_url=final_url), None, None
         except HttpBudgetExhaustedError as exc:
             raise FarpostFetchError("Farpost search budget exhausted") from exc

@@ -12,7 +12,7 @@ from django.db.models import F
 from django.utils import timezone
 
 from apps.core.enums import LotArchiveReason
-from apps.core.exceptions import NotFoundProblemError
+from apps.lots.exceptions import LotNotFoundDomainError
 from apps.lots.models import Lot
 
 if TYPE_CHECKING:
@@ -44,18 +44,26 @@ def compute_lot_expires_at(created_at: datetime, auction_date: str | None) -> da
     return (base + _FALLBACK_TTL).astimezone(UTC)
 
 
-def archive_expired_lots_for_user(user: User, *, now: datetime | None = None) -> int:
-    """Archive user's active completed lots that have reached ``expires_at``."""
+def resolve_effective_archive_state(
+    lot: Lot,
+    *,
+    now: datetime | None = None,
+) -> tuple[bool, datetime | None, str | None]:
+    """Return effective ``(is_archived, archived_at, archived_reason)`` without DB writes."""
+    if lot.is_archived:
+        return True, lot.archived_at, lot.archived_reason
     current_time = now or timezone.now()
-    return Lot.objects.filter(
-        user=user,
-        completed_at__isnull=False,
-        deleted_at__isnull=True,
-        is_archived=False,
-        auto_archive_disabled=False,
-        expires_at__isnull=False,
-        expires_at__lte=current_time,
-    ).update(
+    if (
+        not lot.auto_archive_disabled
+        and lot.expires_at is not None
+        and lot.expires_at <= current_time
+    ):
+        return True, lot.expires_at, LotArchiveReason.EXPIRED
+    return False, None, None
+
+
+def _archive_expired_queryset(qs, current_time: datetime) -> int:
+    return qs.update(
         is_archived=True,
         archived_reason=LotArchiveReason.EXPIRED,
         archived_at=F("expires_at"),
@@ -63,16 +71,26 @@ def archive_expired_lots_for_user(user: User, *, now: datetime | None = None) ->
     )
 
 
+def archive_expired_lots(*, now: datetime | None = None) -> int:
+    """Archive all active completed lots across users that have reached ``expires_at``."""
+    current_time = now or timezone.now()
+    return _archive_expired_queryset(Lot.objects.expired_unarchived(current_time), current_time)
+
+
+def archive_expired_lots_for_user(user: User, *, now: datetime | None = None) -> int:
+    """Archive user's active completed lots that have reached ``expires_at``."""
+    current_time = now or timezone.now()
+    return _archive_expired_queryset(
+        Lot.objects.expired_unarchived(current_time).filter(user=user),
+        current_time,
+    )
+
+
 def _get_ready_user_lot(user: User, lot_id: uuid.UUID) -> Lot:
-    try:
-        return Lot.objects.select_for_update().get(
-            id=lot_id,
-            user=user,
-            completed_at__isnull=False,
-            deleted_at__isnull=True,
-        )
-    except Lot.DoesNotExist as exc:
-        raise NotFoundProblemError("Лот не найден", title="Лот не найден") from exc
+    lot = Lot.objects.ready_for_user(user).select_for_update().filter(id=lot_id).first()
+    if lot is None:
+        raise LotNotFoundDomainError("Лот не найден", title="Лот не найден")
+    return lot
 
 
 @transaction.atomic
@@ -126,13 +144,9 @@ def bulk_delete_lot_ids(
     """Idempotently soft-delete completed lots and return ``(deleted_ids, not_found_ids)``."""
     unique_ids = list(dict.fromkeys(lot_ids))
     deletable_ids = set(
-        Lot.objects.select_for_update()
-        .filter(
-            id__in=unique_ids,
-            user=user,
-            completed_at__isnull=False,
-            deleted_at__isnull=True,
-        )
+        Lot.objects.ready_for_user(user)
+        .select_for_update()
+        .filter(id__in=unique_ids)
         .values_list("id", flat=True)
     )
     if deletable_ids:

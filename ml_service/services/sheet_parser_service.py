@@ -6,6 +6,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from typing import Protocol
 
+import httpx
+
 from ml_service.domains.entities import (
     FastHeaderPreviewEntity,
     GatekeeperDecisionEntity,
@@ -16,9 +18,15 @@ from ml_service.domains.entities import (
 )
 from ml_service.domains.enums import LayoutComplexity, TaskStep
 from ml_service.factories.sheet_factory import SheetFactory
+from ml_service.infrastructure.gemini_schemas import EXTRACTION_CACHE_VERSION
+from ml_service.infrastructure.result_cache import build_sheet_cache_key
 
 StepCallback = Callable[[TaskStep, int], Awaitable[None]]
 PreviewCallback = Callable[[str], Awaitable[None]]
+
+
+class VisionUpstreamError(RuntimeError):
+    """Raised when the upstream Gemini Vision API fails over HTTP transport."""
 
 
 class ImageLoaderProtocol(Protocol):
@@ -51,9 +59,9 @@ class VisionClientProtocol(Protocol):
 
 
 class ResultCacheProtocol(Protocol):
-    async def get(self, sha256: str, filename: str = "") -> ParserResultEntity | None: ...
+    async def get(self, cache_key: str, filename: str = "") -> ParserResultEntity | None: ...
 
-    async def set(self, sha256: str, result: ParserResultEntity) -> None: ...
+    async def set(self, cache_key: str, result: ParserResultEntity) -> None: ...
 
 
 async def _notify_step(on_step: StepCallback | None, step: TaskStep, progress_pct: int) -> None:
@@ -71,12 +79,15 @@ class SheetParserService:
         vision_client: VisionClientProtocol,
         factory: SheetFactory,
         cache: ResultCacheProtocol,
+        *,
+        schema_version: str = EXTRACTION_CACHE_VERSION,
     ) -> None:
         self._image_loader = image_loader
         self._cropper = cropper
         self._vision_client = vision_client
         self._factory = factory
         self._cache = cache
+        self._schema_version = schema_version
 
     async def parse_bytes(
         self,
@@ -110,7 +121,10 @@ class SheetParserService:
         """Download an auction sheet image from URL and parse it."""
         started_at = time.perf_counter()
         await _notify_step(on_step, TaskStep.GATEKEEPER, 15)
-        loaded = await self._image_loader.load_from_url(url)
+        try:
+            loaded = await self._image_loader.load_from_url(url)
+        except TimeoutError as exc:
+            raise httpx.ReadTimeout("Remote image download timed out.") from exc
         return await self._parse_loaded(
             loaded,
             force_refresh=force_refresh,
@@ -119,39 +133,14 @@ class SheetParserService:
             started_at=started_at,
         )
 
-    async def _parse_loaded(
+    async def _run_extraction(
         self,
-        loaded: LoadedImageEntity,
+        sliced: SlicedSheetEntity,
+        complexity: LayoutComplexity,
         *,
-        force_refresh: bool,
         on_step: StepCallback | None,
         on_preview: PreviewCallback | None,
-        started_at: float,
-    ) -> ParserResultEntity:
-        if not force_refresh:
-            cached = await self._cache.get(loaded.sha256, filename=loaded.original_filename)
-            if cached is not None:
-                elapsed_ms = int((time.perf_counter() - started_at) * 1000)
-                await _notify_step(on_step, TaskStep.COMPLETED, 100)
-                return replace(
-                    cached,
-                    meta=replace(cached.meta, cached=True, processing_ms=elapsed_ms),
-                )
-
-        sliced = await self._cropper.slice_image_bytes(loaded.data)
-
-        await _notify_step(on_step, TaskStep.GATEKEEPER, 30)
-        decision = await self._vision_client.check_sheet(sliced.full_png)
-        if not decision.is_accepted:
-            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
-            await _notify_step(on_step, TaskStep.FAILED, 100)
-            return self._factory.build_rejected(
-                processing_ms=elapsed_ms,
-                sha256=loaded.sha256,
-                model_used=decision.model_used or self._vision_client.flash_model_name,
-                gatekeeper=decision,
-            )
-
+    ) -> tuple[RawExtractionEntity, FastHeaderPreviewEntity | None]:
         header_preview: FastHeaderPreviewEntity | None = None
 
         async def _run_fast_header() -> FastHeaderPreviewEntity | None:
@@ -164,18 +153,69 @@ class SheetParserService:
         header_task: asyncio.Task[FastHeaderPreviewEntity | None] = asyncio.create_task(
             _run_fast_header()
         )
-
         await _notify_step(on_step, TaskStep.GEMINI_OCR, 65)
         try:
-            extracted = await self._vision_client.extract_sheet(sliced, decision.complexity)
+            extracted = await self._vision_client.extract_sheet(sliced, complexity)
+        except httpx.HTTPError as exc:
+            raise VisionUpstreamError(f"Vision extraction HTTP error: {exc}") from exc
         finally:
-            if header_task is not None and not header_task.done():
+            if not header_task.done():
                 header_task.cancel()
-            if header_task is not None:
-                results = await asyncio.gather(header_task, return_exceptions=True)
-                if results and isinstance(results[0], FastHeaderPreviewEntity):
-                    header_preview = results[0]
+            results = await asyncio.gather(header_task, return_exceptions=True)
+            if results and isinstance(results[0], FastHeaderPreviewEntity):
+                header_preview = results[0]
+        return extracted, header_preview
 
+    async def _parse_loaded(
+        self,
+        loaded: LoadedImageEntity,
+        *,
+        force_refresh: bool,
+        on_step: StepCallback | None,
+        on_preview: PreviewCallback | None,
+        started_at: float,
+    ) -> ParserResultEntity:
+        ref_year, ref_month = self._factory.resolve_reference_date()
+        cache_key = build_sheet_cache_key(
+            loaded.sha256,
+            reference_year=ref_year,
+            reference_month=ref_month,
+            default_auction_strictness=self._factory.default_auction_strictness,
+            schema_version=self._schema_version,
+        )
+        if not force_refresh:
+            cached = await self._cache.get(cache_key, filename=loaded.original_filename)
+            if cached is not None:
+                elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+                await _notify_step(on_step, TaskStep.COMPLETED, 100)
+                return replace(
+                    cached,
+                    meta=replace(cached.meta, cached=True, processing_ms=elapsed_ms),
+                )
+
+        sliced = await self._cropper.slice_image_bytes(loaded.data)
+        await _notify_step(on_step, TaskStep.GATEKEEPER, 30)
+        try:
+            decision = await self._vision_client.check_sheet(sliced.full_png)
+        except httpx.HTTPError as exc:
+            raise VisionUpstreamError(f"Vision gatekeeper HTTP error: {exc}") from exc
+
+        if not decision.is_accepted:
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            await _notify_step(on_step, TaskStep.FAILED, 100)
+            return self._factory.build_rejected(
+                processing_ms=elapsed_ms,
+                sha256=loaded.sha256,
+                model_used=decision.model_used or self._vision_client.flash_model_name,
+                gatekeeper=decision,
+            )
+
+        extracted, header_preview = await self._run_extraction(
+            sliced,
+            decision.complexity,
+            on_step=on_step,
+            on_preview=on_preview,
+        )
         elapsed_ms = int((time.perf_counter() - started_at) * 1000)
         result = self._factory.build_result(
             extracted,
@@ -186,8 +226,9 @@ class SheetParserService:
             sha256=loaded.sha256,
             gatekeeper=decision,
             header_preview=header_preview,
+            reference_date=(ref_year, ref_month),
         )
 
-        await self._cache.set(loaded.sha256, result)
+        await self._cache.set(cache_key, result)
         await _notify_step(on_step, TaskStep.COMPLETED, 100)
         return result

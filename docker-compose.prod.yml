@@ -3,6 +3,8 @@ services:
     image: postgres:16-alpine
     container_name: yuzu_db_prod
     restart: always
+    networks:
+      - backend
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-yuzu_db}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
@@ -19,11 +21,24 @@ services:
     image: redis:7-alpine
     container_name: yuzu_redis_prod
     restart: always
-    command: ["redis-server", "--appendonly", "yes"]
+    networks:
+      - backend
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+    command:
+      - "redis-server"
+      - "--appendonly"
+      - "yes"
+      - "--requirepass"
+      - "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
     volumes:
       - redis_data_prod:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:
+        [
+          "CMD-SHELL",
+          "[ \"$$(REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping)\" = \"PONG\" ] || exit 1",
+        ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -32,15 +47,18 @@ services:
     build:
       context: ./ml_service
       dockerfile: Dockerfile
+      target: prod
     container_name: yuzu_ml_prod
     restart: always
+    networks:
+      - ml_internal
+      - egress
     env_file:
-      - path: ./.env
-        required: false
       - path: ./ml_service/.env
         required: false
     environment:
       ML_SERVICE_API_KEY: ${ML_SERVICE_API_KEY:?ML_SERVICE_API_KEY must be set}
+      GEMINI_API_KEYS: ${GEMINI_API_KEYS:-}
     expose:
       - "8001"
     volumes:
@@ -53,6 +71,10 @@ services:
       target: prod
     container_name: yuzu_api_prod
     restart: always
+    networks:
+      - edge
+      - backend
+      - ml_internal
     env_file:
       - path: ./.env
         required: false
@@ -60,11 +82,15 @@ services:
       - "8000"
     volumes:
       - media_data_prod:/app/media
+      - private_intake_prod:/app/private_intake
     environment:
       ENVIRONMENT: production
       DEBUG: "False"
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set (>= 32 chars)}
+      JWT_SIGNING_KEY: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY must be set (>= 32 chars)}
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:?ALLOWED_HOSTS must be set}
+      DJANGO_ADMIN_URL: ${DJANGO_ADMIN_URL:-admin/}
+      ADMIN_ALLOWED_IPS: ${ADMIN_ALLOWED_IPS:-}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://${TRAEFIK_HOST}}
       CORS_ALLOW_ALL_ORIGINS: "False"
       POSTGRES_HOST: db
@@ -72,13 +98,15 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-yuzu_db}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/0
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/0
+      PRIVATE_INTAKE_ROOT: /app/private_intake
       ML_SERVICE_URL: http://ml:8001
+      ML_SERVICE_TIMEOUT_SEC: ${ML_SERVICE_TIMEOUT_SEC:-65.0}
       ML_SERVICE_API_KEY: ${ML_SERVICE_API_KEY:?ML_SERVICE_API_KEY must be set}
       LOT_PARSER_BACKEND: ${LOT_PARSER_BACKEND:-ml}
       FARPOST_CAPTCHA_OCR_ENABLED: ${FARPOST_CAPTCHA_OCR_ENABLED:-true}
-      CBRF_FALLBACK_RATES: ${CBRF_FALLBACK_RATES:-{"eur_rub":95.0,"usd_rub":85.0,"jpy_rub":0.5825,"cbrf_date":"12.11.2026"}}
+      CBRF_FALLBACK_RATES: ${CBRF_FALLBACK_RATES:-{"eur_rub":95.0,"usd_rub":85.0,"jpy_rub":0.5825,"cbrf_date":"14.11.2026"}}
       RUN_MIGRATIONS: "true"
     depends_on:
       db:
@@ -86,9 +114,9 @@ services:
       redis:
         condition: service_healthy
       ml:
-        condition: service_started
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -f -H 'Host: ${HEALTHCHECK_HOST:-localhost}' http://127.0.0.1:8000/api/v1/health || exit 1"]
+      test: ["CMD-SHELL", "curl -f -H 'Host: ${HEALTHCHECK_HOST:-${TRAEFIK_HOST:-localhost}}' http://127.0.0.1:8000/api/v1/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -101,16 +129,22 @@ services:
       target: prod
     container_name: yuzu_worker_prod
     restart: always
+    networks:
+      - backend
+      - ml_internal
+      - egress
     command: ["celery", "-A", "config", "worker", "--loglevel=info", "--concurrency=4"]
     env_file:
       - path: ./.env
         required: false
     volumes:
       - media_data_prod:/app/media
+      - private_intake_prod:/app/private_intake
     environment:
       ENVIRONMENT: production
       DEBUG: "False"
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set (>= 32 chars)}
+      JWT_SIGNING_KEY: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY must be set (>= 32 chars)}
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:?ALLOWED_HOSTS must be set}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://${TRAEFIK_HOST}}
       CORS_ALLOW_ALL_ORIGINS: "False"
@@ -119,13 +153,15 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-yuzu_db}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/0
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/0
+      PRIVATE_INTAKE_ROOT: /app/private_intake
       ML_SERVICE_URL: http://ml:8001
+      ML_SERVICE_TIMEOUT_SEC: ${ML_SERVICE_TIMEOUT_SEC:-65.0}
       ML_SERVICE_API_KEY: ${ML_SERVICE_API_KEY:?ML_SERVICE_API_KEY must be set}
       LOT_PARSER_BACKEND: ${LOT_PARSER_BACKEND:-ml}
       FARPOST_CAPTCHA_OCR_ENABLED: ${FARPOST_CAPTCHA_OCR_ENABLED:-true}
-      CBRF_FALLBACK_RATES: ${CBRF_FALLBACK_RATES:-{"eur_rub":95.0,"usd_rub":85.0,"jpy_rub":0.5825,"cbrf_date":"12.11.2026"}}
+      CBRF_FALLBACK_RATES: ${CBRF_FALLBACK_RATES:-{"eur_rub":95.0,"usd_rub":85.0,"jpy_rub":0.5825,"cbrf_date":"14.11.2026"}}
       RUN_MIGRATIONS: "false"
     depends_on:
       db:
@@ -133,7 +169,7 @@ services:
       redis:
         condition: service_healthy
       ml:
-        condition: service_started
+        condition: service_healthy
       api:
         condition: service_healthy
     healthcheck:
@@ -150,6 +186,8 @@ services:
       target: prod
     container_name: yuzu_beat_prod
     restart: always
+    networks:
+      - backend
     command: ["celery", "-A", "config", "beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"]
     env_file:
       - path: ./.env
@@ -158,6 +196,7 @@ services:
       ENVIRONMENT: production
       DEBUG: "False"
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set (>= 32 chars)}
+      JWT_SIGNING_KEY: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY must be set (>= 32 chars)}
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:?ALLOWED_HOSTS must be set}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://${TRAEFIK_HOST}}
       CORS_ALLOW_ALL_ORIGINS: "False"
@@ -166,9 +205,9 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-yuzu_db}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CBRF_FALLBACK_RATES: ${CBRF_FALLBACK_RATES:-{"eur_rub":95.0,"usd_rub":85.0,"jpy_rub":0.5825,"cbrf_date":"12.11.2026"}}
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/0
+      CBRF_FALLBACK_RATES: ${CBRF_FALLBACK_RATES:-{"eur_rub":95.0,"usd_rub":85.0,"jpy_rub":0.5825,"cbrf_date":"14.11.2026"}}
       RUN_MIGRATIONS: "false"
     depends_on:
       db:
@@ -189,10 +228,10 @@ services:
     container_name: yuzu_frontend_prod
     restart: always
     networks:
-      - default
+      - edge
       - traefik-net
     expose:
-      - "80"
+      - "8080"
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=traefik-net"
@@ -201,25 +240,34 @@ services:
       - "traefik.http.routers.yuzu.tls=true"
       - "traefik.http.routers.yuzu.tls.certresolver=letsencrypt"
       - "traefik.http.routers.yuzu.priority=10"
-      - "traefik.http.services.yuzu.loadbalancer.server.port=80"
-    volumes:
-      - media_data_prod:/app/media:ro
+      - "traefik.http.services.yuzu.loadbalancer.server.port=8080"
     environment:
-      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+      SITE_ADDRESS: ${SITE_ADDRESS:-:8080}
       API_UPSTREAM: http://api:8000
-      MEDIA_ROOT_DIR: /app/media
-      HEALTHCHECK_HOST: ${HEALTHCHECK_HOST:-localhost}
+      ADMIN_PATH: ${ADMIN_PATH:-/admin*}
+      HEALTHCHECK_HOST: ${HEALTHCHECK_HOST:-${TRAEFIK_HOST:-localhost}}
     depends_on:
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "[ \"$$(wget -qO- --header='Host: ${HEALTHCHECK_HOST:-localhost}' http://127.0.0.1:80/healthz)\" = \"OK\" ] || exit 1"]
+      test: ["CMD-SHELL", "[ \"$$(wget -qO- --header='Host: ${HEALTHCHECK_HOST:-${TRAEFIK_HOST:-localhost}}' http://127.0.0.1:8080/healthz)\" = \"OK\" ] || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3
       start_period: 5s
 
 networks:
+  edge:
+    driver: bridge
+    internal: true
+  backend:
+    driver: bridge
+    internal: true
+  ml_internal:
+    driver: bridge
+    internal: true
+  egress:
+    driver: bridge
   traefik-net:
     external: true
 
@@ -227,4 +275,5 @@ volumes:
   postgres_data_prod:
   redis_data_prod:
   media_data_prod:
+  private_intake_prod:
   ml_cache_prod:

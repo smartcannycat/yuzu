@@ -1,29 +1,8 @@
-export interface UserRegisterRequest {
-  email: string
-  password: string
-  name?: string | null
-}
+import type { components } from '@/types/api.generated'
 
-export interface UserLoginRequest {
-  email: string
-  password: string
-}
+type Schemas = components['schemas']
 
-export interface TokenRefreshRequest {
-  refresh_token: string
-}
-
-export interface UserProfileResponse {
-  user_id: string
-  email: string
-  name: string | null
-  created_at: string
-}
-
-export interface AuthTokensResponse {
-  access_token: string
-  refresh_token: string
-  token_type: 'bearer'
-  expires_in_sec: number
-  user: UserProfileResponse
-}
+export type UserRegisterRequest = Schemas['UserRegisterRequest']
+export type UserLoginRequest = Schemas['UserLoginRequest']
+export type UserProfileResponse = Schemas['UserProfileResponse']
+export type AuthTokensResponse = Schemas['AuthTokensResponse']

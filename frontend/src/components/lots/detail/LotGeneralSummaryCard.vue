@@ -2,14 +2,10 @@
 import { SlidersHorizontal } from '@lucide/vue'
 import { computed } from 'vue'
 
-import {
-  VERDICT_META,
-  formatDromPriceRange,
-  formatRoiPercent,
-} from '@/components/lots/detail/lotPresentation'
+import { VERDICT_META } from '@/components/lots/detail/lotPresentation'
+import { buildLotFinancialSummary } from '@/components/lots/detail/lotSummaryHelpers'
 import { BaseBadge, BaseCard } from '@/components/ui'
 import type { LotDetailResponse } from '@/types/api'
-import { formatRub } from '@/utils/formatters'
 
 interface Props {
   detail: LotDetailResponse
@@ -22,11 +18,7 @@ const emit = defineEmits<{
 }>()
 
 const badgeVariant = computed(() => VERDICT_META[props.detail.verdict.verdict].badgeVariant)
-const turnkeyCostRub = computed(() => props.detail.economics.wise_cost_ladder.turnkey_cost_rub)
-const dromRangeText = computed(() =>
-  formatDromPriceRange(props.detail.market.price_min_rub, props.detail.market.price_max_rub),
-)
-const roiFormatted = computed(() => formatRoiPercent(props.detail.verdict.benefit_percentage))
+const summary = computed(() => buildLotFinancialSummary(props.detail))
 </script>
 
 <template>
@@ -37,7 +29,7 @@ const roiFormatted = computed(() => formatRoiPercent(props.detail.verdict.benefi
         <div
           class="text-text-primary mt-1 text-[30px] leading-tight font-semibold tracking-[-0.02em] whitespace-nowrap tabular-nums"
         >
-          {{ formatRub(turnkeyCostRub) }}
+          {{ summary.turnkeyFormatted }}
         </div>
       </div>
 
@@ -48,31 +40,23 @@ const roiFormatted = computed(() => formatRoiPercent(props.detail.verdict.benefi
 
     <div class="border-border mt-4 flex flex-col gap-2 border-t pt-3.5 text-[14px]">
       <div class="flex items-center justify-between gap-3">
-        <span class="text-text-secondary"
-          >Рынок РФ (Drom · {{ detail.market.analogs_count }} авто)</span
-        >
+        <span class="text-text-secondary">{{ summary.marketLabel }}</span>
         <span class="text-text-primary shrink-0 font-semibold whitespace-nowrap tabular-nums">
-          {{ formatRub(detail.market.market_price_rf_rub) }}
+          {{ summary.marketPriceFormatted }}
         </span>
       </div>
 
-      <div v-if="dromRangeText" class="flex items-center justify-between gap-3 text-[13px]">
-        <span class="text-text-secondary min-w-0"
-          >Разброс в наличии ({{ detail.market.search_region_ru }})</span
-        >
+      <div v-if="summary.dromRangeText" class="flex items-center justify-between gap-3 text-[13px]">
+        <span class="text-text-secondary min-w-0">{{ summary.dromRangeLabel }}</span>
         <span class="text-text-secondary shrink-0 whitespace-nowrap tabular-nums">
-          {{ dromRangeText }}
+          {{ summary.dromRangeText }}
         </span>
       </div>
 
       <div class="flex items-center justify-between gap-3">
         <span class="text-text-secondary">Ремонт в смете Farpost</span>
         <span class="text-text-primary shrink-0 font-medium whitespace-nowrap tabular-nums">
-          {{
-            detail.economics.is_repairs_included
-              ? formatRub(detail.economics.farpost_repair.grand_total_repair_rub)
-              : 'Исключён (0 ₽)'
-          }}
+          {{ summary.repairFormatted }}
         </span>
       </div>
 
@@ -82,7 +66,7 @@ const roiFormatted = computed(() => formatRoiPercent(props.detail.verdict.benefi
           class="shrink-0 font-semibold whitespace-nowrap tabular-nums"
           :class="detail.verdict.net_benefit_rub >= 0 ? 'text-success' : 'text-danger'"
         >
-          {{ roiFormatted }}
+          {{ summary.roiFormatted }}
         </span>
       </div>
     </div>

@@ -1,7 +1,16 @@
+from copy import deepcopy
+from datetime import date
+from unittest.mock import patch
+
 import pytest
 from django.test import Client
 
 from apps.lots.models import Lot
+from apps.lots.starter_lots import (
+    _load_starter_fixtures,
+    _normalize_lot_auction_date,
+    _seed_lot_from_fixture,
+)
 
 
 @pytest.mark.django_db
@@ -106,3 +115,38 @@ def test_starter_lots_are_isolated_per_user(api_client: Client, user_factory) ->
     fresh_lots = Lot.objects.filter(user__email="fresh@example.com")
     assert fresh_lots.count() == 3
     assert not fresh_lots.filter(user__email="existing@example.com").exists()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("raw_date", "expected"),
+    [
+        ("2026-11-10", "10.11.2026"),
+        (date(2026, 11, 10), "10.11.2026"),
+        ("10.11.2026", "10.11.2026"),
+        (None, None),
+    ],
+)
+def test_starter_lots_normalizes_lot_auction_date_to_dd_mm_yyyy_string(
+    user_factory,
+    raw_date: str | date | None,
+    expected: str | None,
+) -> None:
+    from django.utils import timezone
+
+    normalized = _normalize_lot_auction_date(raw_date)
+    assert normalized == expected
+    if normalized is not None:
+        assert isinstance(normalized, str)
+        assert not isinstance(normalized, date)
+
+    user = user_factory(email=f"date-{type(raw_date).__name__}@example.com")
+    base_fixture = deepcopy(next(iter(_load_starter_fixtures().values())))
+    base_fixture["lot_fields"]["auction_date"] = normalized
+    with patch("apps.lots.starter_lots.attach_starter_sheet_media"):
+        lot = _seed_lot_from_fixture(user, timezone.now(), base_fixture)
+    lot.refresh_from_db()
+    assert lot.auction_date == expected
+    if expected is not None:
+        assert isinstance(lot.auction_date, str)
+        assert lot.expires_at is not None

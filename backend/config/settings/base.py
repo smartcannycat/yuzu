@@ -17,12 +17,30 @@ ALEADO_PASSWORD = app_settings.ALEADO_PASSWORD
 ALEADO_TIMEOUT_SEC = app_settings.ALEADO_TIMEOUT_SEC
 ALEADO_REQUEST_INTERVAL_SEC = app_settings.ALEADO_REQUEST_INTERVAL_SEC
 ALEADO_VERIFY_CANDIDATES = app_settings.ALEADO_VERIFY_CANDIDATES
+SCRAPER_PROXY_URLS = list(app_settings.SCRAPER_PROXY_URLS)
+SCRAPER_PROXY_BAN_SEC = app_settings.SCRAPER_PROXY_BAN_SEC
+SCRAPER_TIMEOUT_SEC = app_settings.SCRAPER_TIMEOUT_SEC
+SCRAPER_REQUEST_INTERVAL_SEC = app_settings.SCRAPER_REQUEST_INTERVAL_SEC
+SCRAPER_REQUEST_JITTER_SEC = app_settings.SCRAPER_REQUEST_JITTER_SEC
+FARPOST_BUDGET_SEC = app_settings.FARPOST_BUDGET_SEC
+FARPOST_COOLDOWN_SEC = app_settings.FARPOST_COOLDOWN_SEC
+FARPOST_CACHE_TTL_HOURS = app_settings.FARPOST_CACHE_TTL_HOURS
+FARPOST_CAPTCHA_MAX_ATTEMPTS = app_settings.FARPOST_CAPTCHA_MAX_ATTEMPTS
+FARPOST_CAPTCHA_SOLVE_BUDGET_SEC = app_settings.FARPOST_CAPTCHA_SOLVE_BUDGET_SEC
+FARPOST_CAPTCHA_MAX_WORKERS = app_settings.FARPOST_CAPTCHA_MAX_WORKERS
+FARPOST_CAPTCHA_OCR_ENABLED = app_settings.FARPOST_CAPTCHA_OCR_ENABLED
+FARPOST_CAPTCHA_OCR_COMMAND = app_settings.FARPOST_CAPTCHA_OCR_COMMAND
+CBRF_TIMEOUT_SEC = app_settings.CBRF_TIMEOUT_SEC
+CBRF_JPY_SPREAD = app_settings.CBRF_JPY_SPREAD
+CBRF_FALLBACK_RATES = app_settings.CBRF_FALLBACK_RATES
 
 SECRET_KEY = app_settings.SECRET_KEY
 DEBUG = app_settings.DEBUG
 ALLOWED_HOSTS = list(app_settings.ALLOWED_HOSTS)
 if (app_settings.DEBUG or app_settings.is_testing) and "testserver" not in ALLOWED_HOSTS:
     ALLOWED_HOSTS.append("testserver")
+DJANGO_ADMIN_URL = app_settings.DJANGO_ADMIN_URL
+ADMIN_ALLOWED_IPS = list(app_settings.ADMIN_ALLOWED_IPS)
 
 DJANGO_APPS = [
     "django.contrib.admin",
@@ -54,15 +72,16 @@ AUTH_USER_MODEL = "users.User"
 
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
+    "apps.core.middleware.ApiProblemDetailsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
+    "apps.core.middleware.AdminHardeningMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    "apps.core.middleware.ApiProblemDetailsMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -142,16 +161,46 @@ media_root_path = Path(app_settings.MEDIA_ROOT)
 MEDIA_URL = app_settings.MEDIA_URL
 MEDIA_ROOT = media_root_path if media_root_path.is_absolute() else BASE_DIR / media_root_path
 
+private_intake_path = Path(app_settings.PRIVATE_INTAKE_ROOT)
+PRIVATE_INTAKE_ROOT = (
+    private_intake_path if private_intake_path.is_absolute() else BASE_DIR / private_intake_path
+)
+
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+        "OPTIONS": {
+            "location": MEDIA_ROOT,
+        },
+    },
+    "private_intake": {
+        "BACKEND": "apps.core.storage.PrivateIntakeStorage",
+        "OPTIONS": {
+            "location": PRIVATE_INTAKE_ROOT,
+            "base_url": None,
+        },
+    },
+    "staticfiles": {
+        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+    },
+}
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # CORS & CSRF
 CORS_ALLOWED_ORIGINS = app_settings.CORS_ALLOWED_ORIGINS
 CORS_ALLOW_ALL_ORIGINS = app_settings.CORS_ALLOW_ALL_ORIGINS
+CORS_ALLOW_CREDENTIALS = True
 CSRF_TRUSTED_ORIGINS = list(app_settings.CSRF_TRUSTED_ORIGINS) or [
     origin
     for origin in app_settings.CORS_ALLOWED_ORIGINS
     if origin.startswith(("http://", "https://"))
 ]
+
+# Refresh cookie settings
+JWT_REFRESH_COOKIE_NAME = "yuzu_refresh_token"
+JWT_REFRESH_COOKIE_PATH = "/api/v1/auth/"
+JWT_REFRESH_COOKIE_SAMESITE = "Lax"
 
 # Production reverse-proxy and cookie hardening
 if app_settings.is_production:
@@ -193,8 +242,13 @@ CELERY_BEAT_SCHEDULE = {
         "task": "apps.lots.tasks.purge_stale_media_task",
         "schedule": 3600.0,
     },
+    "archive-expired-lots": {
+        "task": "apps.lots.tasks.archive_expired_lots_task",
+        "schedule": 300.0,
+    },
 }
 
+BATCH_RECOVERY_STALE_MINUTES = 15
 RATE_LIMIT_ENABLED = app_settings.RATE_LIMIT_ENABLED and not app_settings.is_testing
 MEDIA_PURGE_DELETED_AFTER_DAYS = app_settings.MEDIA_PURGE_DELETED_AFTER_DAYS
 MEDIA_PURGE_BATCH_ORIGINALS_AFTER_HOURS = app_settings.MEDIA_PURGE_BATCH_ORIGINALS_AFTER_HOURS

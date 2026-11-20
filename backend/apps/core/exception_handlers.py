@@ -2,6 +2,12 @@ import logging
 from typing import Any
 
 from django.conf import settings
+from django.core.exceptions import (
+    RequestDataTooBig,
+    SuspiciousOperation,
+    TooManyFieldsSent,
+    TooManyFilesSent,
+)
 from django.http import Http404, HttpRequest, HttpResponse
 from ninja.errors import AuthenticationError, HttpError, ValidationError
 from ninja_extra import NinjaExtraAPI
@@ -19,6 +25,7 @@ _STATUS_TITLES: dict[int, str] = {
     404: "Ресурс не найден",
     405: "Метод не поддерживается",
     409: "Конфликт данных",
+    413: "Превышен размер запроса",
     422: "Ошибка валидации параметров",
     429: "Слишком много запросов",
     500: "Внутренняя ошибка сервера",
@@ -186,6 +193,29 @@ def register_exception_handlers(api: NinjaExtraAPI) -> None:
             title="Ресурс не найден",
             detail="Запрашиваемый ресурс не найден",
             error_type=f"{ERROR_TYPE_BASE}/not-found",
+        )
+
+    @api.exception_handler(SuspiciousOperation)
+    def handle_suspicious_operation(
+        request: HttpRequest,
+        exc: SuspiciousOperation,
+    ) -> HttpResponse:
+        if isinstance(exc, (RequestDataTooBig, TooManyFieldsSent, TooManyFilesSent)):
+            return _problem_response(
+                api,
+                request,
+                status=413,
+                title="Превышен размер запроса",
+                detail="Размер тела запроса или количество параметров превышает допустимый лимит",
+                error_type=f"{ERROR_TYPE_BASE}/payload-too-large",
+            )
+        return _problem_response(
+            api,
+            request,
+            status=400,
+            title="Некорректный запрос",
+            detail="Запрос отклонен системой безопасности",
+            error_type=f"{ERROR_TYPE_BASE}/bad-request",
         )
 
     @api.exception_handler(Exception)

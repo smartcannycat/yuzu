@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
+import uuid
+import weakref
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from django.db import transaction
 from django.db.models import Max
+from PIL import Image, UnidentifiedImageError
 
 from apps.core.enums import BatchStatus, ItemProcessingStatus, TaskStep
 from apps.core.exceptions import (
@@ -14,44 +18,98 @@ from apps.core.exceptions import (
     ConflictProblemError,
     NotFoundProblemError,
 )
+from apps.lots.media import (
+    MAX_IMAGE_PIXELS,
+    ensure_heif_registered,
+    ensure_safe_image_dimensions,
+)
 from apps.lots.models import Batch, BatchItem, Lot
+from apps.lots.tasks import process_batch_task
 
 if TYPE_CHECKING:
-    import uuid
-
     from django.core.files.uploadedfile import UploadedFile
 
     from apps.users.models import User
+
+logger = logging.getLogger(__name__)
 
 _ALLOWED_MIME_TYPES = frozenset(
     {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
 )
 _ALLOWED_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"})
+_ALLOWED_PIL_FORMATS = ("JPEG", "PNG", "WEBP", "HEIF")
 _MAX_FILE_SIZE = 15 * 1024 * 1024
 _MAX_FILES_PER_UPLOAD = 10
 _MAX_FILES_PER_BATCH = 20
 _POLL_INTERVAL_MS = 1500
 _BATCH_TERMINAL_STATUSES = frozenset({BatchStatus.COMPLETED, BatchStatus.FAILED})
 
+Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
 
-def _validate_single_file(upload: UploadedFile) -> None:
-    name = upload.name or ""
-    ext = Path(name).suffix.lower()
-    content_type = (upload.content_type or "").lower()
-    allowed = content_type in _ALLOWED_MIME_TYPES if content_type else ext in _ALLOWED_EXTENSIONS
-    if not allowed:
+
+def _sanitize_original_filename(raw_name: str | None) -> str:
+    cleaned = (raw_name or "").replace("\\", "/").strip()
+    leaf = Path(cleaned).name.strip()
+    if not leaf or leaf in {".", ".."}:
+        return "sheet"
+    return leaf[:255]
+
+
+def _verify_uploaded_image(upload: UploadedFile, safe_name: str) -> None:
+    ensure_heif_registered()
+    Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
+    try:
+        upload.seek(0)
+        with Image.open(upload, formats=_ALLOWED_PIL_FORMATS) as img:
+            if img.format not in _ALLOWED_PIL_FORMATS:
+                raise UnidentifiedImageError("Unsupported image format")
+            ensure_safe_image_dimensions(img)
+            img.verify()
+    except Image.DecompressionBombError as exc:
         raise BadRequestProblemError(
-            f"Файл «{name}» имеет недопустимый формат. Разрешены: JPEG, PNG, WEBP, HEIC, HEIF",
+            f"Изображение «{safe_name}» превышает допустимое разрешение",
+            title="Слишком большое изображение",
+        ) from exc
+    except (UnidentifiedImageError, OSError, SyntaxError, ValueError) as exc:
+        raise BadRequestProblemError(
+            f"Файл «{safe_name}» поврежден или не является корректным изображением",
+            title="Некорректный файл изображения",
+        ) from exc
+    finally:
+        upload.seek(0)
+
+
+def _validate_single_file(upload: UploadedFile) -> tuple[UploadedFile, str, str]:
+    safe_name = _sanitize_original_filename(upload.name)
+    raw_leaf = Path((upload.name or "sheet").replace("\\", "/").strip()).name.strip()
+    ext = Path(raw_leaf).suffix.lower()
+    content_type = (upload.content_type or "").split(";", 1)[0].strip().lower()
+
+    ext_allowed = ext in _ALLOWED_EXTENSIONS
+    mime_allowed = content_type in _ALLOWED_MIME_TYPES if content_type else True
+    if not (ext_allowed and mime_allowed):
+        raise BadRequestProblemError(
+            f"Файл «{safe_name}» имеет недопустимый формат. Разрешены: JPEG, PNG, WEBP, HEIC, HEIF",
             title="Недопустимый формат файла",
         )
-    if upload.size is None or upload.size > _MAX_FILE_SIZE:
+    if upload.size is None or upload.size <= 0:
         raise BadRequestProblemError(
-            f"Файл «{name}» превышает максимальный размер {_MAX_FILE_SIZE // (1024 * 1024)} МБ",
+            f"Файл «{safe_name}» пуст или имеет некорректный размер",
+            title="Некорректный размер файла",
+        )
+    if upload.size > _MAX_FILE_SIZE:
+        raise BadRequestProblemError(
+            f"Файл «{safe_name}» превышает максимальный размер "
+            f"{_MAX_FILE_SIZE // (1024 * 1024)} МБ",
             title="Превышен размер файла",
         )
+    _verify_uploaded_image(upload, safe_name)
+    return upload, safe_name, ext
 
 
-def _validate_upload_files(files: list[UploadedFile]) -> None:
+def _validate_upload_files(
+    files: list[UploadedFile],
+) -> list[tuple[UploadedFile, str, str]]:
     if not files:
         raise BadRequestProblemError(
             "Не выбрано ни одного файла",
@@ -62,8 +120,7 @@ def _validate_upload_files(files: list[UploadedFile]) -> None:
             f"Можно загрузить не более {_MAX_FILES_PER_UPLOAD} файлов за один раз",
             title="Превышен лимит файлов",
         )
-    for upload in files:
-        _validate_single_file(upload)
+    return [_validate_single_file(upload) for upload in files]
 
 
 def _next_file_index(batch: Batch) -> int:
@@ -71,42 +128,82 @@ def _next_file_index(batch: Batch) -> int:
     return (max_index if max_index is not None else -1) + 1
 
 
+def _delete_storage_file(storage: Any, name: str) -> None:
+    try:
+        if name and storage.exists(name):
+            storage.delete(name)
+    except OSError:
+        logger.warning("Failed to remove rolled-back batch upload %s", name, exc_info=True)
+
+
+class _RollbackSentinel:
+    """Reference-counted sentinel used to trigger cleanup on transaction rollback."""
+
+
+def _register_file_rollback_cleanup(storage: Any, name: str) -> weakref.finalize:
+    """Register per-file cleanup that executes if any enclosing atomic block rolls back."""
+    sentinel = _RollbackSentinel()
+    finalizer = weakref.finalize(sentinel, _delete_storage_file, storage, name)
+
+    def _on_commit() -> None:
+        finalizer.detach()
+        # Keep sentinel referenced by the on_commit closure until commit or rollback drops it.
+        _ = sentinel
+
+    transaction.on_commit(_on_commit)
+    return finalizer
+
+
+def _cleanup_saved_files(saved_files: list[tuple[Any, str, weakref.finalize]]) -> None:
+    for storage, name, finalizer in saved_files:
+        finalizer.detach()
+        _delete_storage_file(storage, name)
+
+
 def _create_batch_items(
     batch: Batch,
     user: User,
-    files: list[UploadedFile],
+    validated_files: list[tuple[UploadedFile, str, str]],
     *,
     start_index: int = 0,
 ) -> None:
-    for offset, upload in enumerate(files):
-        upload.seek(0)
-        lot = Lot.objects.create(user=user)
-        item = BatchItem.objects.create(
-            batch=batch,
-            lot=lot,
-            file_index=start_index + offset,
-            original_filename=upload.name,
-            status=ItemProcessingStatus.QUEUED,
-            current_step=TaskStep.GATEKEEPER,
-        )
-        item.original_file.save(upload.name, upload, save=True)
+    saved_files: list[tuple[Any, str, weakref.finalize]] = []
+    try:
+        for offset, (upload, safe_name, ext) in enumerate(validated_files):
+            upload.seek(0)
+            lot = Lot.objects.create(user=user)
+            item = BatchItem.objects.create(
+                batch=batch,
+                lot=lot,
+                file_index=start_index + offset,
+                original_filename=safe_name,
+                status=ItemProcessingStatus.QUEUED,
+                current_step=TaskStep.GATEKEEPER,
+            )
+            storage_name = f"{uuid.uuid4().hex}{ext}"
+            item.original_file.save(storage_name, upload, save=False)
+            finalizer = _register_file_rollback_cleanup(
+                item.original_file.storage,
+                item.original_file.name,
+            )
+            saved_files.append((item.original_file.storage, item.original_file.name, finalizer))
+            item.save(update_fields=["original_file", "updated_at"])
+    except BaseException:
+        _cleanup_saved_files(saved_files)
+        raise
 
 
 def _schedule_batch_pipeline(batch_id: uuid.UUID) -> None:
-    from apps.lots.tasks import process_batch_task
-
     transaction.on_commit(lambda: process_batch_task.delay(str(batch_id)))
 
 
 @transaction.atomic
 def enqueue_batch(user: User, files: list[UploadedFile]) -> Batch:
     """Validate uploaded sheets, persist a new queued batch, and schedule processing."""
-    from apps.lots import pipeline as pipeline_pkg
-
-    _validate_upload_files(files)
+    validated_files = _validate_upload_files(files)
     batch = Batch.objects.create(user=user, status=BatchStatus.QUEUED)
-    _create_batch_items(batch, user, files, start_index=0)
-    pipeline_pkg._schedule_batch_pipeline(batch.id)
+    _create_batch_items(batch, user, validated_files, start_index=0)
+    _schedule_batch_pipeline(batch.id)
     return batch
 
 
@@ -117,9 +214,7 @@ def append_items_to_batch(
     files: list[UploadedFile],
 ) -> Batch:
     """Append additional auction sheets to an active or partial-failed batch."""
-    from apps.lots import pipeline as pipeline_pkg
-
-    _validate_upload_files(files)
+    validated_files = _validate_upload_files(files)
     try:
         batch = Batch.objects.select_for_update().get(id=batch_id, user=user)
     except Batch.DoesNotExist as exc:
@@ -129,16 +224,16 @@ def append_items_to_batch(
             "Пачка уже завершена. Откройте новую пачку через POST /api/v1/lots/batches",
             title="Пачка завершена",
         )
-    if batch.items.count() + len(files) > _MAX_FILES_PER_BATCH:
+    if batch.items.count() + len(validated_files) > _MAX_FILES_PER_BATCH:
         raise BadRequestProblemError(
             f"В одной пачке может быть не более {_MAX_FILES_PER_BATCH} файлов",
             title="Превышен лимит файлов в пачке",
         )
-    _create_batch_items(batch, user, files, start_index=_next_file_index(batch))
+    _create_batch_items(batch, user, validated_files, start_index=_next_file_index(batch))
     if batch.status == BatchStatus.PARTIAL_FAILED:
         batch.status = BatchStatus.QUEUED
         batch.save(update_fields=["status", "updated_at"])
-        pipeline_pkg._schedule_batch_pipeline(batch.id)
+        _schedule_batch_pipeline(batch.id)
     return batch
 
 

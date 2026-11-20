@@ -11,19 +11,15 @@ from typing import TYPE_CHECKING
 
 from apps.core.enums import WorkType
 from apps.integrations.farpost.parser import PartOffer, matches_paint_code
+from apps.integrations.shared.aliases import FARPOST_MODEL_TRIM_RE
+from apps.integrations.shared.katashiki import extract_farpost_body_code
 
 if TYPE_CHECKING:
     from apps.lots.models import Lot
 
 logger = logging.getLogger(__name__)
 
-_MODEL_TRIM_RE = re.compile(
-    r"\b(?:hv|hybrid|phev|phv|e:hev|e-power|epower|4wd|awd|2wd|"
-    r"custom|crosstar|spada|g4|modulo|nismo|gr\s*sport)\b",
-    re.I,
-)
-_BODY_CODE_RE = re.compile(r"[A-Z]{1,5}\d{1,4}[A-Z]{0,2}")
-_VIN_RE = re.compile(r"^[A-HJ-NPR-Z0-9]{17}$")
+_SEVERITY_DEFECT_CODES = frozenset({"A", "U", "W", "S", "C", "Y", "G", "P"})
 
 # Each panel has a single query identity; fixed panels require restoration instead.
 PANELS = {
@@ -60,31 +56,16 @@ def repair_matrix() -> dict:
 
 
 def _search_model(model: str) -> str:
-    cleaned = re.sub(r"\s+", " ", _MODEL_TRIM_RE.sub(" ", model or "")).strip(" -+/")
+    cleaned = re.sub(r"\s+", " ", FARPOST_MODEL_TRIM_RE.sub(" ", model or "")).strip(" -+/")
     return cleaned or (model or "").strip()
 
 
 def _body_code(lot: Lot) -> str:
-    # Prefer the raw frame/chassis series (e.g., GB5, GE6, NRE210) over full katashiki codes.
-    candidates: list[str] = []
-    for value in (lot.frame_id, lot.chassis_number):
-        upper = (value or "").upper().strip()
-        if not upper:
-            continue
-        if "-" not in upper and _VIN_RE.fullmatch(upper):
-            # 17-char VINs do not start with a searchable Farpost chassis series.
-            continue
-        candidates.append(upper.split("-", 1)[0])
-    if lot.model_code:
-        upper = lot.model_code.upper().strip()
-        if "-" in upper:
-            candidates.append(upper.split("-", 1)[1])
-        candidates.append(upper)
-    for candidate in candidates:
-        match = _BODY_CODE_RE.search(candidate)
-        if match:
-            return match[0]
-    return ""
+    return extract_farpost_body_code(
+        frame_id=lot.frame_id,
+        chassis_number=lot.chassis_number,
+        model_code=lot.model_code,
+    )
 
 
 def _panel_codes(defects: list) -> dict[str, set[str]]:
@@ -92,9 +73,13 @@ def _panel_codes(defects: list) -> dict[str, set[str]]:
     for defect in defects:
         tokens = re.findall(r"XX|[A-Z]\d*", (defect.raw_code or "").upper())
         if not tokens:
-            tokens = list(defect.defect_types)
+            tokens = [
+                str(code).strip().upper() for code in defect.defect_types if str(code).strip()
+            ]
         tokens = [
-            f"{code}{defect.severity}" if defect.severity and code in "AUWSCYGP" else code
+            f"{code}{defect.severity}"
+            if defect.severity and code in _SEVERITY_DEFECT_CODES
+            else code
             for code in tokens
         ]
         panels.setdefault(defect.panel_id, set()).update(tokens or ["UNKNOWN"])

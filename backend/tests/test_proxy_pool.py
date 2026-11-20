@@ -34,7 +34,7 @@ def test_proxy_rotator_cycles_and_redacts_credentials():
     assert rotator.next_proxy() == "http://u1:s1@proxy1.local:8080"
     assert redact_proxy_url("http://u1:s1@proxy1.local:8080") == "http://proxy1.local:8080"
     assert redact_proxy_url("http://user:s3cr3t@127.0.0.1:abc") == "<proxy>"
-    assert redact_proxy_url("http://user:p[ss@proxy.local:8080") == "<proxy>"
+    assert redact_proxy_url("http://user:p[ss@proxy.local:8080") == "http://proxy.local:8080"
     assert redact_proxy_url(None) is None
 
 

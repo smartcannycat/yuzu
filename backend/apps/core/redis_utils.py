@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import os
 import threading
 import time
 from typing import TYPE_CHECKING
@@ -20,8 +21,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _client_lock = threading.Lock()
-_cached_url: str | None = None
-_cached_client: redis.Redis | None = None
+_cached_clients: dict[tuple[int, str], redis.Redis] = {}
+
+
+def _reset_redis_clients_after_fork() -> None:
+    global _client_lock
+    _client_lock = threading.Lock()
+    _cached_clients.clear()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_redis_clients_after_fork)
 
 _INTERVAL_SLOT_LUA = """
 local key = KEYS[1]
@@ -54,24 +64,24 @@ return count
 
 
 def get_redis_client() -> redis.Redis | None:
-    """Return a lazily initialized Redis client when a Redis URL is configured."""
-    global _cached_url, _cached_client
-
+    """Return a lazily initialized, fork-safe Redis client when a Redis URL is configured."""
     url = (getattr(settings, "REDIS_URL", "") or getattr(settings, "CELERY_BROKER_URL", "")).strip()
     if not url or not url.startswith(("redis://", "rediss://")):
         return None
 
+    key = (os.getpid(), url)
     with _client_lock:
-        if _cached_client is not None and _cached_url == url:
-            return _cached_client
-        _cached_url = url
-        _cached_client = redis.Redis.from_url(
+        client = _cached_clients.get(key)
+        if client is not None:
+            return client
+        client = redis.Redis.from_url(
             url,
             decode_responses=True,
             socket_connect_timeout=1.0,
             socket_timeout=1.0,
         )
-        return _cached_client
+        _cached_clients[key] = client
+        return client
 
 
 def acquire_distributed_interval_slot(

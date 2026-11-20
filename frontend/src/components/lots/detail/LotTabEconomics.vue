@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import LotBidSimulatorCard from '@/components/lots/detail/LotBidSimulatorCard.vue'
+import LotEconomicsSwitchesCard from '@/components/lots/detail/LotEconomicsSwitchesCard.vue'
 import LotMarketComparisonCard from '@/components/lots/detail/LotMarketComparisonCard.vue'
 import {
   FX_RATE_SOURCE_LABEL,
@@ -9,9 +10,10 @@ import {
   clampBidJpy,
   clampBidRub,
   formatUtilModeLabel,
+  parsePositiveIntegerInput,
   resolveSafeJpyRate,
 } from '@/components/lots/detail/lotPresentation'
-import { BaseBadge, BaseButton, BaseCard, BaseSwitch, CostLadder } from '@/components/ui'
+import { BaseBadge, BaseCard, CostLadder } from '@/components/ui'
 import type { LotDetailResponse, RecalculateRequest } from '@/types/api'
 import { formatRub } from '@/utils/formatters'
 
@@ -63,13 +65,13 @@ function resetDraftsFromProps(): void {
 }
 
 watch(
-  () => ({
-    lotId: props.detail.lot_id,
-    bidJpy: props.detail.economics.wise_cost_ladder.car_bid_jpy,
-    commercialUtil: props.detail.economics.customs.is_commercial_util,
-    includeRepairs: props.detail.economics.is_repairs_included,
-    powerHp: props.detail.passport.power_hp,
-  }),
+  [
+    () => props.detail.lot_id,
+    () => props.detail.economics.wise_cost_ladder.car_bid_jpy,
+    () => props.detail.economics.customs.is_commercial_util,
+    () => props.detail.economics.is_repairs_included,
+    () => props.detail.passport.power_hp,
+  ],
   () => {
     resetDraftsFromProps()
   },
@@ -179,10 +181,8 @@ function handleCommitRub(nextBidRub: number): void {
 }
 
 function handleApplyCustomPower(): void {
-  const digits = draftPowerHpInput.value.replace(/[^\d]/g, '')
-  if (!digits) return
-  const parsed = Math.round(Number(digits))
-  if (!Number.isFinite(parsed) || parsed < 1 || parsed > 2000) return
+  const parsed = parsePositiveIntegerInput(draftPowerHpInput.value)
+  if (parsed === null || parsed < 1 || parsed > 2000) return
   draftPowerHpInput.value = String(parsed)
   emitRecalculateNow({
     ...(draftBidRubOverride.value !== null ? { bidRub: draftBidRubOverride.value } : {}),
@@ -238,6 +238,7 @@ const isUtilModeForcedCommercial = computed(
         :max-jpy="detail.economics.bid_slider_max_jpy"
         :step-jpy="Math.max(1000, detail.economics.bid_slider_step_jpy)"
         :show-reset="isSimulationModified || isLinearPreviewPending"
+        :is-recalculating="isRecalculating"
         @slider-input="handleSliderInput"
         @slider-commit="handleSliderCommit"
         @commit-jpy="handleCommitJpy"
@@ -245,57 +246,18 @@ const isUtilModeForcedCommercial = computed(
         @reset="handleReset"
       />
 
-      <BaseCard variant="surface" padding="md">
-        <div class="flex flex-col divide-y divide-[#E5E5EA]">
-          <div class="pb-3">
-            <BaseSwitch
-              v-model="draftCommercialUtil"
-              label="Коммерческий утильсбор"
-              :description="utilDescription"
-              :disabled="isUtilModeForcedCommercial"
-              @update:model-value="handleSwitchToggle"
-            />
-          </div>
-
-          <div class="py-3">
-            <BaseSwitch
-              v-model="draftIncludeRepairs"
-              label="Включать смету ремонта Farpost"
-              :description="`Учтёт ${formatRub(detail.economics.farpost_repair.grand_total_repair_rub)} на кузовные детали и работы`"
-              @update:model-value="handleSwitchToggle"
-            />
-          </div>
-
-          <div class="pt-3">
-            <label
-              for="simulator-custom-power-hp"
-              class="text-text-primary block text-[14px] font-medium"
-            >
-              Мощность двигателя (л.с.)
-            </label>
-            <p class="text-text-secondary mt-0.5 text-[12px]">
-              {{
-                detail.passport.power_hp === null
-                  ? 'Для подтверждения льготного утильсбора или акциза на EV укажите мощность вручную'
-                  : 'Уточните мощность при расхождении с каталогом Drom'
-              }}
-            </p>
-            <form class="mt-2 flex items-center gap-2" @submit.prevent="handleApplyCustomPower">
-              <input
-                id="simulator-custom-power-hp"
-                v-model="draftPowerHpInput"
-                type="text"
-                inputmode="numeric"
-                placeholder="Напр. 150"
-                class="border-border bg-surface text-text-primary focus:border-accent w-28 rounded-sm border px-2.5 py-1.5 text-[14px] tabular-nums outline-none"
-              />
-              <BaseButton type="submit" variant="secondary" size="sm" :disabled="isRecalculating">
-                Применить
-              </BaseButton>
-            </form>
-          </div>
-        </div>
-      </BaseCard>
+      <LotEconomicsSwitchesCard
+        v-model:commercial-util="draftCommercialUtil"
+        v-model:include-repairs="draftIncludeRepairs"
+        v-model:power-hp-input="draftPowerHpInput"
+        :util-description="utilDescription"
+        :is-util-mode-forced-commercial="isUtilModeForcedCommercial"
+        :repair-total-rub="detail.economics.farpost_repair.grand_total_repair_rub"
+        :power-hp="detail.passport.power_hp"
+        :is-recalculating="isRecalculating"
+        @toggle-switch="handleSwitchToggle"
+        @apply-power="handleApplyCustomPower"
+      />
 
       <LotMarketComparisonCard
         :market-price-rf-rub="detail.market.market_price_rf_rub"

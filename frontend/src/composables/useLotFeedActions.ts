@@ -1,7 +1,7 @@
-import { computed, ref, type Ref } from 'vue'
+import { computed, onScopeDispose, ref, watch, type Ref } from 'vue'
 
 import type { LotBulkDeleteResponse, LotSummary } from '@/types/api'
-import { getErrorMessage } from '@/utils/errors'
+import { extractApiErrorMessage } from '@/utils/errors'
 
 const DELETE_UNDO_MS = 5000
 
@@ -31,6 +31,9 @@ export function useLotFeedActions(
   const isBulkDeleting = ref(false)
   const lifecycleActionError = ref<string | null>(null)
 
+  let deleteOperationSeq = 0
+  let isDisposed = false
+
   const visibleItems = computed(() => {
     const hiddenId = pendingDelete.value?.lot.lot_id
     return hiddenId
@@ -44,11 +47,33 @@ export function useLotFeedActions(
       visibleItems.value.every((item) => selectedLotIds.value.has(item.lot_id)),
   )
 
+  watch(
+    () => itemsSource.value,
+    (nextItems) => {
+      if (selectedLotIds.value.size === 0) return
+      const validIds = new Set(nextItems.map((item) => item.lot_id))
+      let changed = false
+      const pruned = new Set<string>()
+      for (const id of selectedLotIds.value) {
+        if (validIds.has(id)) {
+          pruned.add(id)
+        } else {
+          changed = true
+        }
+      }
+      if (changed) {
+        selectedLotIds.value = pruned
+      }
+    },
+  )
+
   async function commitSingleDelete(lotId: string): Promise<void> {
     try {
       await store.deleteLot(lotId)
     } catch (err) {
-      lifecycleActionError.value = getErrorMessage(err, 'Не удалось удалить лот')
+      if (!isDisposed) {
+        lifecycleActionError.value = extractApiErrorMessage(err, 'Не удалось удалить лот')
+      }
     }
   }
 
@@ -63,14 +88,21 @@ export function useLotFeedActions(
   }
 
   function flushPendingDeleteOnUnmount(): void {
+    deleteOperationSeq += 1
     const current = pendingDelete.value
     if (!current) return
     window.clearTimeout(current.timerId)
     pendingDelete.value = null
-    void store.deleteLot(current.lot.lot_id)
+    void commitSingleDelete(current.lot.lot_id)
   }
 
+  onScopeDispose(() => {
+    isDisposed = true
+    flushPendingDeleteOnUnmount()
+  })
+
   function handleUndoDelete(): void {
+    deleteOperationSeq += 1
     const current = pendingDelete.value
     if (!current) return
     window.clearTimeout(current.timerId)
@@ -82,17 +114,26 @@ export function useLotFeedActions(
     try {
       await store.setLotArchived(lot.lot_id, !lot.is_archived)
     } catch (err) {
-      lifecycleActionError.value = getErrorMessage(err, 'Не удалось обновить статус лота')
+      if (!isDisposed) {
+        lifecycleActionError.value = extractApiErrorMessage(err, 'Не удалось обновить статус лота')
+      }
     }
   }
 
   async function handleDeleteLot(lot: LotSummary): Promise<void> {
+    const opSeq = ++deleteOperationSeq
     lifecycleActionError.value = null
     await flushPendingDelete(true)
 
+    if (isDisposed || opSeq !== deleteOperationSeq) {
+      return
+    }
+
     const timerId = window.setTimeout(() => {
       const current = pendingDelete.value
-      if (current?.lot.lot_id !== lot.lot_id) return
+      if (isDisposed || opSeq !== deleteOperationSeq || current?.lot.lot_id !== lot.lot_id) {
+        return
+      }
       pendingDelete.value = null
       void commitSingleDelete(lot.lot_id)
     }, DELETE_UNDO_MS)
@@ -133,16 +174,26 @@ export function useLotFeedActions(
     const ids = Array.from(selectedLotIds.value)
     if (ids.length === 0 || isBulkDeleting.value) return
 
+    deleteOperationSeq += 1
     lifecycleActionError.value = null
     await flushPendingDelete(true)
+    if (isDisposed) return
+
     isBulkDeleting.value = true
     try {
       await store.bulkDeleteLots(ids)
       cancelSelectionMode()
     } catch (err) {
-      lifecycleActionError.value = getErrorMessage(err, 'Не удалось удалить выбранные лоты')
+      if (!isDisposed) {
+        lifecycleActionError.value = extractApiErrorMessage(
+          err,
+          'Не удалось удалить выбранные лоты',
+        )
+      }
     } finally {
-      isBulkDeleting.value = false
+      if (!isDisposed) {
+        isBulkDeleting.value = false
+      }
     }
   }
 

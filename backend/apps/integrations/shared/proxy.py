@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_URL_CREDS_RE = re.compile(r"([a-zA-Z][a-zA-Z0-9+.-]*://)([^/\s:@]+):([^@\s]+)@")
+_URL_CREDS_RE = re.compile(r"([a-zA-Z][a-zA-Z0-9+.-]*://)([^/\s:@]+):([^/\s]+)@")
 _URL_USERINFO_RE = re.compile(r"([a-zA-Z][a-zA-Z0-9+.-]*://)([^/\s@]+)@")
 _DEFAULT_PROXY_BAN_SEC = 120.0
 _PROXY_BAN_KEY_PREFIX = "yuzu:proxy:ban"
@@ -52,21 +52,64 @@ def proxy_fingerprint(proxy_url: str | None) -> str:
     return hashlib.sha256(proxy_url.encode("utf-8")).hexdigest()[:16]
 
 
+def _parse_proxy_url_parts(
+    proxy_url: str,
+) -> tuple[str, str | None, str | None, str | None, int | None]:
+    """Parse proxy URL components, falling back to rsplit('@', 1) when urlparse fails."""
+    try:
+        parsed = urlparse(proxy_url)
+        return (
+            parsed.scheme or "http",
+            parsed.username,
+            parsed.password,
+            parsed.hostname,
+            parsed.port,
+        )
+    except ValueError:
+        pass
+    scheme, sep, rest = proxy_url.partition("://")
+    if not sep:
+        scheme, rest = "http", proxy_url
+    authority = rest.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
+    username = password = None
+    hostport = authority
+    if "@" in authority:
+        userinfo, hostport = authority.rsplit("@", 1)
+        username, _, password_part = userinfo.partition(":")
+        password = password_part if _ else None
+    hostname: str | None = None
+    port_num: int | None = None
+    if hostport:
+        with contextlib.suppress(ValueError):
+            host_parsed = urlparse(f"{scheme or 'http'}://{hostport}")
+            hostname, port_num = host_parsed.hostname, host_parsed.port
+    return scheme or "http", username, password, hostname, port_num
+
+
 def redact_proxy_url(proxy_url: str | None) -> str | None:
     """Return scheme://host:port representation without leaking credentials into logs."""
     if not proxy_url:
         return None
-    try:
-        parsed = urlparse(proxy_url)
-        hostname = parsed.hostname
-        port_num = parsed.port
-    except ValueError:
-        return "<proxy>"
+    scheme, _username, _password, hostname, port_num = _parse_proxy_url_parts(proxy_url)
     if hostname:
+        formatted_host = f"[{hostname}]" if ":" in hostname else hostname
         port = f":{port_num}" if port_num else ""
-        scheme = parsed.scheme or "http"
-        return f"{scheme}://{hostname}{port}"
+        return f"{scheme}://{formatted_host}{port}"
     return "<proxy>"
+
+
+def _mask_secret(
+    text: str, secret: str | None, *, require_boundary_for_short: bool
+) -> tuple[str, bool]:
+    if not secret:
+        return text, False
+    if len(secret) < 3 and require_boundary_for_short:
+        pattern = rf"(?<![A-Za-z0-9_]){re.escape(secret)}(?![A-Za-z0-9_])"
+        updated = re.sub(pattern, "***", text)
+        return updated, updated != text
+    if secret in text:
+        return text.replace(secret, "***"), True
+    return text, False
 
 
 def scrub_proxy_credentials(text: str, proxy_url: str | None = None) -> tuple[str, bool]:
@@ -81,19 +124,13 @@ def scrub_proxy_credentials(text: str, proxy_url: str | None = None) -> tuple[st
     if cleaned != redacted:
         scrubbed = True
     if proxy_url:
-        try:
-            parsed = urlparse(proxy_url)
-            for secret in (
-                parsed.password,
-                unquote(parsed.password) if parsed.password else None,
-                parsed.username,
-                unquote(parsed.username) if parsed.username else None,
-            ):
-                if secret and len(secret) >= 3 and secret in cleaned:
-                    cleaned = cleaned.replace(secret, "***")
-                    scrubbed = True
-        except ValueError:
-            pass
+        _scheme, username, password, _host, _port = _parse_proxy_url_parts(proxy_url)
+        for secret in (password, unquote(password) if password else None):
+            cleaned, changed = _mask_secret(cleaned, secret, require_boundary_for_short=False)
+            scrubbed = scrubbed or changed
+        for secret in (username, unquote(username) if username else None):
+            cleaned, changed = _mask_secret(cleaned, secret, require_boundary_for_short=True)
+            scrubbed = scrubbed or changed
     return cleaned, scrubbed
 
 
@@ -179,10 +216,10 @@ class ProxyPool:
         if not self._proxies:
             return None
         domain_key = _normalize_domain(domain or self._domain)
-        redis_blocked = self._redis_blocked_fingerprints(domain_key)
         now = time.monotonic()
 
         with self._lock:
+            redis_blocked = self._redis_blocked_fingerprints(domain_key)
             n = len(self._proxies)
             start = self._index % n
             best_quarantined_idx: int | None = None
@@ -226,17 +263,17 @@ class ProxyPool:
             if until > current:
                 self._blocked_until[(domain_key, fp)] = until
 
-        if self._use_redis:
-            client = get_redis_client()
-            if client is not None:
-                try:
-                    client.set(
-                        f"{_PROXY_BAN_KEY_PREFIX}:{domain_key}:{fp}",
-                        f"exp:{time.time() + ttl:.3f}",
-                        ex=max(1, math.ceil(ttl)),
-                    )
-                except RedisError as exc:
-                    logger.debug("Redis proxy quarantine write unavailable: %s", exc)
+            if self._use_redis:
+                client = get_redis_client()
+                if client is not None:
+                    try:
+                        client.set(
+                            f"{_PROXY_BAN_KEY_PREFIX}:{domain_key}:{fp}",
+                            f"exp:{time.time() + ttl:.3f}",
+                            ex=max(1, math.ceil(ttl)),
+                        )
+                    except RedisError as exc:
+                        logger.debug("Redis proxy quarantine write unavailable: %s", exc)
 
     def is_quarantined(self, proxy: str, *, domain: str | None = None) -> bool:
         fp = proxy_fingerprint(proxy)
@@ -247,7 +284,7 @@ class ProxyPool:
         with self._lock:
             if self._blocked_until.get((domain_key, fp), 0.0) > now:
                 return True
-        return fp in self._redis_blocked_fingerprints(domain_key)
+            return fp in self._redis_blocked_fingerprints(domain_key)
 
     def clear_cooldown(
         self,
@@ -262,11 +299,11 @@ class ProxyPool:
         domain_key = _normalize_domain(domain or self._domain)
         with self._lock:
             self._blocked_until.pop((domain_key, fp), None)
-        if self._use_redis:
-            client = get_redis_client()
-            if client is not None:
-                with contextlib.suppress(RedisError):
-                    client.delete(f"{_PROXY_BAN_KEY_PREFIX}:{domain_key}:{fp}")
+            if self._use_redis:
+                client = get_redis_client()
+                if client is not None:
+                    with contextlib.suppress(RedisError):
+                        client.delete(f"{_PROXY_BAN_KEY_PREFIX}:{domain_key}:{fp}")
 
 
 _shared_pools_lock = threading.Lock()

@@ -11,7 +11,7 @@ from pydantic_settings import (
     TomlConfigSettingsSource,
 )
 
-from apps.integrations.currency.domain import parse_fallback_config
+from apps.core.currency_config import parse_fallback_config
 
 _BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
 _REPO_ROOT = _BACKEND_DIR.parent
@@ -84,6 +84,8 @@ class AppSettings(BaseSettings):
     DEBUG: bool = True
     SECRET_KEY: str = "django-insecure-default-change-in-production-abcdef123456"
     ALLOWED_HOSTS: list[str] | str = ["*"]
+    DJANGO_ADMIN_URL: str = "admin/"
+    ADMIN_ALLOWED_IPS: list[str] | str = []
 
     # CORS Settings
     CORS_ALLOWED_ORIGINS: list[str] | str = [
@@ -112,10 +114,11 @@ class AppSettings(BaseSettings):
     MEDIA_URL: str = "/media/"
     LOT_PARSER_BACKEND: str = "ml"
     MEDIA_ROOT: str = "media"
+    PRIVATE_INTAKE_ROOT: str = "private_intake"
 
     # External Services (internal ML service URL; public source URLs live in adapters)
     ML_SERVICE_URL: str = "http://127.0.0.1:8001"
-    ML_SERVICE_TIMEOUT_SEC: float = 30.0
+    ML_SERVICE_TIMEOUT_SEC: float = 65.0
     ML_SERVICE_API_KEY: str = ""
 
     # Shared scraper transport & rate-limit settings (used by Drom and Farpost)
@@ -170,8 +173,15 @@ class AppSettings(BaseSettings):
             )
         return cleaned
 
+    @field_validator("DJANGO_ADMIN_URL")
+    @classmethod
+    def normalize_admin_url(cls, value: str) -> str:
+        cleaned = (value or "").strip().strip("/")
+        return f"{cleaned}/" if cleaned else "admin/"
+
     @field_validator(
         "ALLOWED_HOSTS",
+        "ADMIN_ALLOWED_IPS",
         "CORS_ALLOWED_ORIGINS",
         "CSRF_TRUSTED_ORIGINS",
         "SCRAPER_PROXY_URLS",
@@ -217,10 +227,23 @@ class AppSettings(BaseSettings):
         if not self.is_production:
             return self
 
+        if self.DEBUG:
+            raise ValueError("DEBUG must be False when ENVIRONMENT=production")
         if self.SECRET_KEY.startswith("django-insecure-") or len(self.SECRET_KEY) < 32:
             raise ValueError(
                 "SECRET_KEY must be at least 32 characters and not use an insecure default "
                 "when ENVIRONMENT=production"
+            )
+        jwt_key = (self.JWT_SIGNING_KEY or "").strip()
+        if len(jwt_key) < 32 or jwt_key == self.SECRET_KEY.strip():
+            raise ValueError(
+                "JWT_SIGNING_KEY must be at least 32 characters and distinct from SECRET_KEY "
+                "when ENVIRONMENT=production"
+            )
+        ml_api_key = (self.ML_SERVICE_API_KEY or "").strip()
+        if not ml_api_key or ml_api_key == "dev-ml-service-key":
+            raise ValueError(
+                "ML_SERVICE_API_KEY must be set to a non-default secret when ENVIRONMENT=production"
             )
         if not self.ALLOWED_HOSTS or "*" in self.ALLOWED_HOSTS:
             raise ValueError(

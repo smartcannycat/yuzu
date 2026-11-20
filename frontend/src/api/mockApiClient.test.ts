@@ -11,7 +11,7 @@ describe('mockApiClient', () => {
     window.localStorage.clear()
   })
 
-  it('logs in with seeded demo user and resolves me()', async () => {
+  it('logs in with seeded demo user, resolves me(), refreshes without body, and logs out', async () => {
     const client = createMockApiClient({ delayMs: 0 })
     const tokens = await client.auth.login({
       email: DEMO_ACCOUNT_CREDENTIALS.email,
@@ -20,10 +20,17 @@ describe('mockApiClient', () => {
 
     expect(tokens.token_type).toBe('bearer')
     expect(tokens.user.email).toBe(DEMO_ACCOUNT_CREDENTIALS.email)
+    expect('refresh_token' in tokens).toBe(false)
 
     tokenStorage.setFromAuthResponse(tokens)
     const me = await client.auth.me()
     expect(me.email).toBe(DEMO_ACCOUNT_CREDENTIALS.email)
+
+    const refreshed = await client.auth.refresh()
+    expect(refreshed.user.email).toBe(DEMO_ACCOUNT_CREDENTIALS.email)
+
+    await client.auth.logout()
+    await expect(client.auth.refresh()).rejects.toMatchObject({ status: 401 })
   })
 
   it('throws 401 on invalid login credentials', async () => {

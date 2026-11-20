@@ -6,7 +6,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from ml_service.api.schemas import to_batch_progress_response
+from ml_service.api.mappers import to_batch_progress_response
 from ml_service.domains.entities import FastHeaderPreviewEntity, GatekeeperDecisionEntity
 from ml_service.domains.enums import (
     BatchItemState,

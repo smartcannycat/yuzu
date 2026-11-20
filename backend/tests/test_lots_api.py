@@ -1,21 +1,24 @@
 import threading
 from datetime import UTC, datetime
 from io import BytesIO
+from pathlib import Path
 from unittest.mock import patch
 
 import pillow_heif
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import Client
+from django.db import IntegrityError, transaction
+from django.test import Client, override_settings
 from PIL import Image
 
-from apps.core.enums import BatchStatus, PowerHpSource
+from apps.core.enums import BatchStatus, PartSourceKind, PowerHpSource, UtilFeeType
 from apps.integrations.currency.domain import BaseRates, CurrencyRatesResult, RatesOrigin
 from apps.integrations.drom.schemas import DromMarketResult
 from apps.integrations.ml.parser import MlServiceParser
 from apps.lots.media import render_browser_scan_and_thumbnail
-from apps.lots.models import Batch, BatchItem, Lot
+from apps.lots.models import Batch, BatchItem, DamagedPartItem, Lot
 from apps.lots.pipeline import run_batch_pipeline
+from apps.lots.pipeline.batches import append_items_to_batch, enqueue_batch
 
 
 def _register_and_auth(
@@ -93,14 +96,19 @@ def test_lots_list_requires_auth_and_lists_starter_lots_with_media(api_client: C
     assert body["pagination"]["total_items"] == 3
     assert len(body["items"]) == 3
     for item in body["items"]:
-        assert item["thumbnail_url"]
-        assert item["thumbnail_url"].startswith("/media/")
-        assert item["thumbnail_url"].endswith(".jpg")
+        lot_id = item["lot_id"]
+        assert item["thumbnail_url"] == f"/api/v1/lots/{lot_id}/media/thumbnail"
+        assert item["verdict_headline"] in {
+            "РЕКОМЕНДОВАНО К ПОКУПКЕ",
+            "ВНИМАНИЕ: ЕСТЬ НЮАНСЫ",
+            "ПОКУПКУ НЕ РЕКОМЕНДУЕМ",
+        }
 
     filtered = api_client.get("/api/v1/lots?make=Honda&verdict=yellow", **headers)
     assert filtered.status_code == 200
     assert filtered.json()["pagination"]["total_items"] == 1
     assert filtered.json()["items"][0]["frame_id"] == "RV3-1005521"
+    assert filtered.json()["items"][0]["verdict_headline"] == "ВНИМАНИЕ: ЕСТЬ НЮАНСЫ"
 
 
 @pytest.mark.django_db
@@ -113,11 +121,72 @@ def test_lot_detail_isolates_users_and_exposes_media_links(api_client: Client) -
     assert detail_res.status_code == 200
     detail = detail_res.json()
     assert detail["lot_id"] == str(lot.id)
-    assert detail["media"]["sheet_thumbnail_url"].startswith("/media/")
-    assert detail["media"]["sheet_scan_url"].startswith("/media/")
+    assert detail["media"]["sheet_thumbnail_url"] == f"/api/v1/lots/{lot.id}/media/thumbnail"
+    assert detail["media"]["sheet_scan_url"] == f"/api/v1/lots/{lot.id}/media/scan"
+    assert detail["economics"]["customs"]["util_fee_type"] == UtilFeeType.PERSONAL
 
     foreign_res = api_client.get(f"/api/v1/lots/{lot.id}", **headers_b)
     assert foreign_res.status_code == 404
+
+
+@pytest.mark.django_db
+@override_settings(DEBUG=True)
+def test_authenticated_media_endpoint_and_no_public_media_route(api_client: Client) -> None:
+    headers_a, user_a_id = _register_and_auth(api_client, "media-a@example.com")
+    headers_b, _ = _register_and_auth(api_client, "media-b@example.com")
+
+    lot = Lot.objects.get(user_id=user_a_id, frame_id="RV3-1005521")
+
+    # Public /media/* route is removed even in DEBUG mode.
+    public_media = api_client.get(f"/media/{lot.sheet_scan.name}")
+    assert public_media.status_code == 404
+
+    # Unauthenticated request returns 401 ProblemDetail.
+    unauth = api_client.get(f"/api/v1/lots/{lot.id}/media/scan")
+    assert unauth.status_code == 401
+    assert unauth.headers["Content-Type"].startswith("application/problem+json")
+
+    # Foreign user receives 404 ProblemDetail.
+    foreign = api_client.get(f"/api/v1/lots/{lot.id}/media/scan", **headers_b)
+    assert foreign.status_code == 404
+    assert foreign.headers["Content-Type"].startswith("application/problem+json")
+
+    # Invalid media kind returns 422 ProblemDetail.
+    bad_kind = api_client.get(f"/api/v1/lots/{lot.id}/media/original", **headers_a)
+    assert bad_kind.status_code == 422
+
+    # Owner gets scan and thumbnail with strict security headers.
+    for kind in ("scan", "thumbnail"):
+        resp = api_client.get(f"/api/v1/lots/{lot.id}/media/{kind}", **headers_a)
+        assert resp.status_code == 200
+        assert resp.headers["Content-Type"] == "image/jpeg"
+        assert resp.headers["Cache-Control"] == "private, no-store"
+        assert resp.headers["X-Content-Type-Options"] == "nosniff"
+        assert resp.headers["Content-Security-Policy"] == "sandbox; default-src 'none'"
+        assert resp.headers["Content-Disposition"] == f'inline; filename="lot-{kind}.jpg"'
+        assert b"".join(resp.streaming_content).startswith(b"\xff\xd8\xff")
+
+    # Incomplete or soft-deleted lots return 404.
+    incomplete = Lot.objects.create(user_id=user_a_id, make="Honda", model="Fit")
+    assert (
+        api_client.get(f"/api/v1/lots/{incomplete.id}/media/scan", **headers_a).status_code == 404
+    )
+
+    api_client.delete(f"/api/v1/lots/{lot.id}", **headers_a)
+    assert api_client.get(f"/api/v1/lots/{lot.id}/media/scan", **headers_a).status_code == 404
+
+
+@pytest.mark.django_db
+def test_damaged_part_source_kind_coerces_empty_legacy_value(api_client: Client) -> None:
+    headers, user_id = _register_and_auth(api_client, "parts@example.com")
+    lot = Lot.objects.get(user_id=user_id, frame_id="GB5-3179736")
+    DamagedPartItem.objects.filter(repair__lot=lot).update(source_kind="")
+
+    detail_res = api_client.get(f"/api/v1/lots/{lot.id}", **headers)
+    assert detail_res.status_code == 200
+    parts = detail_res.json()["economics"]["farpost_repair"]["parts"]
+    assert parts
+    assert all(part["source_kind"] == PartSourceKind.MATRIX for part in parts)
 
 
 @pytest.mark.django_db
@@ -143,6 +212,7 @@ def test_recalculate_updates_economics_and_rejects_deleted_or_incomplete_lots(
     payload = ok.json()
     assert payload["applied_bid_jpy"] == 950000
     assert payload["is_commercial_util"] is True
+    assert payload["customs"]["util_fee_type"] == UtilFeeType.COMMERCIAL
     assert payload["include_repairs"] is False
     assert payload["customs"]["freight_vladivostok_rub"] == 110000
     assert payload["is_simulation_modified"] is True
@@ -244,19 +314,74 @@ def test_lot_lifecycle_patch_and_bulk_delete(api_client: Client) -> None:
 
 
 @pytest.mark.django_db
-def test_batch_upload_validation_and_append_conflicts(api_client: Client) -> None:
+def test_batch_upload_validation_and_append_conflicts(
+    api_client: Client,
+    settings,
+) -> None:
     headers, _ = _register_and_auth(api_client, "upload@example.com")
 
     bad_file = SimpleUploadedFile("notes.txt", b"not an image", content_type="text/plain")
-    bad_res = api_client.post("/api/v1/lots/batches", {"files": [bad_file]}, **headers)
-    assert bad_res.status_code == 400
+    assert (
+        api_client.post("/api/v1/lots/batches", {"files": [bad_file]}, **headers).status_code == 400
+    )
 
+    # Extension/MIME mismatch and spoofed magic bytes must both be rejected.
     png_bytes = _make_png_bytes((200, 200), mode="RGB")
-    with patch("apps.lots.pipeline._schedule_batch_pipeline"):
-        files = [SimpleUploadedFile("sheet.png", png_bytes, content_type="image/png")]
+    ext_mime_mismatch = SimpleUploadedFile("sheet.jpg", png_bytes, content_type="text/plain")
+    assert (
+        api_client.post(
+            "/api/v1/lots/batches", {"files": [ext_mime_mismatch]}, **headers
+        ).status_code
+        == 400
+    )
+
+    bad_ext = SimpleUploadedFile("sheet.txt", png_bytes, content_type="image/png")
+    assert (
+        api_client.post("/api/v1/lots/batches", {"files": [bad_ext]}, **headers).status_code == 400
+    )
+
+    spoofed_svg = SimpleUploadedFile(
+        "evil.jpg",
+        b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
+        content_type="image/jpeg",
+    )
+    assert (
+        api_client.post("/api/v1/lots/batches", {"files": [spoofed_svg]}, **headers).status_code
+        == 400
+    )
+
+    empty_file = SimpleUploadedFile("empty.png", b"", content_type="image/png")
+    assert (
+        api_client.post("/api/v1/lots/batches", {"files": [empty_file]}, **headers).status_code
+        == 400
+    )
+
+    oversized_side = SimpleUploadedFile(
+        "wide.png",
+        _make_png_bytes((12001, 4), mode="RGB"),
+        content_type="image/png",
+    )
+    assert (
+        api_client.post("/api/v1/lots/batches", {"files": [oversized_side]}, **headers).status_code
+        == 400
+    )
+
+    with patch("apps.lots.pipeline.batches._schedule_batch_pipeline"):
+        files = [
+            SimpleUploadedFile("../../traversal/sheet.png", png_bytes, content_type="image/png")
+        ]
         created = api_client.post("/api/v1/lots/batches", {"files": files}, **headers)
         assert created.status_code == 202
         batch_id = created.json()["batch_id"]
+
+        item = BatchItem.objects.get(batch_id=batch_id)
+        assert item.original_filename == "sheet.png"
+        assert ".." not in item.original_file.name
+        assert item.original_file.name.endswith(".png")
+        assert Path(item.original_file.path).is_relative_to(Path(settings.PRIVATE_INTAKE_ROOT))
+        assert not Path(item.original_file.path).is_relative_to(Path(settings.MEDIA_ROOT))
+        with pytest.raises(ValueError, match="not accessible via a URL"):
+            _ = item.original_file.url
 
         progress = api_client.get(f"/api/v1/lots/batches/{batch_id}", **headers)
         assert progress.status_code == 200
@@ -272,12 +397,93 @@ def test_batch_upload_validation_and_append_conflicts(api_client: Client) -> Non
         assert appended.json()["total_count"] == 2
 
         Batch.objects.filter(id=batch_id).update(status=BatchStatus.COMPLETED)
+        conflict_files = [SimpleUploadedFile("sheet3.png", png_bytes, content_type="image/png")]
         conflict = api_client.post(
             f"/api/v1/lots/batches/{batch_id}/items",
-            {"files": extra},
+            {"files": conflict_files},
             **headers,
         )
         assert conflict.status_code == 409
+
+
+@pytest.mark.django_db
+def test_batch_upload_cleans_saved_files_on_rollback(api_client: Client, settings) -> None:
+    headers, _ = _register_and_auth(api_client, "rollback@example.com")
+    png_bytes = _make_png_bytes((128, 128), mode="RGB")
+    files = [
+        SimpleUploadedFile("first.png", png_bytes, content_type="image/png"),
+        SimpleUploadedFile("second.png", png_bytes, content_type="image/png"),
+    ]
+    orig_save = BatchItem.save
+    call_count = 0
+
+    def failing_second_save(self, *args, **kwargs):
+        nonlocal call_count
+        if kwargs.get("update_fields") == ["original_file", "updated_at"]:
+            call_count += 1
+            if call_count == 2:
+                raise IntegrityError("simulated mid-batch DB failure")
+        return orig_save(self, *args, **kwargs)
+
+    with patch.object(BatchItem, "save", failing_second_save):
+        resp = api_client.post("/api/v1/lots/batches", {"files": files}, **headers)
+
+    assert resp.status_code == 500
+    assert BatchItem.objects.count() == 0
+    private_files = [p for p in Path(settings.PRIVATE_INTAKE_ROOT).rglob("*") if p.is_file()]
+    assert private_files == []
+
+
+@pytest.mark.django_db(transaction=True)
+def test_batch_upload_cleans_saved_files_on_outer_atomic_rollback(
+    user_factory,
+    settings,
+) -> None:
+    user = user_factory(email="outer-rollback@example.com")
+    png_bytes = _make_png_bytes((128, 128), mode="RGB")
+
+    with (
+        patch("apps.lots.pipeline.batches._schedule_batch_pipeline"),
+        pytest.raises(RuntimeError, match="outer enqueue rollback"),
+        transaction.atomic(),
+    ):
+        enqueue_batch(
+            user,
+            [
+                SimpleUploadedFile("a.png", png_bytes, content_type="image/png"),
+                SimpleUploadedFile("b.png", png_bytes, content_type="image/png"),
+            ],
+        )
+        saved_during_tx = [p for p in Path(settings.PRIVATE_INTAKE_ROOT).rglob("*") if p.is_file()]
+        assert len(saved_during_tx) == 2
+        raise RuntimeError("outer enqueue rollback")
+
+    assert Batch.objects.filter(user=user).count() == 0
+    assert [p for p in Path(settings.PRIVATE_INTAKE_ROOT).rglob("*") if p.is_file()] == []
+
+    # Committed batch stays on disk; a subsequent rolled-back append cleans only the new upload.
+    with patch("apps.lots.pipeline.batches._schedule_batch_pipeline"):
+        committed_batch = enqueue_batch(
+            user,
+            [SimpleUploadedFile("kept.png", png_bytes, content_type="image/png")],
+        )
+    kept_path = Path(committed_batch.items.get().original_file.path)
+    assert kept_path.is_file()
+
+    with (
+        patch("apps.lots.pipeline.batches._schedule_batch_pipeline"),
+        pytest.raises(RuntimeError, match="outer append rollback"),
+        transaction.atomic(),
+    ):
+        append_items_to_batch(
+            user,
+            committed_batch.id,
+            [SimpleUploadedFile("reverted.png", png_bytes, content_type="image/png")],
+        )
+        raise RuntimeError("outer append rollback")
+
+    remaining = [p for p in Path(settings.PRIVATE_INTAKE_ROOT).rglob("*") if p.is_file()]
+    assert remaining == [kept_path]
 
 
 @pytest.mark.django_db(transaction=True)
@@ -297,7 +503,7 @@ def test_batch_pipeline_generates_browser_scan_and_thumbnail_for_png_and_heic(
         content_type="image/heic",
     )
 
-    with patch("apps.lots.pipeline._schedule_batch_pipeline"):
+    with patch("apps.lots.pipeline.batches._schedule_batch_pipeline"):
         created = api_client.post(
             "/api/v1/lots/batches",
             {"files": [png_file, heic_file]},
@@ -332,14 +538,14 @@ def test_batch_pipeline_generates_browser_scan_and_thumbnail_for_png_and_heic(
     )
 
     with (
-        patch("apps.lots.pipeline._PIPELINE_STEP_DELAY_SEC", 0),
-        patch("apps.lots.pipeline.import_string", return_value=_FakeParser),
+        patch("apps.lots.pipeline.stages._PIPELINE_STEP_DELAY_SEC", 0),
+        patch("apps.lots.pipeline.parallel.import_string", return_value=_FakeParser),
         patch(
-            "apps.lots.pipeline.AleadoCrossAuditService.audit_lot",
+            "apps.lots.pipeline.stages.AleadoCrossAuditService.audit_lot",
             side_effect=RuntimeError("offline"),
         ),
-        patch("apps.lots.services.DromMarketService.evaluate", return_value=drom_result),
-        patch("apps.lots.pipeline.build_currency_service") as mock_curr,
+        patch("apps.lots.pipeline.stages.DromMarketService.evaluate", return_value=drom_result),
+        patch("apps.lots.pipeline.stages.build_currency_service") as mock_curr,
     ):
         mock_curr.return_value.get_currency_rates.return_value = rates_result
         worker = threading.Thread(target=run_batch_pipeline, args=(batch_id,))
@@ -355,12 +561,17 @@ def test_batch_pipeline_generates_browser_scan_and_thumbnail_for_png_and_heic(
 
     for item in progress_data["items"]:
         lot_id = item["lot_id"]
-        assert item["summary"]["thumbnail_url"].endswith(".jpg")
+        assert item["summary"]["thumbnail_url"] == f"/api/v1/lots/{lot_id}/media/thumbnail"
+        assert item["summary"]["verdict_headline"] in {
+            "РЕКОМЕНДОВАНО К ПОКУПКЕ",
+            "ВНИМАНИЕ: ЕСТЬ НЮАНСЫ",
+            "ПОКУПКУ НЕ РЕКОМЕНДУЕМ",
+        }
         detail_res = api_client.get(f"/api/v1/lots/{lot_id}", **headers)
         assert detail_res.status_code == 200
         detail = detail_res.json()
-        assert detail["media"]["sheet_scan_url"].endswith(".jpg")
-        assert detail["media"]["sheet_thumbnail_url"].endswith(".jpg")
+        assert detail["media"]["sheet_scan_url"] == f"/api/v1/lots/{lot_id}/media/scan"
+        assert detail["media"]["sheet_thumbnail_url"] == f"/api/v1/lots/{lot_id}/media/thumbnail"
 
 
 def test_render_browser_scan_and_thumbnail_resizes_and_transcodes_heic() -> None:
@@ -370,3 +581,8 @@ def test_render_browser_scan_and_thumbnail_resizes_and_transcodes_heic() -> None
         assert max(scan_img.size) == 2400
         assert thumb_img.format == "JPEG"
         assert max(thumb_img.size) == 480
+
+
+def test_render_browser_scan_rejects_oversized_dimensions() -> None:
+    with pytest.raises(Image.DecompressionBombError):
+        render_browser_scan_and_thumbnail(_make_png_bytes((12001, 4), mode="RGB"))

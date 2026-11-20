@@ -1,10 +1,46 @@
-"""Brand and model alias tables used by Farpost part-listing filters."""
+"""Shared vehicle make/model alias tables, transliteration, and noise-token helpers."""
 
 from __future__ import annotations
 
 import re
 
-_MAKE_ALIASES: dict[str, tuple[str, ...]] = {
+CYRILLIC_TRANSLIT: dict[str, str] = {
+    "а": "a",
+    "б": "b",
+    "в": "v",
+    "г": "g",
+    "д": "d",
+    "е": "e",
+    "ё": "e",
+    "ж": "zh",
+    "з": "z",
+    "и": "i",
+    "й": "y",
+    "к": "k",
+    "л": "l",
+    "м": "m",
+    "н": "n",
+    "о": "o",
+    "п": "p",
+    "р": "r",
+    "с": "s",
+    "т": "t",
+    "у": "u",
+    "ф": "f",
+    "х": "kh",
+    "ц": "ts",
+    "ч": "ch",
+    "ш": "sh",
+    "щ": "shch",
+    "ъ": "",
+    "ы": "y",
+    "ь": "",
+    "э": "e",
+    "ю": "yu",
+    "я": "ya",
+}
+
+MAKE_ALIASES: dict[str, tuple[str, ...]] = {
     "toyota": ("toyota", "тойота"),
     "honda": ("honda", "хонда"),
     "nissan": ("nissan", "ниссан"),
@@ -32,7 +68,19 @@ _MAKE_ALIASES: dict[str, tuple[str, ...]] = {
     "haval": ("haval", "хавал", "хавейл"),
 }
 
-_SISTER_MAKES: dict[str, frozenset[str]] = {
+CANONICAL_BRAND_SLUGS: dict[str, str] = {
+    "mercedes": "mercedes-benz",
+    "мерседес": "mercedes-benz",
+    "мерседес бенц": "mercedes-benz",
+    "мерседес-бенц": "mercedes-benz",
+    "vw": "volkswagen",
+    "фольксваген": "volkswagen",
+    "бмв": "bmw",
+    "bmv": "bmw",
+    "мини": "mini",
+}
+
+SISTER_MAKES: dict[str, frozenset[str]] = {
     "toyota": frozenset({"toyota", "lexus", "daihatsu"}),
     "lexus": frozenset({"lexus", "toyota"}),
     "daihatsu": frozenset({"daihatsu", "toyota"}),
@@ -45,7 +93,7 @@ _SISTER_MAKES: dict[str, frozenset[str]] = {
     "genesis": frozenset({"genesis", "hyundai", "kia"}),
 }
 
-_MODEL_ALIASES: dict[str, tuple[str, ...]] = {
+MODEL_ALIASES: dict[str, tuple[str, ...]] = {
     "freed": ("freed", "фрид"),
     "freedspike": ("freedspike", "freed", "фридспайк", "фрид"),
     "fit": ("fit", "фит"),
@@ -113,19 +161,59 @@ _MODEL_ALIASES: dict[str, tuple[str, ...]] = {
     "tanto": ("tanto", "танто"),
 }
 
-_COMPOUND_ALIAS_PATTERNS: dict[str, str] = {
+COMPOUND_ALIAS_PATTERNS: dict[str, str] = {
     "mercedesbenz": r"mercedes[\s-]*benz",
     "мерседесбенц": r"мерседес[\s-]*бенц",
     "landrover": r"land[\s-]*rover",
     "лендровер": r"ленд[\s-]*ровер",
 }
 
-_MAKE_CONFLICT_PATTERNS: dict[str, re.Pattern[str]] = {
+MAKE_CONFLICT_PATTERNS: dict[str, re.Pattern[str]] = {
     make_name: re.compile(
         r"(?<![a-zа-я0-9])(?:"
-        + "|".join(_COMPOUND_ALIAS_PATTERNS.get(v, re.escape(v)) for v in variants)
+        + "|".join(COMPOUND_ALIAS_PATTERNS.get(v, re.escape(v)) for v in variants)
         + r")(?![a-zа-я0-9])",
         re.I,
     )
-    for make_name, variants in _MAKE_ALIASES.items()
+    for make_name, variants in MAKE_ALIASES.items()
 }
+
+TRIM_NOISE_WORDS = frozenset(
+    {"hybrid", "hv", "e-power", "epower", "4wd", "2wd", "turbo", "wxb", "w×b"}
+)
+
+_FARPOST_EXTRA_TRIM_TOKENS = (
+    "phev",
+    "phv",
+    "e:hev",
+    "awd",
+    "custom",
+    "crosstar",
+    "spada",
+    "g4",
+    "modulo",
+    "nismo",
+    r"gr\s*sport",
+)
+
+FARPOST_MODEL_TRIM_RE = re.compile(
+    r"\b(?:"
+    + "|".join(
+        [
+            *(re.escape(tok) for tok in sorted(TRIM_NOISE_WORDS - {"turbo", "wxb", "w×b"})),
+            *_FARPOST_EXTRA_TRIM_TOKENS,
+        ]
+    )
+    + r")\b",
+    re.I,
+)
+
+
+def transliterate_cyrillic(value: str) -> str:
+    """Transliterate Cyrillic characters into ASCII equivalents."""
+    return "".join(CYRILLIC_TRANSLIT.get(ch, ch) for ch in value.lower())
+
+
+def compact_alnum(value: str) -> str:
+    """Fold case, normalize Russian 'ё', and strip non-alphanumeric characters."""
+    return re.sub(r"[^a-zа-я0-9]", "", value.casefold().replace("ё", "е"))

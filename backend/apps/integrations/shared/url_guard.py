@@ -17,8 +17,16 @@ def _host_matches_allowlist(hostname: str, allowed_hosts: frozenset[str]) -> boo
 
 
 def _is_disallowed_ip(ip_obj: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    if (
+        isinstance(ip_obj, ipaddress.IPv6Address)
+        and ip_obj.ipv4_mapped is not None
+        and _is_disallowed_ip(ip_obj.ipv4_mapped)
+    ):
+        return True
     return (
-        ip_obj.is_private
+        not ip_obj.is_global
+        or (isinstance(ip_obj, ipaddress.IPv6Address) and ip_obj.is_site_local)
+        or ip_obj.is_private
         or ip_obj.is_loopback
         or ip_obj.is_link_local
         or ip_obj.is_multicast
@@ -28,9 +36,16 @@ def _is_disallowed_ip(ip_obj: ipaddress.IPv4Address | ipaddress.IPv6Address) -> 
 
 
 def _parse_ip_literal(hostname: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    candidate = hostname.rstrip(".").strip("[]")
+    if not candidate:
+        return None
     try:
-        return ipaddress.ip_address(hostname)
+        return ipaddress.ip_address(candidate)
     except ValueError:
+        pass
+    try:
+        return ipaddress.IPv4Address(socket.inet_aton(candidate))
+    except OSError:
         return None
 
 
@@ -51,6 +66,16 @@ def _verify_dns_targets(hostname: str, port: int, *, allow_dns_failure: bool) ->
             )
 
 
+def _extract_validated_port(parsed: object, raw_url: str) -> int:
+    try:
+        port = parsed.port  # type: ignore[attr-defined]
+    except ValueError as exc:
+        raise UnsafeExternalUrlError(f"Malformed port in external URL: {raw_url}") from exc
+    if port is not None and not (1 <= port <= 65535):
+        raise UnsafeExternalUrlError(f"Invalid port in external URL: {port}")
+    return port or 443
+
+
 def validate_external_url(
     url: str,
     *,
@@ -59,7 +84,9 @@ def validate_external_url(
     allow_dns_failure: bool = False,
 ) -> str:
     """Validate that ``url`` is HTTPS, credential-free, allowlisted, and publicly routable."""
-    cleaned = (url or "").strip()
+    if not url or any(ch in url for ch in ("\t", "\r", "\n")):
+        raise UnsafeExternalUrlError("External URL is empty or contains control characters")
+    cleaned = url.strip()
     if not cleaned:
         raise UnsafeExternalUrlError("External URL is empty")
     try:
@@ -68,11 +95,14 @@ def validate_external_url(
         raise UnsafeExternalUrlError(f"Malformed external URL: {cleaned}") from exc
     if parsed.scheme.lower() != "https":
         raise UnsafeExternalUrlError(f"Disallowed URL scheme: {parsed.scheme!r}")
-    if parsed.username is not None or parsed.password is not None:
+    if parsed.username is not None or parsed.password is not None or "@" in parsed.netloc:
         raise UnsafeExternalUrlError("Credentials in external URL are disallowed")
+    port = _extract_validated_port(parsed, cleaned)
     hostname = (parsed.hostname or "").strip().lower()
     if not hostname:
         raise UnsafeExternalUrlError("External URL has no hostname")
+    if hostname in {"localhost", "localhost.localdomain"} or hostname.endswith(".localhost"):
+        raise UnsafeExternalUrlError(f"Disallowed local hostname: {hostname!r}")
 
     ip_literal = _parse_ip_literal(hostname)
     if ip_literal is not None and _is_disallowed_ip(ip_literal):
@@ -81,6 +111,6 @@ def validate_external_url(
         raise UnsafeExternalUrlError(f"External host is not allowlisted: {hostname!r}")
 
     if check_dns and ip_literal is None:
-        _verify_dns_targets(hostname, parsed.port or 443, allow_dns_failure=allow_dns_failure)
+        _verify_dns_targets(hostname, port, allow_dns_failure=allow_dns_failure)
 
     return cleaned

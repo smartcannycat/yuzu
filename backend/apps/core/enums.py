@@ -76,6 +76,7 @@ class BodyPanel(TextChoices):
     LEFT_SILL = "left_sill"
     RIGHT_SILL = "right_sill"
     WINDSHIELD = "windshield"
+    OTHER = "other"
 
 
 class DefectCode(TextChoices):

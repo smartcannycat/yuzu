@@ -1,9 +1,7 @@
-import time
 from dataclasses import dataclass, field
+from typing import Literal
 
 from ml_service.domains.enums import (
-    BatchItemState,
-    BatchStatus,
     BodyPanel,
     DefectCode,
     DriveType,
@@ -12,7 +10,6 @@ from ml_service.domains.enums import (
     LayoutComplexity,
     OdometerStatus,
     ParseStatus,
-    TaskStep,
 )
 
 
@@ -59,7 +56,7 @@ class ChassisOcrEntity:
 
     frame_id: str | None = None
     raw: str | None = None
-    confidence: str = "low"
+    confidence: Literal["high", "medium", "low"] = "low"
     cached: bool = False
     duration_ms: int = 0
 
@@ -167,19 +164,7 @@ class RawExtractionEntity:
     recycling_fee_paid: bool | None = None
     equipment_ru: list[str] = field(default_factory=list)
     defects: list[RawDefectEntity] = field(default_factory=list)
-    risk_flags: RawRiskFlagsEntity = field(
-        default_factory=lambda: RawRiskFlagsEntity(
-            is_flooded=False,
-            airbag_deployed=False,
-            hail_damage=False,
-            underbody_rust=False,
-            underbody_corrosion=False,
-            core_support_repair=False,
-            pillar_or_frame_repair=False,
-            color_changed=False,
-            windshield_damage=False,
-        )
-    )
+    risk_flags: RawRiskFlagsEntity = field(default_factory=RawRiskFlagsEntity)
     inspector_notes_ru: list[str] = field(default_factory=list)
     seller_comments_ru: list[str] = field(default_factory=list)
     extra_ru: list[str] = field(default_factory=list)
@@ -193,7 +178,7 @@ class RawExtractionEntity:
     attempts: list[ModelAttemptEntity] = field(default_factory=list)
 
     def to_raw_dict(self) -> dict[str, object]:
-        """Returns dictionary of raw anchor fields for audit and debugging."""
+        """Return dictionary of raw anchor fields for audit and debugging."""
         return {
             "auction_house_raw": self.auction_house_raw,
             "auction_branch": self.auction_branch,
@@ -323,74 +308,3 @@ class ParserResultEntity:
     raw: dict[str, object] | None
     summary_md: str | None
     meta: ParserMetaEntity
-
-
-@dataclass(slots=True)
-class BatchItemStatusEntity:
-    """Mutable state of a single sheet inside a batch processing queue."""
-
-    lot_id: str | None
-    file_index: int
-    original_filename: str
-    status: BatchItemState
-    current_step: TaskStep
-    progress_pct: int
-    preview_title: str | None = None
-    error_message: str | None = None
-    result: ParserResultEntity | None = None
-
-
-@dataclass(slots=True)
-class BatchJobEntity:
-    """Mutable state of an asynchronous multi-sheet batch (up to 10 sheets)."""
-
-    batch_id: str
-    created_at: str
-    items: list[BatchItemStatusEntity] = field(default_factory=list)
-    created_monotonic: float = field(default_factory=time.monotonic)
-
-    @property
-    def total_items(self) -> int:
-        return len(self.items)
-
-    @property
-    def total_count(self) -> int:
-        return len(self.items)
-
-    @property
-    def ready_count(self) -> int:
-        return sum(1 for item in self.items if item.status == BatchItemState.READY)
-
-    @property
-    def failed_count(self) -> int:
-        return sum(1 for item in self.items if item.status == BatchItemState.FAILED)
-
-    @property
-    def rejected_count(self) -> int:
-        return sum(1 for item in self.items if item.status == BatchItemState.REJECTED_NOT_SHEET)
-
-    @property
-    def processed_count(self) -> int:
-        return self.ready_count + self.failed_count + self.rejected_count
-
-    @property
-    def status(self) -> BatchStatus:
-        if not self.items:
-            return BatchStatus.QUEUED
-        if all(item.status == BatchItemState.QUEUED for item in self.items):
-            return BatchStatus.QUEUED
-        if self.processed_count < self.total_items:
-            return BatchStatus.PROCESSING
-        if self.ready_count == 0 and (self.failed_count + self.rejected_count) > 0:
-            return BatchStatus.FAILED
-        if (self.failed_count + self.rejected_count) > 0:
-            return BatchStatus.PARTIAL_FAILED
-        return BatchStatus.COMPLETED
-
-    @property
-    def is_terminal(self) -> bool:
-        return self.status in {
-            BatchStatus.COMPLETED,
-            BatchStatus.PARTIAL_FAILED,
-            BatchStatus.FAILED,
-        }

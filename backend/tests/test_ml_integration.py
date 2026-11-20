@@ -550,12 +550,7 @@ def test_settings_module_exports_ml_service_config() -> None:
 
 @pytest.mark.django_db
 def test_unknown_panel_defects_are_preserved_in_extra_ru(batch_item) -> None:
-    """Defects outside the 16 canonical panels survive as Russian notes.
-
-    ML reports structural entries (radiator core support, frame parts) as
-    panel_id="other"; the raw observation must reach the lot's extra_ru
-    instead of being dropped, alongside the ocr_warning.
-    """
+    """Defects outside BodyPanel choices survive as Russian notes with an ocr_warning."""
     lot = batch_item.lot
 
     def handler(_request: httpx.Request) -> httpx.Response:
@@ -563,7 +558,7 @@ def test_unknown_panel_defects_are_preserved_in_extra_ru(batch_item) -> None:
             sheet=_sheet_payload(
                 defects=[
                     {
-                        "panel_id": "other",
+                        "panel_id": "mystery_structural_panel",
                         "panel_ru": "рамка радиатора",
                         "defect_types": ["R"],
                         "severity": None,
@@ -594,3 +589,49 @@ def test_unknown_panel_defects_are_preserved_in_extra_ru(batch_item) -> None:
     assert any("рамка радиатора" in note for note in lot.extra_ru)
     assert any("R" in note for note in lot.extra_ru)
     assert any("Unknown panel_id" in warning for warning in lot.ocr_warnings)
+
+
+@pytest.mark.django_db
+def test_body_panel_other_persists_as_defect_without_warning_and_skips_farpost(batch_item) -> None:
+    """BodyPanel.OTHER defects persist as LotDefect rows and do not emit English repair labels."""
+    from apps.integrations.farpost.service import estimate_repair
+
+    lot = batch_item.lot
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        body = _ok_response_body(
+            sheet=_sheet_payload(
+                defects=[
+                    {
+                        "panel_id": "other",
+                        "panel_ru": "Рамка радиатора (Core Support)",
+                        "defect_types": ["XX"],
+                        "severity": None,
+                        "description_ru": "Замена рамки радиатора",
+                        "raw_code": "XX",
+                    },
+                    {
+                        "panel_id": "hood",
+                        "panel_ru": "Капот",
+                        "defect_types": ["A1"],
+                        "severity": 1,
+                        "description_ru": "Царапина",
+                        "raw_code": "A1",
+                    },
+                ],
+            )
+        )
+        return httpx.Response(200, content=body)
+
+    parser = MlServiceParser(client=_client(handler))
+    assert parser.gatekeeper(batch_item) is None
+    parser.parse(batch_item)
+
+    lot.refresh_from_db()
+    defects = list(LotDefect.objects.filter(lot=lot).order_by("panel_id"))
+    assert [defect.panel_id for defect in defects] == [BodyPanel.HOOD, BodyPanel.OTHER]
+    assert not any("Unknown panel_id" in warning for warning in lot.ocr_warnings)
+
+    repair = estimate_repair(lot, client=object())  # type: ignore[arg-type]
+    assert repair.parts == []
+    assert all("other" not in work.label_ru.lower() for work in repair.service_works)

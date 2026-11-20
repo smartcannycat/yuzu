@@ -83,6 +83,8 @@ def wait_for_request_slot(
     deadline: float | None = None,
 ) -> None:
     """Reserve the next interval-spaced slot via Redis or per-key process lock."""
+    if deadline is not None and time.monotonic() >= deadline:
+        raise HttpBudgetExhaustedError("Request budget exhausted")
     if interval_sec <= 0 and jitter_sec <= 0:
         return
     jitter = random.uniform(0.0, jitter_sec) if jitter_sec > 0 else 0.0
@@ -91,15 +93,17 @@ def wait_for_request_slot(
         remaining = deadline - time.monotonic() - jitter
         if remaining <= 0:
             raise HttpBudgetExhaustedError("Request budget exhausted")
-    wait_sec = acquire_distributed_interval_slot(
-        throttle_key,
-        interval_sec,
-        max_wait_sec=remaining,
-    )
-    if wait_sec is not None and wait_sec < 0:
-        raise HttpBudgetExhaustedError("Request budget exhausted")
-    if wait_sec is None:
-        wait_sec = _reserve_local_slot(throttle_key, interval_sec, jitter, deadline)
+    wait_sec: float | None = 0.0
+    if interval_sec > 0:
+        wait_sec = acquire_distributed_interval_slot(
+            throttle_key,
+            interval_sec,
+            max_wait_sec=remaining,
+        )
+        if wait_sec is not None and wait_sec < 0:
+            raise HttpBudgetExhaustedError("Request budget exhausted")
+        if wait_sec is None:
+            wait_sec = _reserve_local_slot(throttle_key, interval_sec, jitter, deadline)
     total_wait = wait_sec + jitter
     if total_wait > 0:
         if deadline is not None and time.monotonic() + total_wait >= deadline:

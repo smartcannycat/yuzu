@@ -25,8 +25,8 @@ const open = defineModel<boolean>('open', { default: false })
           Кузовные и контрактные детали
         </h4>
         <div
-          v-for="part in detail.economics.farpost_repair.parts"
-          :key="`${part.panel_id}-${part.defect_code}`"
+          v-for="(part, idx) in detail.economics.farpost_repair.parts"
+          :key="`${idx}:${part.panel_id}-${part.defect_code}`"
           class="border-border bg-surface rounded-sm border p-3"
         >
           <div class="flex items-start justify-between gap-3">
@@ -60,8 +60,8 @@ const open = defineModel<boolean>('open', { default: false })
           Работы СТО и покраска
         </h4>
         <div
-          v-for="work in detail.economics.farpost_repair.service_works"
-          :key="work.label_ru"
+          v-for="(work, idx) in detail.economics.farpost_repair.service_works"
+          :key="`${idx}:${work.label_ru}`"
           class="border-border bg-surface-inset/50 flex items-start justify-between gap-3 rounded-sm border p-3"
         >
           <div class="min-w-0">

@@ -52,6 +52,13 @@ describe('batchFiles utilities', () => {
     const spoofedExtension = [makeFile('renamed.jpg', 'application/pdf', 2048)]
     expect((await validateBatchFileAddition([], spoofedExtension)).ok).toBe(false)
 
+    const emptyFile = [new File([], 'empty_sheet.jpg', { type: 'image/jpeg' })]
+    const emptyResult = await validateBatchFileAddition([], emptyFile)
+    expect(emptyResult.ok).toBe(false)
+    if (!emptyResult.ok) {
+      expect(emptyResult.error).toContain('empty_sheet.jpg')
+    }
+
     const oversized = [
       makeFile('valid.png', 'image/png', 2048),
       makeFile('huge.jpg', 'image/jpeg', BATCH_MAX_FILE_SIZE_BYTES + 1),

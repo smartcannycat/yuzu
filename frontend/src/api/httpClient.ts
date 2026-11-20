@@ -5,15 +5,20 @@ import {
   setHttpUnauthorizedHandler,
   type HttpClientOptions,
 } from '@/api/http/transport'
-import type { ApiClient } from '@/api/types'
+import type { ApiClient, RequestCancelOptions } from '@/api/types'
 
 export { setHttpUnauthorizedHandler, type HttpClientOptions }
 
 export function createHttpApiClient(options: HttpClientOptions = {}): ApiClient {
-  const request = createHttpTransport(options)
+  const transport = createHttpTransport(options)
 
   return {
-    auth: createHttpAuthApi(request),
-    lots: createHttpLotsApi(request),
+    auth: createHttpAuthApi(transport.request),
+    lots: createHttpLotsApi(transport.request),
+    media: {
+      fetchBlob(url: string, cancelOptions?: RequestCancelOptions): Promise<Blob> {
+        return transport.fetchBlob(url, cancelOptions?.signal)
+      },
+    },
   }
 }

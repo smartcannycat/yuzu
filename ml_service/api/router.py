@@ -1,25 +1,20 @@
-"""Thin FastAPI controllers for single-sheet parsing, batch jobs, and RFC 7807 errors."""
+"""Thin FastAPI controllers for single-sheet parsing, chassis OCR, and batch jobs."""
 
+import asyncio
 import logging
-from http import HTTPStatus
 from uuid import UUID
 
 import httpx
 from fastapi import (
     APIRouter,
     Depends,
-    FastAPI,
     File,
     HTTPException,
     Query,
-    Request,
     UploadFile,
     status,
 )
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
 from google.genai.errors import APIError
-from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ml_service.api.dependencies import (
     get_batch_service_dep,
@@ -27,147 +22,62 @@ from ml_service.api.dependencies import (
     get_key_pool_dep,
     get_parser_service_dep,
     get_settings_dep,
+    pre_auth_rate_limit_dep,
     rate_limit_dep,
     require_api_key_dep,
+)
+from ml_service.api.errors import raise_service_unavailable
+from ml_service.api.mappers import (
+    to_batch_create_response,
+    to_batch_progress_response,
+    to_parser_response,
 )
 from ml_service.api.schemas import (
     BatchCreateResponse,
     BatchProgressResponse,
     ChassisOcrResponse,
     HealthResponse,
-    InvalidParamDetail,
     ParserResponse,
     ParseUrlRequest,
-    ProblemDetailsResponse,
-    to_batch_create_response,
-    to_batch_progress_response,
-    to_parser_response,
 )
-from ml_service.config import Settings
+from ml_service.api.uploads import (
+    ALLOWED_CHASSIS_UPLOAD_MIMES,
+    declared_sizes_sum,
+    read_upload_bounded,
+    stage_batch_uploads,
+    validate_upload_content_type,
+)
+from ml_service.config import Settings, resolve_reference_date
+from ml_service.infrastructure.image_formats import (
+    CHASSIS_MAX_IMAGE_DIMENSION,
+    CHASSIS_MAX_IMAGE_PIXELS,
+)
 from ml_service.infrastructure.image_loader import verify_image_mime
 from ml_service.infrastructure.key_pool import GeminiKeyPool
 from ml_service.services.batch_parser_service import (
     BatchCapacityError,
     BatchConflictError,
     BatchParserService,
+    StagedBatchItem,
 )
 from ml_service.services.sheet_parser_service import SheetParserService
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(dependencies=[Depends(require_api_key_dep), Depends(rate_limit_dep)])
-_UPLOAD_CHUNK_SIZE = 1024 * 1024
-
-_ALLOWED_UPLOAD_MIMES = frozenset(
-    {
-        "image/jpeg",
-        "image/jpg",
-        "image/png",
-        "image/webp",
-        "image/heic",
-        "image/heif",
-        "application/octet-stream",
-        "",
-    }
+router = APIRouter(
+    dependencies=[
+        Depends(pre_auth_rate_limit_dep),
+        Depends(require_api_key_dep),
+        Depends(rate_limit_dep),
+    ]
 )
 
 
-def _validate_upload_content_type(upload: UploadFile) -> None:
-    mime = (upload.content_type or "").split(";")[0].strip().lower()
-    if mime not in _ALLOWED_UPLOAD_MIMES:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"Unsupported Content-Type '{mime}' for '{upload.filename or 'upload'}'. "
-                "Allowed MIME types: image/jpeg, image/png, image/webp, image/heic, image/heif."
-            ),
-        )
-
-
-async def _read_upload_bounded(upload: UploadFile, max_bytes: int) -> bytes:
-    """Read an uploaded file in bounded chunks so oversized payloads fail before buffering."""
-    declared_size = getattr(upload, "size", None)
-    if declared_size is not None and declared_size > max_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"Image size ({declared_size} bytes) exceeds maximum allowed ({max_bytes} bytes)."
-            ),
-        )
-
-    chunks = bytearray()
-    while True:
-        chunk = await upload.read(_UPLOAD_CHUNK_SIZE)
-        if not chunk:
-            break
-        if len(chunks) + len(chunk) > max_bytes:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Image size exceeds maximum allowed ({max_bytes} bytes).",
-            )
-        chunks.extend(chunk)
-    return bytes(chunks)
-
-
-def _problem_response(
-    *,
-    status_code: int,
-    detail: str,
-    instance: str,
-    headers: dict[str, str] | None = None,
-    invalid_params: list[InvalidParamDetail] | None = None,
-) -> JSONResponse:
-    try:
-        title = HTTPStatus(status_code).phrase
-    except ValueError:
-        title = "HTTP Error"
-    payload = ProblemDetailsResponse(
-        type=f"https://httpstatuses.com/{status_code}",
-        title=title,
-        status=status_code,
-        detail=detail,
-        instance=instance,
-        invalid_params=invalid_params or [],
-    )
-    return JSONResponse(
-        status_code=status_code,
-        content=payload.model_dump(),
-        media_type="application/problem+json",
-        headers=headers,
-    )
-
-
-def register_exception_handlers(app_instance: FastAPI) -> None:
-    """Register RFC 7807 Problem Details handlers on a FastAPI application instance."""
-
-    @app_instance.exception_handler(StarletteHTTPException)
-    async def _http_exception_handler(
-        request: Request, exc: StarletteHTTPException
-    ) -> JSONResponse:
-        return _problem_response(
-            status_code=exc.status_code,
-            detail=str(exc.detail),
-            instance=str(request.url.path),
-            headers=getattr(exc, "headers", None),
-        )
-
-    @app_instance.exception_handler(RequestValidationError)
-    async def _validation_exception_handler(
-        request: Request, exc: RequestValidationError
-    ) -> JSONResponse:
-        invalid_params = [
-            InvalidParamDetail(
-                name=".".join(str(part) for part in err.get("loc", ())) or "request",
-                reason=str(err.get("msg", "Validation error")),
-            )
-            for err in exc.errors()
-        ]
-        return _problem_response(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=str(exc.errors()),
-            instance=str(request.url.path),
-            invalid_params=invalid_params,
-        )
+async def _discard_if_supported(
+    batch_service: BatchParserService, staged_refs: list[StagedBatchItem]
+) -> None:
+    if staged_refs and hasattr(batch_service, "discard_staged"):
+        await batch_service.discard_staged(staged_refs)
 
 
 @router.get("/health", response_model=HealthResponse, tags=["health"])
@@ -176,10 +86,11 @@ async def health_check(
     key_pool: GeminiKeyPool = Depends(get_key_pool_dep),
 ) -> HealthResponse:
     """Return service health status and safe non-secret configuration counters."""
+    ref_year, _ = resolve_reference_date(settings.reference_year, settings.reference_month)
     return HealthResponse(
         status="ok",
         keys_configured=key_pool.key_count,
-        reference_year=settings.reference_year,
+        reference_year=ref_year,
     )
 
 
@@ -190,23 +101,24 @@ async def read_chassis_number(
     settings: Settings = Depends(get_settings_dep),
 ) -> ChassisOcrResponse:
     """Read the chassis/frame number printed in an uploaded chassis image."""
-    mime = (file.content_type or "").split(";")[0].strip().lower()
-    if mime not in {"image/jpeg", "image/jpg", "image/png"}:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"Unsupported Content-Type '{mime}' for chassis image. "
-                "Allowed: image/jpeg, image/png."
-            ),
-        )
-    payload = await _read_upload_bounded(file, settings.max_image_bytes)
+    validate_upload_content_type(
+        file,
+        allowed_mimes=ALLOWED_CHASSIS_UPLOAD_MIMES,
+        allowed_description="image/jpeg, image/png",
+    )
+    payload = await read_upload_bounded(file, settings.max_image_bytes)
     if not payload:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Image payload is empty.",
         )
     try:
-        detected_mime = verify_image_mime(payload)
+        detected_mime = await asyncio.to_thread(
+            verify_image_mime,
+            payload,
+            max_pixels=CHASSIS_MAX_IMAGE_PIXELS,
+            max_dimension=CHASSIS_MAX_IMAGE_DIMENSION,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     if detected_mime not in {"image/jpeg", "image/png"}:
@@ -223,11 +135,9 @@ async def read_chassis_number(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except (RuntimeError, APIError, TimeoutError, httpx.HTTPError) as exc:
         logger.warning("Chassis OCR backend error: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="ML chassis OCR service is temporarily unavailable. Please retry.",
-            headers={"Retry-After": "5"},
-        ) from exc
+        raise_service_unavailable(
+            "ML chassis OCR service is temporarily unavailable. Please retry."
+        )
     return ChassisOcrResponse(
         frame_id=entity.frame_id,
         raw=entity.raw,
@@ -244,8 +154,8 @@ async def parse_sheet_file(
     settings: Settings = Depends(get_settings_dep),
 ) -> ParserResponse:
     """Parse an uploaded Japanese car auction sheet image."""
-    _validate_upload_content_type(file)
-    payload = await _read_upload_bounded(file, settings.max_image_bytes)
+    validate_upload_content_type(file)
+    payload = await read_upload_bounded(file, settings.max_image_bytes)
     filename = file.filename or "upload.png"
     try:
         result = await parser_service.parse_bytes(
@@ -257,11 +167,7 @@ async def parse_sheet_file(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except (RuntimeError, APIError, TimeoutError, httpx.HTTPError) as exc:
         logger.warning("Single-sheet parse backend error: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="ML extraction service is temporarily unavailable. Please retry.",
-            headers={"Retry-After": "5"},
-        ) from exc
+        raise_service_unavailable("ML extraction service is temporarily unavailable. Please retry.")
     return to_parser_response(result)
 
 
@@ -280,11 +186,7 @@ async def parse_sheet_url(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except (RuntimeError, APIError, TimeoutError) as exc:
         logger.warning("URL sheet parse backend error: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="ML extraction service is temporarily unavailable. Please retry.",
-            headers={"Retry-After": "5"},
-        ) from exc
+        raise_service_unavailable("ML extraction service is temporarily unavailable. Please retry.")
     except httpx.HTTPError as exc:
         logger.warning("Failed to download remote image URL: %s", exc)
         raise HTTPException(
@@ -313,23 +215,26 @@ async def create_batch(
             detail=f"Batch must contain between 1 and {settings.batch_max_items} files.",
         )
     for upload in files:
-        _validate_upload_content_type(upload)
-    items = [
-        (
-            await _read_upload_bounded(upload, settings.max_image_bytes),
-            upload.filename or f"sheet_{index}.png",
-        )
-        for index, upload in enumerate(files)
-    ]
+        validate_upload_content_type(upload)
+    declared_bytes = declared_sizes_sum(files, settings.max_image_bytes)
+
+    staged_refs: list[StagedBatchItem] = []
     try:
+        if hasattr(batch_service, "preflight_create"):
+            batch_service.preflight_create(item_count=len(files), declared_bytes=declared_bytes)
+        items, staged_refs = await stage_batch_uploads(
+            files, max_image_bytes=settings.max_image_bytes, batch_service=batch_service
+        )
         batch = await batch_service.create_batch(items, force_refresh=force_refresh)
     except BatchCapacityError as exc:
+        await _discard_if_supported(batch_service, staged_refs)
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=str(exc),
             headers={"Retry-After": "5"},
         ) from exc
     except ValueError as exc:
+        await _discard_if_supported(batch_service, staged_refs)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return to_batch_create_response(batch, poll_interval_ms=settings.batch_poll_interval_ms)
 
@@ -372,22 +277,35 @@ async def add_batch_items(
             ),
         )
     for upload in files:
-        _validate_upload_content_type(upload)
-    items = [
-        (
-            await _read_upload_bounded(upload, settings.max_image_bytes),
-            upload.filename or f"sheet_{index}.png",
-        )
-        for index, upload in enumerate(files)
-    ]
+        validate_upload_content_type(upload)
+    declared_bytes = declared_sizes_sum(files, settings.max_image_bytes)
+
+    staged_refs: list[StagedBatchItem] = []
     try:
+        if hasattr(batch_service, "preflight_add_items"):
+            batch_service.preflight_add_items(
+                str(batch_id), item_count=len(files), declared_bytes=declared_bytes
+            )
+        items, staged_refs = await stage_batch_uploads(
+            files, max_image_bytes=settings.max_image_bytes, batch_service=batch_service
+        )
         batch = await batch_service.add_items(str(batch_id), items, force_refresh=force_refresh)
     except KeyError as exc:
+        await _discard_if_supported(batch_service, staged_refs)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Batch not found."
         ) from exc
     except BatchConflictError as exc:
+        await _discard_if_supported(batch_service, staged_refs)
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except BatchCapacityError as exc:
+        await _discard_if_supported(batch_service, staged_refs)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=str(exc),
+            headers={"Retry-After": "5"},
+        ) from exc
     except ValueError as exc:
+        await _discard_if_supported(batch_service, staged_refs)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return to_batch_progress_response(batch)

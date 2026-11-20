@@ -41,7 +41,7 @@ from apps.integrations.farpost.parser import _contains_code
 from apps.integrations.farpost.service import estimate_repair
 from apps.integrations.ml.parser import _sheet_to_lot_fields
 from apps.integrations.ml.schemas import NormalizedSheet, ParserResponse
-from apps.lots.api.queries import _build_normalized_sheet
+from apps.lots.api.queries import _build_normalized_sheet, recalculate_lot
 from apps.lots.api.schemas import RecalculateRequest
 from apps.lots.calculator.customs import meti_sanction_risk
 from apps.lots.calculator.economics import _resolve_start_bid_jpy
@@ -56,7 +56,6 @@ from apps.lots.models import (
     PastAuctionRecord,
     WiseCostLadder,
 )
-from apps.lots.services import recalculate_lot
 from apps.users.models import User
 
 
@@ -241,7 +240,7 @@ def test_aleado_fixes_for_single_letter_codes_own_lot_and_rules() -> None:
 
 
 @pytest.mark.django_db
-def test_aleado_excludes_undated_rows_and_does_not_save_start_price_as_closing() -> None:
+def test_aleado_preserves_undated_rows_and_does_not_save_start_price_as_closing() -> None:
     user = User.objects.create_user(email="aleado@example.com", password="Password123!")
     lot = Lot.objects.create(
         user=user,
@@ -305,9 +304,10 @@ def test_aleado_excludes_undated_rows_and_does_not_save_start_price_as_closing()
     service = AleadoCrossAuditService(client=_Client(), ml_client=_Ml())
     service._verify_candidates = lambda _lot, rows: [_VerifiedRow(row=r) for r in rows]
     outcome = service.audit_lot(lot)
-    assert outcome.times_auctioned == 1
-    assert PastAuctionRecord.objects.filter(audit__lot=lot).count() == 1
-    assert PastAuctionRecord.objects.get(audit__lot=lot).closing_price_jpy is None
+    assert outcome.times_auctioned == 2
+    records = list(PastAuctionRecord.objects.filter(audit__lot=lot))
+    assert len(records) == 2
+    assert all(record.closing_price_jpy is None for record in records)
 
 
 @pytest.mark.django_db

@@ -7,6 +7,7 @@ from decimal import Decimal
 from uuid import uuid4
 
 import httpx
+from django.conf import settings
 from django.db import transaction
 
 from apps.integrations.currency.cache import CurrencyCache
@@ -20,7 +21,6 @@ from apps.integrations.currency.domain import (
     compute_commercial_jpy,
     parse_fallback_config,
 )
-from config.settings.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -168,17 +168,18 @@ def build_currency_service(
     *, transport: httpx.BaseTransport | None = None, cache: CurrencyCache | None = None
 ) -> CurrencyRatesService:
     """Assemble the gateway from settings, with explicit local demonstration reserves."""
-    settings = get_settings()
-    fallback = parse_fallback_config(settings.CBRF_FALLBACK_RATES)
+    fallback = parse_fallback_config(getattr(settings, "CBRF_FALLBACK_RATES", None))
     if fallback is None:
         fallback = BaseRates(95.0, 85.0, 0.5825, "01.01.2026")
+    timeout_sec = float(getattr(settings, "CBRF_TIMEOUT_SEC", 5.0))
+    spread = Decimal(str(getattr(settings, "CBRF_JPY_SPREAD", 0.03)))
     return CurrencyRatesService(
         client=CbrfClient(
-            timeout_sec=settings.CBRF_TIMEOUT_SEC,
+            timeout_sec=timeout_sec,
             transport=transport,
         ),
         cache=cache if cache is not None else CurrencyCache(),
         fallback_config=fallback,
-        spread=Decimal(str(settings.CBRF_JPY_SPREAD)),
+        spread=spread,
         ttl=timedelta(hours=1),
     )

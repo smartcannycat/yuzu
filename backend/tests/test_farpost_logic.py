@@ -501,17 +501,12 @@ def test_farpost_client_marks_blocked_proxy_once_per_429_failure(monkeypatch):
     assert mark_calls == 1
 
 
-def test_services_read_shared_scraper_settings(monkeypatch):
-    fake_settings = AppSettings(
-        _env_file=None,
-        SCRAPER_PROXY_URLS=["http://shared-proxy:8080"],
-        SCRAPER_PROXY_BAN_SEC=95,
-        SCRAPER_TIMEOUT_SEC=13.5,
-        SCRAPER_REQUEST_INTERVAL_SEC=1.8,
-        SCRAPER_REQUEST_JITTER_SEC=0.3,
-    )
-    monkeypatch.setattr("apps.integrations.drom.service.get_settings", lambda: fake_settings)
-    monkeypatch.setattr("apps.integrations.farpost.service.get_settings", lambda: fake_settings)
+def test_services_read_shared_scraper_settings(monkeypatch, settings):
+    settings.SCRAPER_PROXY_URLS = ["http://shared-proxy:8080"]
+    settings.SCRAPER_PROXY_BAN_SEC = 95
+    settings.SCRAPER_TIMEOUT_SEC = 13.5
+    settings.SCRAPER_REQUEST_INTERVAL_SEC = 1.8
+    settings.SCRAPER_REQUEST_JITTER_SEC = 0.3
 
     drom_svc = DromMarketService()
     assert drom_svc._client._timeout_sec == 13.5
@@ -554,19 +549,15 @@ def test_services_read_shared_scraper_settings(monkeypatch):
     }
 
 
-def test_estimate_repair_forwards_captcha_and_ocr_settings(monkeypatch):
+def test_estimate_repair_forwards_captcha_and_ocr_settings(monkeypatch, settings):
     from apps.integrations.captcha import FarpostCaptchaSolver, TesseractImageCaptchaSolver
 
-    fake_settings = AppSettings(
-        _env_file=None,
-        FARPOST_CAPTCHA_MAX_ATTEMPTS=4,
-        FARPOST_CAPTCHA_SOLVE_BUDGET_SEC=12.5,
-        FARPOST_CAPTCHA_MAX_WORKERS=3,
-        FARPOST_CAPTCHA_OCR_ENABLED=True,
-        FARPOST_CAPTCHA_OCR_COMMAND="/opt/bin/tesseract",
-        SCRAPER_TIMEOUT_SEC=11.0,
-    )
-    monkeypatch.setattr("apps.integrations.farpost.service.get_settings", lambda: fake_settings)
+    settings.FARPOST_CAPTCHA_MAX_ATTEMPTS = 4
+    settings.FARPOST_CAPTCHA_SOLVE_BUDGET_SEC = 12.5
+    settings.FARPOST_CAPTCHA_MAX_WORKERS = 3
+    settings.FARPOST_CAPTCHA_OCR_ENABLED = True
+    settings.FARPOST_CAPTCHA_OCR_COMMAND = "/opt/bin/tesseract"
+    settings.SCRAPER_TIMEOUT_SEC = 11.0
     captured_kwargs: dict[str, object] = {}
 
     class CapturingFarpostClient:

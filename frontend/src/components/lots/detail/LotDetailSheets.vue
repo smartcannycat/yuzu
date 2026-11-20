@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, type Component } from 'vue'
 
 import LotAuditSheet from '@/components/lots/detail/sheets/LotAuditSheet.vue'
 import LotInspectorNotesSheet from '@/components/lots/detail/sheets/LotInspectorNotesSheet.vue'
@@ -18,28 +18,33 @@ defineProps<Props>()
 
 const activeSheet = defineModel<LotDetailSheetKind>('activeSheet', { default: null })
 
-function bindSheetOpen(kind: Exclude<LotDetailSheetKind, null>) {
-  return computed({
-    get: () => activeSheet.value === kind,
-    set: (open: boolean) => {
-      if (!open && activeSheet.value === kind) {
-        activeSheet.value = null
-      }
-    },
-  })
+const SHEET_COMPONENTS: Record<Exclude<LotDetailSheetKind, null>, Component> = {
+  scan: LotScanSheet,
+  audit: LotAuditSheet,
+  repair: LotRepairSheet,
+  notes: LotInspectorNotesSheet,
+  safety: LotSafetyChecklistSheet,
 }
 
-const isScanOpen = bindSheetOpen('scan')
-const isAuditOpen = bindSheetOpen('audit')
-const isRepairOpen = bindSheetOpen('repair')
-const isNotesOpen = bindSheetOpen('notes')
-const isSafetyOpen = bindSheetOpen('safety')
+const activeSheetComponent = computed(() =>
+  activeSheet.value ? SHEET_COMPONENTS[activeSheet.value] : null,
+)
+
+const isCurrentSheetOpen = computed({
+  get: () => activeSheet.value !== null,
+  set: (open: boolean) => {
+    if (!open) {
+      activeSheet.value = null
+    }
+  },
+})
 </script>
 
 <template>
-  <LotScanSheet v-model:open="isScanOpen" :detail="detail" />
-  <LotAuditSheet v-model:open="isAuditOpen" :detail="detail" />
-  <LotRepairSheet v-model:open="isRepairOpen" :detail="detail" />
-  <LotInspectorNotesSheet v-model:open="isNotesOpen" :detail="detail" />
-  <LotSafetyChecklistSheet v-model:open="isSafetyOpen" :detail="detail" />
+  <component
+    :is="activeSheetComponent"
+    v-if="activeSheetComponent"
+    v-model:open="isCurrentSheetOpen"
+    :detail="detail"
+  />
 </template>

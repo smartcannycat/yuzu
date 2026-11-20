@@ -5,11 +5,15 @@
 [service]
 default_auction_strictness = 0.65
 rate_limit_requests_per_minute = 120
+pre_auth_rate_limit_requests_per_minute = 300
+enable_docs = false
+cors_allowed_origins = []
 max_image_size_mb = 15
 http_timeout_seconds = 20.0
 cache_dir = ".cache/sheets"
-reference_year = 2026
-reference_month = 11
+cache_ttl_seconds = 604800.0
+cache_max_disk_mb = 512
+# reference_year and reference_month default dynamically to Asia/Tokyo (JST) when omitted.
 
 [gemini]
 decision_model = "gemini-decision-1"
@@ -43,6 +47,7 @@ max_items = 10
 max_concurrency = 3
 max_stored_batches = 200
 ttl_seconds = 1800.0
+max_queued_bytes = 268435456
 
 [crop]
 format = "JPEG"                   # Allowed: "JPEG" | "PNG" | "WEBP"

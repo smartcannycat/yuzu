@@ -3,19 +3,28 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin
 
 import httpx
 
 from apps.integrations.drom.client import _DEFAULT_HEADERS
-from apps.integrations.drom.directory_parser import _is_seo_label
-from apps.integrations.drom.html_utils import extract_bulls_list_ssr_payload
+from apps.integrations.drom.directory_parser import (
+    _is_seo_label,
+    extract_bulls_list_ssr_payload,
+)
 from apps.integrations.drom.parser import (
     parse_brand_models_from_html,
     parse_catalog_brands_from_html,
     parse_catalog_models_from_html,
 )
 from apps.integrations.drom.slugs import DEFAULT_MODEL_ALIASES, normalize_slug
-from apps.integrations.shared.http import decode_html_bytes
+from apps.integrations.shared.http import HttpTransportError, decode_html_bytes
+from apps.integrations.shared.http.redirects import MAX_REDIRECTS, REDIRECT_STATUSES
+from apps.integrations.shared.http.transport import read_bounded_httpx_response
+from apps.integrations.shared.url_guard import UnsafeExternalUrlError, validate_external_url
+
+_MAX_SCHEMA_HTML_BYTES = 5_000_000
+_DROM_ALLOWED_HOSTS = frozenset({"drom.ru"})
 
 _SCHEMA_SYNC_HEADERS: dict[str, str] = {
     **_DEFAULT_HEADERS,
@@ -129,8 +138,20 @@ def compact_brand_models(
 
 
 def _fetch_text(client: httpx.Client, url: str) -> tuple[int, str, str]:
-    resp = client.get(url)
-    return resp.status_code, str(resp.url), decode_html_bytes(resp.content, resp.headers)
+    current_url = validate_external_url(url, allowed_hosts=_DROM_ALLOWED_HOSTS, check_dns=False)
+    for _hop in range(MAX_REDIRECTS + 1):
+        with client.stream("GET", current_url) as resp:
+            location = resp.headers.get("location")
+            if resp.status_code in REDIRECT_STATUSES and location:
+                current_url = validate_external_url(
+                    urljoin(str(resp.url), location),
+                    allowed_hosts=_DROM_ALLOWED_HOSTS,
+                    check_dns=False,
+                )
+                continue
+            content = read_bounded_httpx_response(resp, _MAX_SCHEMA_HTML_BYTES)
+            return resp.status_code, str(resp.url), decode_html_bytes(content, resp.headers)
+    raise HttpTransportError(f"Too many redirects for {url}")
 
 
 def _scrape_model_map(
@@ -143,7 +164,7 @@ def _scrape_model_map(
     models: dict[str, str] = {}
     try:
         status, final_url, html = _fetch_text(client, url)
-    except httpx.HTTPError:
+    except (httpx.HTTPError, HttpTransportError, UnsafeExternalUrlError):
         return models
     if status != 200 or expected_path_part not in final_url.lower():
         return models
@@ -162,7 +183,7 @@ def _scrape_single_brand(
     timeout_sec: float,
 ) -> tuple[str, dict[str, Any], bool]:
     with httpx.Client(
-        headers=_SCHEMA_SYNC_HEADERS, follow_redirects=True, timeout=timeout_sec
+        headers=_SCHEMA_SYNC_HEADERS, follow_redirects=False, timeout=timeout_sec
     ) as client:
         sales_models = _scrape_model_map(
             client,
@@ -189,7 +210,7 @@ def sync_drom_schema(
 ) -> dict[str, Any]:
     """Scrape full Drom brand/model directory and filter enum schema into a compact JSON file."""
     with httpx.Client(
-        headers=_SCHEMA_SYNC_HEADERS, follow_redirects=True, timeout=timeout_sec
+        headers=_SCHEMA_SYNC_HEADERS, follow_redirects=False, timeout=timeout_sec
     ) as client:
         _, _, all_html = _fetch_text(client, "https://auto.drom.ru/all/")
         filter_schema = _extract_filter_schema(all_html)
