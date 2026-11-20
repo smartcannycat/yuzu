@@ -57,7 +57,9 @@ class BatchItemStatus(StrictBaseModel):
     )
     file_index: int = Field(..., ge=0, description="File ordinal in batch")
     original_filename: str = Field(..., description="Original uploaded filename")
-    preview_title: str | None = Field(None, description="Fast Header OCR preview title")
+    preview_title: str | None = Field(
+        None, description="Parsed car title preview for progress display"
+    )
     status: ItemProcessingStatus = Field(..., description="File processing status")
     current_step: TaskStep = Field(..., description="Current DAG step")
     error_message: str | None = Field(None, description="Failure error text")

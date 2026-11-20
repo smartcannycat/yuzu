@@ -172,31 +172,6 @@ async def test_gatekeeper_disabled_accepted_and_fail_open() -> None:
 
 
 @pytest.mark.asyncio
-async def test_extract_fast_header_success_and_timeout() -> None:
-    pool = GeminiKeyPool(["k1"], rpm_limit=2)
-    client = AsyncGeminiVisionClient(key_pool=pool, fast_header_timeout_seconds=0.2)
-    client.runner.set_client(
-        "k1",
-        _FakeGenaiClient(
-            models_handler=lambda **_kw: SimpleNamespace(
-                text=json.dumps({"make_en": "Toyota", "model_en": "Aqua", "lot_number": "101"})
-            )
-        ),
-    )
-    preview = await client.extract_fast_header(make_sliced_sheet())
-    assert preview is not None
-    assert preview.preview_title == "Toyota Aqua #101"
-
-    async def _slow(**_kw):
-        await asyncio.sleep(0.5)
-        return SimpleNamespace(text="{}")
-
-    slow_client = AsyncGeminiVisionClient(key_pool=pool, fast_header_timeout_seconds=0.05)
-    slow_client.runner.set_client("k1", _FakeGenaiClient(models_handler=_slow))
-    assert await slow_client.extract_fast_header(make_sliced_sheet()) is None
-
-
-@pytest.mark.asyncio
 async def test_extract_sheet_downgrade_failover_and_hedging() -> None:
     pool = GeminiKeyPool(["k1", "k2"], rpm_limit=4)
     client = AsyncGeminiVisionClient(

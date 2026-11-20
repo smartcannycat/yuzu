@@ -1,6 +1,5 @@
-"""Async Gemini Vision client for gatekeeper classification, fast header, and sheet OCR."""
+"""Async Gemini Vision client for gatekeeper classification and sheet OCR."""
 
-import asyncio
 import logging
 import time
 from dataclasses import replace
@@ -10,7 +9,6 @@ from google.genai import types
 from google.genai.errors import ClientError, ServerError
 
 from ml_service.domains.entities import (
-    FastHeaderPreviewEntity,
     GatekeeperDecisionEntity,
     ModelAttemptEntity,
     RawExtractionEntity,
@@ -20,14 +18,12 @@ from ml_service.domains.enums import LayoutComplexity
 from ml_service.infrastructure.gemini_prompts import (
     build_extraction_contents,
     build_gatekeeper_payload,
-    image_part,
     resolve_thinking_level,
 )
 from ml_service.infrastructure.gemini_runner import GeminiRunner
 from ml_service.infrastructure.gemini_schemas import (
     SYSTEM_PROMPT,
     AuctionExtractionSchema,
-    FastHeaderPreviewSchema,
     to_raw_extraction_entity,
 )
 from ml_service.infrastructure.image_formats import detect_mime_from_magic_bytes
@@ -54,7 +50,6 @@ class AsyncGeminiVisionClient:
         thinking_level: str = "LOW",
         request_deadline_seconds: float = 45.0,
         hedge_delay_seconds: float = 8.0,
-        fast_header_timeout_seconds: float = 1.2,
         gatekeeper_sheet_threshold: float = 0.60,
         gatekeeper_readable_threshold: float = 0.50,
         client_error_cooldown_seconds: float = 300.0,
@@ -66,7 +61,6 @@ class AsyncGeminiVisionClient:
         self.enable_gatekeeper = enable_gatekeeper
         self.gatekeeper_fail_open = gatekeeper_fail_open
         self.thinking_level = thinking_level
-        self.fast_header_timeout_seconds = fast_header_timeout_seconds
         self.gatekeeper_sheet_threshold = gatekeeper_sheet_threshold
         self.gatekeeper_readable_threshold = gatekeeper_readable_threshold
         self.runner = runner or GeminiRunner(
@@ -168,72 +162,6 @@ class AsyncGeminiVisionClient:
             duration_ms=elapsed_ms,
             warning=None,
         )
-
-    async def extract_fast_header(
-        self, sliced: SlicedSheetEntity
-    ) -> FastHeaderPreviewEntity | None:
-        """Run non-blocking low-resolution header OCR with strict timeout (<= 1.2s by default)."""
-        t0 = time.perf_counter()
-        target_bytes = sliced.crops_png.get("top_left") or sliced.full_png
-        mime_type = sliced.mime_type or detect_mime_from_magic_bytes(target_bytes)
-        candidates = self.runner.ordered_candidate_models()
-        model_name = candidates[0] if candidates else self.flash_model
-
-        async def _invoke_header(
-            model: str, api_key: str, level: types.ThinkingLevel
-        ) -> FastHeaderPreviewEntity:
-            contents = [
-                (
-                    "Быстро извлеки из шапки аукционного листа марку на латинице (make_en), "
-                    "модель на латинице (model_en) и номер лота (lot_number)."
-                ),
-                image_part(
-                    target_bytes, types.PartMediaResolutionLevel.MEDIA_RESOLUTION_LOW, mime_type
-                ),
-            ]
-            config = types.GenerateContentConfig(
-                thinking_config=types.ThinkingConfig(thinking_level=level),
-                response_mime_type="application/json",
-                response_json_schema=FastHeaderPreviewSchema.model_json_schema(),
-            )
-            response = await self.runner.generate_content(
-                api_key=api_key,
-                model_name=model,
-                contents=contents,
-                config=config,
-            )
-            if not response.text:
-                raise ValueError("Empty fast header response.")
-            parsed = FastHeaderPreviewSchema.model_validate_json(response.text)
-            return FastHeaderPreviewEntity(
-                make=parsed.make_en,
-                model=parsed.model_en,
-                lot_number=parsed.lot_number,
-                duration_ms=int((time.perf_counter() - t0) * 1000),
-            )
-
-        async def _call_header() -> FastHeaderPreviewEntity:
-            async with self.runner.key_pool.acquire() as api_key:
-                return await self.runner.call_with_thinking_downgrade(
-                    model_name=model_name,
-                    api_key=api_key,
-                    configured_level=types.ThinkingLevel.MINIMAL,
-                    invoke=_invoke_header,
-                )
-
-        try:
-            return await asyncio.wait_for(_call_header(), timeout=self.fast_header_timeout_seconds)
-        except (
-            TimeoutError,
-            ClientError,
-            ServerError,
-            RuntimeError,
-            ValueError,
-            OSError,
-            httpx.HTTPError,
-        ) as exc:
-            logger.debug("Fast header preview skipped (%s).", exc)
-            return None
 
     async def extract_sheet(
         self,

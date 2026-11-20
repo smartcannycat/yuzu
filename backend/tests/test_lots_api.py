@@ -54,9 +54,6 @@ class _FakeParser:
     def gatekeeper(self, item: BatchItem) -> str | None:
         return None
 
-    def fast_header(self, item: BatchItem) -> str | None:
-        return "Honda Freed #10034"
-
     def parse(self, item: BatchItem) -> None:
         lot = item.lot
         assert lot is not None

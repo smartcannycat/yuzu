@@ -260,7 +260,7 @@
                 "type": "null"
               }
             ],
-            "description": "Fast Header OCR preview title",
+            "description": "Parsed car title preview for progress display",
             "title": "Preview Title"
           },
           "status": {
@@ -2724,7 +2724,6 @@
       "TaskStep": {
         "enum": [
           "gatekeeper",
-          "fast_header_ocr",
           "gemini_ocr",
           "cross_audit",
           "customs_calc",

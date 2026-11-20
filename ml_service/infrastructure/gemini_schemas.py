@@ -17,14 +17,6 @@ from ml_service.domains.enums import (
 )
 
 
-class FastHeaderPreviewSchema(BaseModel):
-    """Lightweight top-header preview extracted rapidly for batch progress UI."""
-
-    make_en: str | None = None
-    model_en: str | None = None
-    lot_number: str | None = None
-
-
 class ChassisRead(BaseModel):
     """Chassis/frame number read from a tiny Aleado chassis-number image."""
 

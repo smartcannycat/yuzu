@@ -26,7 +26,6 @@ fallback_models = [
   "gemini-3.5-flash-lite",
 ]
 enable_gatekeeper = true
-enable_fast_header = false
 gatekeeper_fail_open = true
 gatekeeper_sheet_threshold = 0.60
 gatekeeper_readable_threshold = 0.50
@@ -40,7 +39,6 @@ max_key_tries = 3
 thinking_level = "LOW"             # Allowed: "MINIMAL" | "LOW" | "MEDIUM" | "HIGH"
 request_deadline_seconds = 45.0
 hedge_delay_seconds = 8.0
-fast_header_timeout_seconds = 1.2
 
 [batch]
 poll_interval_ms = 1500

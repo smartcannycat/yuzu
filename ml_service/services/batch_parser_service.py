@@ -286,16 +286,12 @@ class BatchParserService:
                     item.current_step = step
                     item.progress_pct = pct
 
-                async def _on_preview(title: str) -> None:
-                    item.preview_title = title
-
                 try:
                     result = await self._parser_service.parse_bytes(
                         data,
                         item.original_filename,
                         force_refresh=force_refresh,
                         on_step=_on_step,
-                        on_preview=_on_preview,
                     )
                 except Exception as exc:
                     logger.exception(

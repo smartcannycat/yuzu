@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from ml_service.api.mappers import to_batch_progress_response
-from ml_service.domains.entities import FastHeaderPreviewEntity, GatekeeperDecisionEntity
+from ml_service.domains.entities import GatekeeperDecisionEntity
 from ml_service.domains.enums import (
     BatchItemState,
     BatchStatus,
@@ -33,7 +33,6 @@ class _FakeVisionClient:
         self.accepted = accepted
         self.fail_extract = fail_extract
         self.check_calls = 0
-        self.fast_header_calls = 0
         self.extract_calls = 0
 
     @property
@@ -48,12 +47,6 @@ class _FakeVisionClient:
             complexity=LayoutComplexity.CLEAN_DIGITAL,
             model_used="gemini-decision-1",
             duration_ms=10,
-        )
-
-    async def extract_fast_header(self, _sliced) -> FastHeaderPreviewEntity | None:
-        self.fast_header_calls += 1
-        return FastHeaderPreviewEntity(
-            make="Toyota", model="Corolla Touring", lot_number="3142", duration_ms=15
         )
 
     async def extract_sheet(self, _sliced, _complexity: LayoutComplexity):
@@ -94,21 +87,14 @@ async def test_sheet_parser_service_cache_hit_force_refresh_and_rejection(
 ) -> None:
     service, vision, loader = _build_parser_service(tmp_path)
     steps: list[tuple[TaskStep, int]] = []
-    previews: list[str] = []
 
     async def on_step(step: TaskStep, pct: int) -> None:
         steps.append((step, pct))
 
-    async def on_preview(title: str) -> None:
-        previews.append(title)
-
-    first = await service.parse_bytes(
-        sample_png_bytes, filename="corolla.png", on_step=on_step, on_preview=on_preview
-    )
+    first = await service.parse_bytes(sample_png_bytes, filename="corolla.png", on_step=on_step)
     assert first.status == ParseStatus.OK
     assert first.meta.cached is False
     assert vision.extract_calls == 1
-    assert previews == ["Toyota Corolla Touring #3142"]
     assert steps[-1] == (TaskStep.COMPLETED, 100)
 
     # Cache hit skips vision calls
@@ -140,40 +126,6 @@ async def test_sheet_parser_service_parse_url(tmp_path: Path, sample_jpeg_bytes:
     assert result.status == ParseStatus.OK
     assert result.sheet is not None
     assert result.sheet.lot_number == "3142"
-    assert _vision.fast_header_calls == 0
-    await loader.http_client.aclose()
-
-
-@pytest.mark.asyncio
-async def test_sheet_parser_skips_fast_header_when_disabled(
-    tmp_path: Path, sample_png_bytes: bytes
-) -> None:
-    vision = _FakeVisionClient()
-    http_client = httpx.AsyncClient()
-    loader = AsyncImageLoader(
-        http_client=http_client,
-        max_bytes=5 * 1024 * 1024,
-        dns_resolver=lambda _host: ["93.184.216.34"],
-    )
-    service = SheetParserService(
-        image_loader=loader,
-        cropper=PillowImageCropper(min_px=400, max_px=600, image_format="JPEG"),
-        vision_client=vision,
-        factory=SheetFactory(),
-        cache=ResultCache(cache_dir=tmp_path / "cache"),
-        enable_fast_header=False,
-    )
-    previews: list[str] = []
-
-    async def on_preview(title: str) -> None:
-        previews.append(title)
-
-    res = await service.parse_bytes(
-        sample_png_bytes, filename="no_header.png", on_preview=on_preview
-    )
-    assert res.status == ParseStatus.OK
-    assert vision.fast_header_calls == 0
-    assert previews == []
     await loader.http_client.aclose()
 
 

@@ -72,15 +72,22 @@ def _run_ocr_stage(item: BatchItem) -> bool:
             if rejection:
                 _fail_item(item, TaskStep.FAILED, rejection)
                 return False
-            _advance_step(item, TaskStep.FAST_HEADER_OCR)
-            item.preview_title = parser.fast_header(item)
-            item.save(update_fields=["preview_title", "updated_at"])
             _advance_step(item, TaskStep.GEMINI_OCR)
             parser.parse(item)
         item.lot.refresh_from_db()
         if not item.lot.make or not item.lot.model:
             _fail_item(item, TaskStep.FAILED, "Распознавание не вернуло марку и модель")
             return False
+        preview_base = " ".join(
+            part.strip() for part in (item.lot.make, item.lot.model) if part and part.strip()
+        )
+        lot_no = (item.lot.lot_number or "").strip()
+        preview_title = (
+            f"{preview_base} #{lot_no}" if preview_base and lot_no else preview_base or None
+        )
+        if preview_title:
+            item.preview_title = preview_title[:200]
+            item.save(update_fields=["preview_title", "updated_at"])
         attach_uploaded_sheet_media_from_item(item)
         return True
     except Exception:

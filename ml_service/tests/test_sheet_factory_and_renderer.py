@@ -1,7 +1,6 @@
 """Unit tests for SheetFactory and Markdown passport renderer."""
 
 from ml_service.domains.entities import (
-    FastHeaderPreviewEntity,
     GatekeeperDecisionEntity,
     RawDefectEntity,
     RawRiskFlagsEntity,
@@ -28,10 +27,6 @@ def test_sheet_factory_builds_ok_result_and_markdown() -> None:
         duration_ms=42,
         warning="gatekeeper_unavailable:TimeoutError",
     )
-    header = FastHeaderPreviewEntity(
-        make="Toyota", model="Corolla", lot_number="3142", duration_ms=80
-    )
-
     result = factory.build_result(
         ext,
         processing_ms=350,
@@ -40,7 +35,6 @@ def test_sheet_factory_builds_ok_result_and_markdown() -> None:
         model_used="gemini-3.6-flash",
         sha256="abc123",
         gatekeeper=gatekeeper,
-        header_preview=header,
     )
 
     assert result.status == ParseStatus.OK
@@ -51,7 +45,7 @@ def test_sheet_factory_builds_ok_result_and_markdown() -> None:
     assert result.sheet.color_ru == "Белый перламутр"
     assert "gatekeeper_unavailable:TimeoutError" in result.warnings
     assert result.meta.gatekeeper_ms == 42
-    assert result.meta.header_ms == 80
+    assert result.meta.header_ms is None
     assert result.summary_md is not None
     assert "**Аукционный дом:** TAA (индекс строгости: 1.0)" in result.summary_md
     assert "ZWE211-6012345" in result.summary_md

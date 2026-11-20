@@ -415,7 +415,7 @@ export interface components {
             original_filename: string;
             /**
              * Preview Title
-             * @description Fast Header OCR preview title
+             * @description Parsed car title preview for progress display
              */
             preview_title?: string | null;
             /** @description File processing status */
@@ -1822,7 +1822,7 @@ export interface components {
          * TaskStep
          * @enum {string}
          */
-        TaskStep: "gatekeeper" | "fast_header_ocr" | "gemini_ocr" | "cross_audit" | "customs_calc" | "farpost_parts" | "drom_market" | "scoring" | "completed" | "failed";
+        TaskStep: "gatekeeper" | "gemini_ocr" | "cross_audit" | "customs_calc" | "farpost_parts" | "drom_market" | "scoring" | "completed" | "failed";
         /**
          * TrafficLightColor
          * @enum {string}

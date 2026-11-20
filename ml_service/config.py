@@ -29,7 +29,6 @@ _TOML_SECTION_PREFIXES: dict[str, str] = {
 
 _TOML_KEY_OVERRIDES: dict[tuple[str, str], str] = {
     ("gemini", "enable_gatekeeper"): "enable_gatekeeper",
-    ("gemini", "enable_fast_header"): "enable_fast_header",
     ("gemini", "fallback_models"): "gemini_fallback_models_raw",
 }
 
@@ -137,7 +136,6 @@ class Settings(BaseSettings):
         validation_alias="GEMINI_FALLBACK_MODELS",
     )
     enable_gatekeeper: bool = Field(default=True)
-    enable_fast_header: bool = Field(default=False)
     gemini_gatekeeper_fail_open: bool = Field(default=True)
     gemini_gatekeeper_sheet_threshold: float = Field(default=0.60, ge=0.0, le=1.0)
     gemini_gatekeeper_readable_threshold: float = Field(default=0.50, ge=0.0, le=1.0)
@@ -151,7 +149,6 @@ class Settings(BaseSettings):
     gemini_thinking_level: str = Field(default="LOW")
     gemini_request_deadline_seconds: float = Field(default=45.0, ge=5.0, le=300.0)
     gemini_hedge_delay_seconds: float = Field(default=8.0, ge=0.5, le=120.0)
-    gemini_fast_header_timeout_seconds: float = Field(default=1.2, ge=0.1, le=10.0)
     default_auction_strictness: float = Field(default=0.65, ge=0.0, le=1.0)
     batch_poll_interval_ms: int = Field(default=1500, ge=100, le=60000)
     batch_max_items: int = Field(default=10, ge=1, le=50)

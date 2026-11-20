@@ -85,20 +85,6 @@ class MlServiceParser:
         self._cache[item.pk] = {"bytes": image_bytes, "sha256": sha256, "response": response}
         return None
 
-    def fast_header(self, item: BatchItem) -> str | None:
-        """Build a preview title from the cached parse response."""
-        response = self._cached_response(item)
-        if response is None or response.sheet is None:
-            return None
-        sheet = response.sheet
-        parts = [part for part in (sheet.make, sheet.model) if part]
-        if not parts:
-            return None
-        title = " ".join(parts)
-        if sheet.lot_number:
-            title = f"{title} #{sheet.lot_number}"
-        return title[:200]
-
     def parse(self, item: BatchItem) -> None:
         """Apply the cached parse response to the lot and its related rows."""
         try:

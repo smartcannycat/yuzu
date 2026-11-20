@@ -11,7 +11,7 @@ Async FastAPI microservice for OCR, translation, and normalization of Japanese c
   - `PillowImageCropper` (margin trimming, 2x2 overlapping 60%x60% quadrants, compact `JPEG` output `1000-1400 px`, `quality=88`, explicit pixel/dimension guards);
   - `ResultCache` & `atomic_io.py` (two-tier LRU memory + atomic disk JSON cache keyed by image digest, reference date, auction strictness, and schema/prompt version, with TTL + disk byte quota eviction and graceful `OSError` handling);
   - `GeminiKeyPool` (round-robin API key pool with per-key sliding-window RPM tracking, cooldowns, and lock/semaphore release before sleep);
-  - `GeminiRunner`, `AsyncGeminiVisionClient`, and `ChassisOcrClient` (shared async `client.aio` execution layer, `gemini-decision-1` Gatekeeper with `fail_open`, `FastHeaderPreview`, hedged failover across fallback models with `401`/`403` fail-fast, and clean SDK shutdown).
+  - `GeminiRunner`, `AsyncGeminiVisionClient`, and `ChassisOcrClient` (shared async `client.aio` execution layer, `gemini-decision-1` Gatekeeper with `fail_open`, hedged failover across fallback models with `401`/`403` fail-fast, local Tesseract chassis fast-path, and clean SDK shutdown).
 - `services/` - `SheetParserService` and `BatchParserService` (1..10 item batches with UUID v4, pre-read capacity & global queued-bytes enforcement, disk spill under `cache_dir`, completion-based TTL, sanitized error reporting, and Live Polling with `mascot` and `preview_title`).
 - `api/` - Thin FastAPI controllers, pre-auth IP rate limiting + constant-time `X-API-Key` authentication (`hmac.compare_digest`, fail-closed `503`), async post-auth IP rate limiting, strict `extra="forbid"` schemas, and RFC 7807 Problem Details (`application/problem+json` for `400`, `401`, `404`, `409`, `422`, `429`, `500`, `502`, `503`).
 
@@ -40,7 +40,6 @@ Async FastAPI microservice for OCR, translation, and normalization of Japanese c
 | `GEMINI_THINKING_LEVEL` | `LOW` | Gemini 3 thinking level (`MINIMAL`, `LOW`, `MEDIUM`, `HIGH`) |
 | `GEMINI_REQUEST_DEADLINE_SECONDS` | `45.0` | Total extraction deadline across the model chain |
 | `GEMINI_HEDGE_DELAY_SECONDS` | `8.0` | Delay before launching a hedged fallback model |
-| `GEMINI_FAST_HEADER_TIMEOUT_SECONDS` | `1.2` | Strict timeout for fast header preview (`preview_title`) |
 | `DEFAULT_AUCTION_STRICTNESS` | `0.65` | Default strictness index for `AuctionHouse.OTHER` |
 | `BATCH_POLL_INTERVAL_MS` | `1500` | Suggested polling interval returned in `202 Accepted` |
 | `BATCH_MAX_ITEMS` | `10` | Max files allowed per batch |

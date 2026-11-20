@@ -62,7 +62,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             thinking_level=resolved_settings.gemini_thinking_level,
             request_deadline_seconds=resolved_settings.gemini_request_deadline_seconds,
             hedge_delay_seconds=resolved_settings.gemini_hedge_delay_seconds,
-            fast_header_timeout_seconds=resolved_settings.gemini_fast_header_timeout_seconds,
             gatekeeper_sheet_threshold=resolved_settings.gemini_gatekeeper_sheet_threshold,
             gatekeeper_readable_threshold=resolved_settings.gemini_gatekeeper_readable_threshold,
             client_error_cooldown_seconds=resolved_settings.gemini_client_error_cooldown_seconds,
@@ -98,7 +97,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             vision_client=vision_client,
             factory=factory,
             cache=cache,
-            enable_fast_header=resolved_settings.enable_fast_header,
         )
         batch_service = BatchParserService(
             parser_service=parser_service,

@@ -1,6 +1,5 @@
 """Application service for parsing single Japanese car auction sheets."""
 
-import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
@@ -9,7 +8,6 @@ from typing import Protocol
 import httpx
 
 from ml_service.domains.entities import (
-    FastHeaderPreviewEntity,
     GatekeeperDecisionEntity,
     LoadedImageEntity,
     ParserResultEntity,
@@ -22,7 +20,6 @@ from ml_service.infrastructure.gemini_schemas import EXTRACTION_CACHE_VERSION
 from ml_service.infrastructure.result_cache import build_sheet_cache_key
 
 StepCallback = Callable[[TaskStep, int], Awaitable[None]]
-PreviewCallback = Callable[[str], Awaitable[None]]
 
 
 class VisionUpstreamError(RuntimeError):
@@ -46,10 +43,6 @@ class VisionClientProtocol(Protocol):
     def flash_model_name(self) -> str: ...
 
     async def check_sheet(self, full_png: bytes) -> GatekeeperDecisionEntity: ...
-
-    async def extract_fast_header(
-        self, sliced: SlicedSheetEntity
-    ) -> FastHeaderPreviewEntity | None: ...
 
     async def extract_sheet(
         self,
@@ -81,7 +74,6 @@ class SheetParserService:
         cache: ResultCacheProtocol,
         *,
         schema_version: str = EXTRACTION_CACHE_VERSION,
-        enable_fast_header: bool = True,
     ) -> None:
         self._image_loader = image_loader
         self._cropper = cropper
@@ -89,7 +81,6 @@ class SheetParserService:
         self._factory = factory
         self._cache = cache
         self._schema_version = schema_version
-        self._enable_fast_header = enable_fast_header
 
     async def parse_bytes(
         self,
@@ -98,7 +89,6 @@ class SheetParserService:
         *,
         force_refresh: bool = False,
         on_step: StepCallback | None = None,
-        on_preview: PreviewCallback | None = None,
     ) -> ParserResultEntity:
         """Parse an uploaded auction sheet byte payload into a normalized ParserResultEntity."""
         started_at = time.perf_counter()
@@ -108,7 +98,6 @@ class SheetParserService:
             loaded,
             force_refresh=force_refresh,
             on_step=on_step,
-            on_preview=on_preview,
             started_at=started_at,
         )
 
@@ -118,7 +107,6 @@ class SheetParserService:
         *,
         force_refresh: bool = False,
         on_step: StepCallback | None = None,
-        on_preview: PreviewCallback | None = None,
     ) -> ParserResultEntity:
         """Download an auction sheet image from URL and parse it."""
         started_at = time.perf_counter()
@@ -131,7 +119,6 @@ class SheetParserService:
             loaded,
             force_refresh=force_refresh,
             on_step=on_step,
-            on_preview=on_preview,
             started_at=started_at,
         )
 
@@ -141,37 +128,12 @@ class SheetParserService:
         complexity: LayoutComplexity,
         *,
         on_step: StepCallback | None,
-        on_preview: PreviewCallback | None,
-    ) -> tuple[RawExtractionEntity, FastHeaderPreviewEntity | None]:
-        header_preview: FastHeaderPreviewEntity | None = None
-        run_preview = self._enable_fast_header and on_preview is not None
-        header_task: asyncio.Task[FastHeaderPreviewEntity | None] | None = None
-
-        if run_preview:
-            assert on_preview is not None
-
-            async def _run_fast_header() -> FastHeaderPreviewEntity | None:
-                preview = await self._vision_client.extract_fast_header(sliced)
-                if preview is not None and preview.preview_title:
-                    await on_preview(preview.preview_title)
-                return preview
-
-            await _notify_step(on_step, TaskStep.FAST_HEADER_OCR, 45)
-            header_task = asyncio.create_task(_run_fast_header())
-
+    ) -> RawExtractionEntity:
         await _notify_step(on_step, TaskStep.GEMINI_OCR, 65)
         try:
-            extracted = await self._vision_client.extract_sheet(sliced, complexity)
+            return await self._vision_client.extract_sheet(sliced, complexity)
         except httpx.HTTPError as exc:
             raise VisionUpstreamError(f"Vision extraction HTTP error: {exc}") from exc
-        finally:
-            if header_task is not None:
-                if not header_task.done():
-                    header_task.cancel()
-                results = await asyncio.gather(header_task, return_exceptions=True)
-                if results and isinstance(results[0], FastHeaderPreviewEntity):
-                    header_preview = results[0]
-        return extracted, header_preview
 
     async def _parse_loaded(
         self,
@@ -179,7 +141,6 @@ class SheetParserService:
         *,
         force_refresh: bool,
         on_step: StepCallback | None,
-        on_preview: PreviewCallback | None,
         started_at: float,
     ) -> ParserResultEntity:
         ref_year, ref_month = self._factory.resolve_reference_date()
@@ -217,11 +178,10 @@ class SheetParserService:
                 gatekeeper=decision,
             )
 
-        extracted, header_preview = await self._run_extraction(
+        extracted = await self._run_extraction(
             sliced,
             decision.complexity,
             on_step=on_step,
-            on_preview=on_preview,
         )
         elapsed_ms = int((time.perf_counter() - started_at) * 1000)
         result = self._factory.build_result(
@@ -232,7 +192,6 @@ class SheetParserService:
             model_used=extracted.model_used or self._vision_client.flash_model_name,
             sha256=loaded.sha256,
             gatekeeper=decision,
-            header_preview=header_preview,
             reference_date=(ref_year, ref_month),
         )
 

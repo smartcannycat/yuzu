@@ -40,7 +40,6 @@ class ItemProcessingStatus(TextChoices):
 
 class TaskStep(TextChoices):
     GATEKEEPER = "gatekeeper"
-    FAST_HEADER_OCR = "fast_header_ocr"
     GEMINI_OCR = "gemini_ocr"
     CROSS_AUDIT = "cross_audit"
     CUSTOMS_CALC = "customs_calc"

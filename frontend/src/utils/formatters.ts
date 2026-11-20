@@ -9,7 +9,6 @@ const shortDateFormatter = new Intl.DateTimeFormat('ru-RU', {
 
 const TASK_STEP_LABELS_RU: Record<TaskStep, string> = {
   gatekeeper: 'Проверка листа',
-  fast_header_ocr: 'Распознавание шапки',
   gemini_ocr: 'Чтение схемы и заметок',
   cross_audit: 'Кросс-аудит аукционника',
   customs_calc: 'Расчёт пошлин и утильсбора',

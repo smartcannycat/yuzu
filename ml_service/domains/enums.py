@@ -71,7 +71,6 @@ class TaskStep(StrEnum):
 
     QUEUED = "queued"
     GATEKEEPER = "gatekeeper"
-    FAST_HEADER_OCR = "fast_header_ocr"
     GEMINI_OCR = "gemini_ocr"
     COMPLETED = "completed"
     FAILED = "failed"
