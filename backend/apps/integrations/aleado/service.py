@@ -5,11 +5,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-import httpx
 from django.db import transaction
 from django.utils import timezone
 
 from apps.core.enums import CrossAuditStatus, RiskLevel
+from apps.integrations.aleado.cache import AleadoCache
 from apps.integrations.aleado.client import (
     AleadoAuthError,
     AleadoClient,
@@ -29,7 +29,7 @@ from apps.integrations.aleado.matcher import (
     select_and_sort_candidates,
 )
 from apps.integrations.aleado.parser import AleadoParseError
-from apps.integrations.ml.client import MlServiceError, MlServiceUnavailableError
+from apps.integrations.aleado.verifier import verify_candidates
 from apps.lots.models import AnomalyAlert, CrossAuditReport, Lot, PastAuctionRecord
 
 if TYPE_CHECKING:
@@ -143,12 +143,16 @@ class AleadoCrossAuditService:
         self,
         client: AleadoClient | None = None,
         ml_client: MlServiceClient | None = None,
+        *,
+        cache: AleadoCache | None = None,
+        budget_sec: float | None = None,
+        ocr_max_workers: int | None = None,
     ) -> None:
+        from django.conf import settings
+
         self._owns_client = client is None
         self._owns_ml_client = False
         if client is None:
-            from django.conf import settings
-
             client = AleadoClient(
                 username=settings.ALEADO_USERNAME,
                 password=settings.ALEADO_PASSWORD,
@@ -158,6 +162,32 @@ class AleadoCrossAuditService:
         self.client = client
         self.ml_client = ml_client
         self._verify_candidates_limit = self._resolve_verify_limit()
+        self._budget_sec = (
+            float(budget_sec)
+            if budget_sec is not None
+            else float(getattr(settings, "ALEADO_BUDGET_SEC", 25.0))
+        )
+        self._ocr_max_workers = max(
+            1,
+            int(
+                ocr_max_workers
+                if ocr_max_workers is not None
+                else getattr(settings, "ALEADO_OCR_MAX_WORKERS", 3)
+            ),
+        )
+        self._cache: AleadoCache | None = (
+            cache
+            if cache is not None
+            else (self._build_default_cache(settings) if self._owns_client else None)
+        )
+
+    @staticmethod
+    def _build_default_cache(settings: object) -> AleadoCache:
+        return AleadoCache(
+            search_ttl_sec=int(getattr(settings, "ALEADO_SEARCH_CACHE_TTL_SEC", 1800)),
+            detail_ttl_sec=int(getattr(settings, "ALEADO_DETAIL_CACHE_TTL_SEC", 604800)),
+            chassis_ttl_sec=int(getattr(settings, "ALEADO_CHASSIS_CACHE_TTL_SEC", 2592000)),
+        )
 
     def close(self) -> None:
         if self._owns_client and hasattr(self.client, "close"):
@@ -200,9 +230,9 @@ class AleadoCrossAuditService:
             return self._save_unavailable(lot, "Не удалось определить код кузова для поиска")
 
         try:
-            rows = self.client.search_lots(model_code, lot.first_reg_year)
+            rows = self._search_lots_cached(model_code, lot.first_reg_year)
             if not rows and lot.first_reg_year is not None:
-                rows = self.client.search_lots(model_code, None)
+                rows = self._search_lots_cached(model_code, None)
         except AleadoAuthError:
             logger.exception("Aleado authentication failed for lot %s", lot.pk)
             return self._save_unavailable(lot, "Ошибка авторизации в каталоге Aleado")
@@ -237,6 +267,16 @@ class AleadoCrossAuditService:
         )
         return outcome
 
+    def _search_lots_cached(self, model_code: str, year: int | None) -> list[AleadoLotRow]:
+        if self._cache is not None:
+            cached = self._cache.get_search(model_code, year)
+            if cached is not None:
+                return cached
+        rows = self.client.search_lots(model_code, year)
+        if self._cache is not None and rows:
+            self._cache.set_search(model_code, year, rows)
+        return rows
+
     def _verify_candidates(self, lot: Lot, candidates: list[AleadoLotRow]) -> list[_VerifiedRow]:
         if not candidates:
             return []
@@ -252,47 +292,16 @@ class AleadoCrossAuditService:
         if ml_client is None:
             return []
 
-        verified: list[_VerifiedRow] = []
-        for candidate in candidates:
-            try:
-                verified_row = self._verify_one(candidate, expected, ml_client)
-            except (
-                AleadoParseError,
-                AleadoUnavailableError,
-                MlServiceError,
-                MlServiceUnavailableError,
-                ValueError,
-                httpx.HTTPError,
-            ) as exc:
-                logger.warning(
-                    "Aleado chassis verification failed for candidate %s (lot %s): %s",
-                    candidate.internal_id,
-                    lot.pk,
-                    exc,
-                )
-                continue
-            if verified_row is not None:
-                verified.append(verified_row)
-        return verified
-
-    def _verify_one(
-        self,
-        candidate: AleadoLotRow,
-        expected_frame_id: str,
-        ml_client: MlServiceClient,
-    ) -> _VerifiedRow | None:
-        if not candidate.internal_id:
-            return None
-        detail = self.client.get_lot_detail(candidate.internal_id)
-        if not detail.chassis_image_url:
-            return None
-        image_bytes = self.client.fetch_chassis_image(detail)
-        chassis_read = ml_client.read_chassis(image_bytes)
-        if chassis_read is None or not chassis_read.frame_id:
-            return None
-        if _normalize_frame_id(chassis_read.frame_id) != expected_frame_id:
-            return None
-        return _VerifiedRow(candidate, detail)
+        return verify_candidates(
+            lot_pk=lot.pk,
+            candidates=candidates,
+            expected_frame_id=expected,
+            client=self.client,
+            ml_client=ml_client,
+            cache=self._cache,
+            budget_sec=self._budget_sec,
+            ocr_max_workers=self._ocr_max_workers,
+        )
 
     def _save_unavailable(self, lot: Lot, reason_ru: str) -> CrossAuditOutcome:
         outcome = CrossAuditOutcome(

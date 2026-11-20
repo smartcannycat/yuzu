@@ -22,6 +22,7 @@ _LOT_PARSER_BACKEND_ALIASES: dict[str, str] = {
 
 _TOML_SECTION_PREFIXES: dict[str, str] = {
     "app": "",
+    "pipeline": "PIPELINE_",
     "jwt": "JWT_",
     "media": "MEDIA_",
     "ml_service": "ML_SERVICE_",
@@ -149,6 +150,14 @@ class AppSettings(BaseSettings):
     ALEADO_TIMEOUT_SEC: float = Field(default=20.0, gt=0, allow_inf_nan=False)
     ALEADO_REQUEST_INTERVAL_SEC: float = Field(default=1.0, gt=0, allow_inf_nan=False)
     ALEADO_VERIFY_CANDIDATES: int = Field(default=10, ge=0, le=50)
+    ALEADO_BUDGET_SEC: float = Field(default=25.0, gt=0, allow_inf_nan=False)
+    ALEADO_OCR_MAX_WORKERS: int = Field(default=3, ge=1, le=8)
+    ALEADO_SEARCH_CACHE_TTL_SEC: int = Field(default=1800, ge=0)
+    ALEADO_DETAIL_CACHE_TTL_SEC: int = Field(default=604800, ge=0)
+    ALEADO_CHASSIS_CACHE_TTL_SEC: int = Field(default=2592000, ge=0)
+
+    # Background batch pipeline throughput
+    PIPELINE_BATCH_ITEM_CONCURRENCY: int = Field(default=4, ge=1, le=16)
 
     # Redis / Celery worker, rate limiting & media retention
     REDIS_URL: str = ""

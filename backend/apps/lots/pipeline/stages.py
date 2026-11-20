@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_PIPELINE_STEP_DELAY_SEC = 0.2
+_PIPELINE_STEP_DELAY_SEC = 0.0
 _EV_MISSING_POWER_WARNING = EV_MISSING_POWER_WARNING
 
 _SUMMARY_REQUIRED_FIELDS: tuple[str, ...] = (
@@ -62,7 +62,7 @@ _SUMMARY_REQUIRED_FIELDS: tuple[str, ...] = (
 def _claim_next_queued_item(batch_id: uuid.UUID) -> BatchItem | None:
     with transaction.atomic():
         item = (
-            BatchItem.objects.select_for_update()
+            BatchItem.objects.select_for_update(skip_locked=True)
             .filter(batch_id=batch_id, status=ItemProcessingStatus.QUEUED)
             .order_by("file_index")
             .first()
@@ -92,7 +92,8 @@ def _advance_step(item: BatchItem, step: TaskStep) -> None:
         if item.batch_id:
             Batch.objects.filter(pk=item.batch_id).update(updated_at=now)
             renew_batch_lease(item.batch_id)
-        time.sleep(_PIPELINE_STEP_DELAY_SEC)
+        if _PIPELINE_STEP_DELAY_SEC > 0:
+            time.sleep(_PIPELINE_STEP_DELAY_SEC)
 
 
 def _fail_item(item: BatchItem, step: TaskStep, message: str) -> None:

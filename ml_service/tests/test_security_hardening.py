@@ -338,3 +338,11 @@ def test_settings_default_jst_date_and_utc_rollover(tmp_path: Path) -> None:
         )
         assert res.sheet is not None
         assert res.sheet.is_pass_corridor_3_5 is True
+
+
+def test_settings_load_throughput_rate_limits_from_config_toml() -> None:
+    from ml_service.config import Settings
+
+    loaded = Settings()
+    assert loaded.rate_limit_requests_per_minute == 600
+    assert loaded.pre_auth_rate_limit_requests_per_minute == 1200

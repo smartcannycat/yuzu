@@ -13,6 +13,9 @@ django_admin_url = "admin/"
 admin_allowed_ips = []
 private_intake_root = "private_intake"
 
+[pipeline]
+batch_item_concurrency = 4
+
 [jwt]
 access_token_lifetime_minutes = 60
 refresh_token_lifetime_days = 7
@@ -47,6 +50,11 @@ captcha_ocr_command = "tesseract"
 timeout_sec = 20.0
 request_interval_sec = 1.0
 verify_candidates = 10
+budget_sec = 25.0
+ocr_max_workers = 3
+search_cache_ttl_sec = 1800
+detail_cache_ttl_sec = 604800
+chassis_cache_ttl_sec = 2592000
 
 [currency]
 timeout_sec = 5.0

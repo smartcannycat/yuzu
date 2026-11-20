@@ -156,8 +156,8 @@ class Settings(BaseSettings):
     batch_max_stored_batches: int = Field(default=200, ge=1, le=10000)
     batch_ttl_seconds: float = Field(default=1800.0, ge=10.0, le=86400.0)
     batch_max_queued_bytes: int = Field(default=256 * 1024 * 1024, ge=1024)
-    rate_limit_requests_per_minute: int = Field(default=120, ge=0, le=10000)
-    pre_auth_rate_limit_requests_per_minute: int = Field(default=300, ge=0, le=100000)
+    rate_limit_requests_per_minute: int = Field(default=600, ge=0, le=10000)
+    pre_auth_rate_limit_requests_per_minute: int = Field(default=1200, ge=0, le=100000)
 
     enable_docs: bool = Field(default=False)
     cors_allowed_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)

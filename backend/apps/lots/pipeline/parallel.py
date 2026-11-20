@@ -65,6 +65,8 @@ def _run_ocr_stage(item: BatchItem) -> bool:
         _fail_item(item, TaskStep.FAILED, "Сервис распознавания не настроен")
         return False
     try:
+        if not connection.in_atomic_block:
+            connection.close()
         with managed_closing(import_string(settings.LOT_PARSER_BACKEND)()) as parser:
             rejection = parser.gatekeeper(item)
             if rejection:
