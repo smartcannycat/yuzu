@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -112,6 +113,13 @@ def _describe_part_source(
     return subtitle, source_kind
 
 
+_REPLACEMENT_CODE_RE = re.compile(r"XX?[1-4]?")
+
+
+def _has_replacement_code(codes: set[str]) -> bool:
+    return any(bool(_REPLACEMENT_CODE_RE.fullmatch(code)) for code in codes)
+
+
 @dataclass(frozen=True, slots=True)
 class _RepairContext:
     search_make: str
@@ -151,7 +159,7 @@ def _estimate_replacement_panel(
     )
     part_payload = {
         "panel_id": panel,
-        "defect_code": "XX" if "XX" in codes else "X",
+        "defect_code": "XX" if any(c.startswith("XX") for c in codes) else "X",
         "part_name_ru": name,
         "subtitle_ru": subtitle,
         "source_kind": source_kind,
@@ -246,7 +254,7 @@ def _assemble_repair_schema(
     has_color_matched_parts = False
     for panel, codes in ordered_panels:
         name = FIXED_PANELS.get(panel, PANELS.get(panel, (panel,))[0])
-        is_replacement = bool(codes & {"X", "XX"})
+        is_replacement = _has_replacement_code(codes)
         if is_replacement and panel in FIXED_PANELS:
             operations = {WorkType.BODYWORK: matrix["bodywork"]}
         elif is_replacement and panel in PANELS:
@@ -304,7 +312,7 @@ def estimate_repair(
     replacement_targets = [
         (panel, codes, PANELS[panel][0])
         for panel, codes in ordered_panels
-        if bool(codes & {"X", "XX"}) and panel not in FIXED_PANELS and panel in PANELS
+        if _has_replacement_code(codes) and panel not in FIXED_PANELS and panel in PANELS
     ]
     panel_results = _resolve_replacement_panels(
         targets=replacement_targets,

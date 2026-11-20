@@ -46,13 +46,23 @@ class DefectCode(StrEnum):
 
     A = "A"
     U = "U"
+    B = "B"
+    E = "E"
     W = "W"
     S = "S"
     C = "C"
+    Y = "Y"
+    P = "P"
+    H = "H"
+    G = "G"
+    O = "O"  # noqa: E741
+    T = "T"
+    L = "L"
+    F = "F"
+    M = "M"
+    BP = "BP"
     XX = "XX"
     X = "X"
-    P = "P"
-    G = "G"
     R = "R"
 
 

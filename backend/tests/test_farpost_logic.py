@@ -634,3 +634,93 @@ def test_part_source_kind_matches_frontend_labels():
     vue_text = vue_path.read_text(encoding="utf-8")
     for kind in PartSourceKind:
         assert kind.value in vue_text
+
+
+@pytest.mark.django_db
+def test_repair_matrix_covers_all_canonical_defect_codes_and_severity_four(caplog, user_factory):
+    from pydantic import ValidationError
+
+    from apps.core.enums import BodyPanel, DefectCode
+    from apps.integrations.farpost.matrix import _operations, _panel_codes, repair_matrix
+    from apps.lots.api.schemas.common import NormalizedDefect
+    from apps.lots.models import Lot, LotDefect
+
+    matrix = repair_matrix()
+    repair_codes = {code.value for code in DefectCode} - {"X", "XX"}
+
+    samples = [
+        *(f"{code}{sev}" for code in sorted(repair_codes) for sev in (1, 2, 3, 4)),
+        *(sorted(repair_codes)),
+        "B2",
+        "B3",
+        "B4",
+        "E1",
+        "H2",
+        "BP2",
+        "Y2",
+        "A4",
+        "U4",
+        "O2",
+        "T1",
+        "L1",
+        "F2",
+        "M1",
+        "R2",
+        "AU3",
+        "A2U2",
+        "B2-3",
+        "B小",
+    ]
+    with caplog.at_level("WARNING"):
+        for sample in samples:
+            panels = _panel_codes(
+                [
+                    SimpleNamespace(
+                        panel_id="front_left_door", raw_code=sample, defect_types=[], severity=None
+                    )
+                ]
+            )
+            _operations(panels["front_left_door"], matrix)
+    assert "Unknown repair defect code" not in caplog.text
+
+    # X1 on a replaceable panel must trigger replacement-part lookup, not generic bodywork.
+    user = user_factory(email="defect-x1@example.com")
+    lot = Lot.objects.create(user=user, make="Toyota", model="Corolla", model_code="NRE210")
+    LotDefect.objects.create(
+        lot=lot,
+        panel_id="front_bumper",
+        panel_ru="Передний бампер",
+        defect_types=["X"],
+        severity=1,
+        raw_code="X1",
+        description_ru="Передний бампер — требуется замена, степень 1",
+    )
+    mock_client = MagicMock()
+    mock_client.search.return_value = [
+        PartOffer("1", "https://www.farpost.ru/1", "Бампер Toyota Corolla NRE210", 14000, False)
+    ]
+    repair = estimate_repair(lot, client=mock_client)
+    mock_client.search.assert_called_once()
+    assert len(repair.parts) == 1
+    assert repair.parts[0].panel_id == "front_bumper"
+    assert repair.parts[0].defect_code == "X"
+
+    # NormalizedDefect accepts severity 1..4 and rejects 5.
+    valid = NormalizedDefect(
+        panel_id=BodyPanel.HOOD,
+        panel_ru="Капот",
+        defect_types=["B"],
+        severity=4,
+        raw_code="B4",
+        description_ru="Капот — вмятина с царапиной, степень 4",
+    )
+    assert valid.severity == 4
+    with pytest.raises(ValidationError):
+        NormalizedDefect(
+            panel_id=BodyPanel.HOOD,
+            panel_ru="Капот",
+            defect_types=["B"],
+            severity=5,
+            raw_code="B5",
+            description_ru="Капот — степень 5",
+        )

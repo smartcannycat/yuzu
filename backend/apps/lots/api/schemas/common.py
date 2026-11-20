@@ -28,7 +28,7 @@ class NormalizedDefect(StrictBaseModel):
     )
     panel_ru: str = Field(..., description="Russian name of the panel")
     defect_types: list[str] = Field(..., description="Damage types (A, U, W, S, XX, etc.)")
-    severity: int | None = Field(None, ge=1, le=3, description="Severity (1..3) or null for XX/X")
+    severity: int | None = Field(None, ge=1, le=4, description="Severity (1..4) or null for XX/X")
     raw_code: str = Field(..., description="Original code from auction sheet (A2, U2, W1, XX)")
     description_ru: str = Field(..., description="Short legend text for body diagram (Screen 5)")
 

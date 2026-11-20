@@ -18,12 +18,28 @@ export interface BodyPanelShape {
   rx?: number
 }
 
+const WARNING_DEFECT_TYPES = new Set(['W', 'BP', 'S', 'Y', 'P', 'H', 'B'])
+
 export function getDefectTone(defect: NormalizedDefect): DefectTone {
   const code = defect.raw_code.toUpperCase()
-  if (code.includes('XX') || code.includes('X') || (defect.severity ?? 0) >= 3) {
+  const types = defect.defect_types ?? []
+  const severity = resolveDefectSeverityLevel(defect)
+
+  if (
+    types.includes('XX') ||
+    types.includes('X') ||
+    types.includes('C') ||
+    code.includes('XX') ||
+    /(?:^|[/,\s+・])(?:X|C)[1-4小]?/.test(code) ||
+    severity >= 3
+  ) {
     return 'danger'
   }
-  if (code.includes('W') || code.includes('S') || (defect.severity ?? 0) === 2) {
+  if (
+    types.some((t) => WARNING_DEFECT_TYPES.has(t)) ||
+    /(?:^|[/,\s+・])(?:BP|W|S|Y|P|H|B)[1-4小]?/.test(code) ||
+    severity === 2
+  ) {
     return 'warning'
   }
   return 'info'
@@ -33,7 +49,7 @@ function resolveDefectSeverityLevel(defect: NormalizedDefect): number {
   if (typeof defect.severity === 'number' && Number.isFinite(defect.severity)) {
     return Math.min(9, Math.max(0, Math.round(defect.severity)))
   }
-  const match = /([1-3])$/.exec(defect.raw_code.trim())
+  const match = /([1-4])$/.exec(defect.raw_code.trim())
   return match ? Number(match[1]) : 0
 }
 

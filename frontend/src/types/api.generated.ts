@@ -1215,7 +1215,7 @@ export interface components {
             raw_code: string;
             /**
              * Severity
-             * @description Severity (1..3) or null for XX/X
+             * @description Severity (1..4) or null for XX/X
              */
             severity?: number | null;
         };
